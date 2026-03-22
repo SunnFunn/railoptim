@@ -5,9 +5,10 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.102"
+chrono = { version = "0.4.44", features = ["serde"] }
 highs = "2.0.0"
 ndarray = "0.17.2"
-reqwest = { version = "0.13.2", features = ["json", "rustls"] }
+reqwest = { version = "0.13.2", features = ["json", "query", "rustls"] }
 rust_xlsxwriter = "0.94.0"
 secrecy = { version = "0.10.3", features = ["serde"] }
 serde = { version = "1.0.228", features = ["derive"] }

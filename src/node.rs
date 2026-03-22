@@ -133,63 +133,55 @@ pub struct SupplyNode {
 
 #[derive(Deserialize, Debug)]
 pub struct DemandNode {
-    #[serde(rename = "dNodeID")]
+    /// Уникальный ID узла спроса, присваивается при конвертации из API-ответа.
+    #[serde(default)]
     pub d_id: usize,
 
-    #[serde(default, rename = "Станция погрузки")]
+    /// Номер планового периода погрузки: 1 (сут. 1–5), 2 (6–8), 3 (9–10), 4 (11–15).
+    pub period: u8,
+
+    // --- Станция и дорога погрузки (From) ---
     pub station_name: String,
-
-    #[serde(rename = "Код станции погрузки")]
-    pub station_code: String, // Код ЕСР
-
-    #[serde(default, rename = "Дорога погрузки")]
+    pub station_code: String,
     pub railway_name: String,
+    pub railway_code: Option<String>,
+    /// Отделение дороги погрузки (RailWayPartFrom).
+    pub railway_part: Option<String>,
 
-    #[serde(default, rename = "Код дороги погрузки")]
-    pub railway_code: Option<i32>,
+    // --- Станция и дорога назначения (To) ---
+    pub station_to_name: Option<String>,
+    pub station_to_code: Option<String>,
+    pub railway_to_name: Option<String>,
+    pub railway_to_code: Option<String>,
+    pub railway_to_part: Option<String>,
 
-    #[serde(default, rename = "Отделение дороги погрузки")]
-    pub division: Option<String>,
-
-    #[serde(default, rename = "Номера заявок")]
-    pub request_numbers: Option<Vec<String>>,
-
-    #[serde(default, rename = "Даты заявок")]
-    pub request_dates: Option<Vec<String>>,
-
-    #[serde(default, rename = "№ ГУ-12")]
-    pub gu12_number: Option<Vec<String>>,
-
-    #[serde(default, rename = "Клиент")]
-    pub client: Option<String>,
-
-    #[serde(default, rename = "Грузоотправитель")]
+    // --- Грузоотправитель ---
     pub sender: Option<String>,
-
-    #[serde(default, rename = "Грузоотправитель ОКПО")]
     pub sender_okpo: Option<String>,
+    /// Код ТГНЛ грузоотправителя.
+    pub sender_tgnl: Option<String>,
 
-    #[serde(default, rename = "Грузополучатель")]
-    pub recipient: Option<String>,
+    // --- Клиент и грузополучатель ---
+    pub client: Option<Vec<String>>,
+    pub customer_okpo: Option<Vec<String>>,
+    pub recipient: Option<Vec<String>>,
+    pub loader_to_okpo: Option<Vec<String>>,
 
-    #[serde(default, rename = "Груз ГНГ")]
+    // --- Груз ---
     pub gng_cargo: Option<String>,
-
-    #[serde(rename = "ЕТСНГ")]
     pub etsng: Option<String>,
 
-    #[serde(rename = "Тип отправки")]
+    // --- Заявки ---
+    pub request_numbers: Option<Vec<String>>,
+    pub request_dates: Option<Vec<String>>,
+    pub gu12_number: Option<Vec<String>>,
+
+    // --- Параметры вагонов ---
     pub shipping_type: Option<String>,
-
-    #[serde(rename = "Тип вагона")]
+    /// "БКТ" если вес > 70 т/ваг, иначе "Прочие".
     pub car_type: Option<String>,
-
-    #[serde(rename = "Период")]
-    pub period: Option<String>,
-
-    #[serde(rename = "Количество вагонов")]
+    /// Потребность в вагонах = PlannedCarsToLoad − ProvidedCarsToLoad (≥ 0).
     pub car_count: i32,
-
-    #[serde(rename = "Вагонов на станции")]
-    pub car_count: i32,
+    /// Количество вагонов на станции дляоценки ее загруженности.
+    pub cars_on_station: i32,
 }

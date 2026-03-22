@@ -1,8 +1,7 @@
-use highs::{Sense, ColProblem, Row};
-use std::time::Instant;
-use ndarray::{Array2, Dim};
-use std::collections::HashMap;
+use highs::{ColProblem, Sense};
+use ndarray::Array2;
 use rust_xlsxwriter::*;
+
 use crate::node::Node;
 
 // 1. Функция анализа баланса (вызывать ДО solve)

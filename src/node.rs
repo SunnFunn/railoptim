@@ -1,5 +1,4 @@
 use serde::Deserialize;
-use std::collections::HashMap;
 
 
 #[derive(Debug, PartialEq, Clone, Ord, PartialOrd, Eq)]
@@ -12,27 +11,27 @@ pub struct Node {
     pub d_qty: i32,
     pub node_cost: i32,
     pub node_qty: i32,
-    pub dpref: i32,
 }
 
 impl Node {
-    pub fn new_with_data(s_id: usize,
+    pub fn new_with_data(
+        s_id: usize,
         s_station_code: Option<String>,
         d_id: usize,
         d_station_code: Option<String>,
         s_qt: i32,
         d_qt: i32,
-        cost: i32) -> Node {
+        cost: i32,
+    ) -> Node {
         Node {
             s_node_id: s_id,
-            s_station_code: None,
+            s_station_code,
             s_qty: s_qt,
             d_node_id: d_id,
-            d_station_code: None,
+            d_station_code,
             d_qty: d_qt,
             node_cost: cost,
             node_qty: 0,
-            dpref: 2,
         }
     }
 }
@@ -44,7 +43,7 @@ pub struct SupplyNode {
     pub s_id: usize,
 
     #[serde(default, rename = "Номера вагонов")]
-    pub car_number: Option<serde_pickle::Value>,
+    pub car_number: Option<Vec<String>>,
 
     #[serde(rename = "Количество вагонов")]
     pub car_count: i32,
@@ -153,13 +152,13 @@ pub struct DemandNode {
     pub division: Option<String>,
 
     #[serde(default, rename = "Номера заявок")]
-    pub request_numbers: Option<serde_pickle::Value>,
+    pub request_numbers: Option<Vec<String>>,
 
     #[serde(default, rename = "Даты заявок")]
-    pub request_dates: Option<serde_pickle::Value>,
+    pub request_dates: Option<Vec<String>>,
 
     #[serde(default, rename = "№ ГУ-12")]
-    pub gu12_number: Option<serde_pickle::Value>,
+    pub gu12_number: Option<Vec<String>>,
 
     #[serde(default, rename = "Клиент")]
     pub client: Option<String>,

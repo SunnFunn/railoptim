@@ -24,7 +24,7 @@ export no_proxy="localhost,127.0.0.1,0.0.0.0,10.10.100.238,10.10.101.183"
 
 
 # Ищем токен в User Keyring (@u), который доступен всем процессам пользователя atretyakov
-TOKEN_REF=$(keyctl search @u user infisical_conv_token 2>/dev/null)
+TOKEN_REF=$(keyctl search @u user infisical_optim_token 2>/dev/null)
 
 if [ -z "$TOKEN_REF" ]; then
     echo "Ошибка: Токен не найден в User Keyring (@u). Запустите auth-infisical.sh."

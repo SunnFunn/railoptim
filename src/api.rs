@@ -20,6 +20,101 @@ pub enum ApiError {
     UnexpectedStatus { status: u16, body: String },
 }
 
+//Enpoints
+    // base_api_url = "https://isupv-api.rusagrotrans.ru:2555/isupv/IsupvApi/"
+    // supply_url = "https://isupv-api.rusagrotrans.ru:2555/isupv/IsupvApi/GetSupplyDataTransmission?docDate="
+    // demand_url = "https://isupv-api.rusagrotrans.ru:2555/isupv/IsupvApi/GetDemandDataTransmission"
+    // tariffs_url = "https://isupv-api.rusagrotrans.ru:2555/isupv/IsupvApi/GetRailTariffRouteDataTransmission"
+    // output_url = "https://isupv-api.rusagrotrans.ru:2555/isupv/IsupvApi/DestinationRegistryTransmission"
+
+//Params to demand endpoint GET request
+// params = {
+//         "LoadDateStart": "2026-03-15T15:11:51.390Z",
+//         "LoadDateEnd": "2026-03-20T15:11:51.390Z",
+//         "Page": 1,
+//         "PageSize": 10000
+//         }
+
+//API Demand response Schema
+// {
+//   "meta": {
+//     "timeZone": "string",
+//     "generatedAt": "2026-03-22T18:49:17.434Z",
+//     "storage": {
+//       "datasetVersion": "2026-03-22T18:49:17.434Z",
+//       "coverage": {
+//         "from": "2026-03-22T18:49:17.434Z",
+//         "to": "2026-03-22T18:49:17.434Z"
+//       }
+//     },
+//     "freshness": {
+//       "isFullyCoveredForRequest": true,
+//       "warnings": [
+//         "string"
+//       ]
+//     },
+//     "page": 0,
+//     "pageSize": 0,
+//     "total": 0,
+//     "pages": 0
+//   },
+//   "data": [
+//     {
+//       "LoadDateStart": "2026-03-22T18:49:17.434Z",
+//       "LoadDateEnd": "2026-03-22T18:49:17.434Z",
+//       "RailWayPartFrom": "string",
+//       "RailWayShortFrom": "string",
+//       "RailWayFromCode": "string",
+//       "StationFrom": "string",
+//       "StationFromCode": "string",
+//       "RailWayPartTo": "string",
+//       "RailWayShortTo": "string",
+//       "RailWayToCode": "string",
+//       "StationTo": "string",
+//       "StationToCode": "string",
+//       "Sender": "string",
+//       "SenderOKPO": "string",
+//       "SenderTGNL": "string",
+//       "Client": [
+//         "string"
+//       ],
+//       "CustomerOKPO": [
+//         "string"
+//       ],
+//       "Recip": [
+//         "string"
+//       ],
+//       "LoaderToOKPO": [
+//         "string"
+//       ],
+//       "NameGNG": "string",
+//       "FrETSNGCode": "string",
+//       "DocumentNumber": [
+//         "string"
+//       ],
+//       "DocumentDate": [
+//         "2026-03-22T18:49:17.434Z"
+//       ],
+//       "GU12Number": [
+//         "string"
+//       ],
+//       "LoadTypeName": "string",
+//       "PlannedCarsToLoad": 0,
+//       "PlannedWeightToLoad": 0,
+//       "ProvidedCarsToLoad": 0,
+//       "CarsOnStation": 0
+//     }
+//   ]
+// }
+
+/// Эндпойнты АПИ.
+pub struct ApiEndpoints {
+    Demand,
+    Supply,
+    Tariffs,
+    Output
+}
+
 /// Клиент для работы с API данных оптимизации.
 pub struct ApiClient {
     client: Client,

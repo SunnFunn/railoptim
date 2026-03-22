@@ -189,4 +189,7 @@ pub struct DemandNode {
 
     #[serde(rename = "Количество вагонов")]
     pub car_count: i32,
+
+    #[serde(rename = "Вагонов на станции")]
+    pub car_count: i32,
 }

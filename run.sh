@@ -20,7 +20,7 @@ export http_proxy="http://127.0.0.1:1"
 export https_proxy="http://127.0.0.1:1"
 export all_proxy="http://127.0.0.1:1"
 # Разрешаем только локальный трафик до сервера Infisical
-export no_proxy="localhost,127.0.0.1,0.0.0.0,10.10.100.238,10.10.101.183"
+export no_proxy="localhost,127.0.0.1,0.0.0.0,10.10.100.238,10.10.101.183,10.10.101.78,10.10.100.47,isupv-api.rusagrotrans.ru,isupv-dev.rusagrotrans.ru"
 
 
 # Ищем токен в User Keyring (@u), который доступен всем процессам пользователя atretyakov

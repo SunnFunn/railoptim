@@ -11,7 +11,8 @@ use zeroize::Zeroize;
 use crate::node::DemandNode;
 
 /// Формат дат в параметрах запроса к API.
-const DATE_FMT: &str = "%Y-%m-%dT%H:%M:%S%.3fZ";
+// const DATE_FMT: &str = "%Y-%m-%dT%H:%M:%S%.3fZ";
+const DATE_FMT: &str = "%Y-%m-%d";
 
 /// Периоды планирования спроса: (смещение начала, смещение конца) в сутках от даты запроса.
 ///

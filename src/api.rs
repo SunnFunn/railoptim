@@ -291,9 +291,14 @@ impl ApiClient {
             self.fetch_demand_period(&periods[3].0, &periods[3].1, 4),
         )?;
 
+        // Отфильтровываем узлы с нулевой потребностью до присвоения ID,
+        // чтобы не раздувать размерность оптимизационной задачи.
         let nodes = [r1, r2, r3, r4]
             .into_iter()
             .flat_map(|(period, items)| items.into_iter().map(move |item| (period, item)))
+            .filter(|(_, item)| {
+                (item.planned_cars_to_load - item.provided_cars_to_load) > 0
+            })
             .enumerate()
             .map(|(i, (period, item))| item.into_demand_node(i + 1, period))
             .collect();

@@ -1,5 +1,6 @@
 mod api;
 mod config;
+mod debug;
 mod hsolver;
 mod node;
 
@@ -14,6 +15,9 @@ async fn main() -> Result<()> {
 
     let demand_nodes = client.fetch_demand_nodes().await?;
     println!("Получено узлов спроса: {}", demand_nodes.len());
+
+    let path = debug::save_checkpoint(&demand_nodes)?;
+    println!("Данные сохранены: {}", path.display());
 
     Ok(())
 }

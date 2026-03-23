@@ -105,20 +105,11 @@ pub struct SupplyNode {
     #[serde(default, rename = "Отделение дороги назначения")]
     pub r_division_to: Option<String>,
 
-    #[serde(default, rename = "Признак массовой выгрузки")]
-    pub mass_unloading: i32,
-
     #[serde(default, rename = "Грузополучатель")]
     pub recipient: String,
 
     #[serde(default, rename = "Расстояние до станции назначения")]
     pub distance_to_dest: Option<f64>,
-
-    #[serde(default, rename = "Назначение")]
-    pub assignment: Option<String>,
-
-    #[serde(default, rename = "Следующая заявка")]
-    pub next_claim: Option<String>,
 
     #[serde(default, rename = "Статус ремонта")]
     pub repair_status: i32,
@@ -126,8 +117,8 @@ pub struct SupplyNode {
     #[serde(default, rename = "Дней до ремонта")]
     pub days_to_repair: Option<i32>,
 
-    #[serde(default, rename = "Комментарии")]
-    pub comments: Option<String>,
+    #[serde(default, rename = "Назначение")]
+    pub assignment: Option<String>,
 }
 
 

@@ -37,88 +37,73 @@ impl Node {
 }
 
 
-#[derive(Deserialize, Debug)]
+/// Группа вагона в узле предложения.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CarKind {
+    /// С номером, свободен (OPZRailWayId == null).
+    Free,
+    /// С номером, уже назначен и идёт по факту (OPZRailWayId != null).
+    Assigned,
+    /// Безномерной (из opzNoNumberModelCollection); данных по вагону нет.
+    NoNumber,
+}
+
+/// Узел предложения порожних вагонов.
+#[derive(Debug, Clone)]
 pub struct SupplyNode {
-    #[serde(rename = "sNodeID")]
+    /// Уникальный ID узла, присваивается при конвертации.
     pub s_id: usize,
 
-    #[serde(default, rename = "Номера вагонов")]
-    pub car_number: Option<Vec<String>>,
+    /// Группа вагона: свободный / по факту / безномерной.
+    pub kind: CarKind,
 
-    #[serde(rename = "Количество вагонов")]
+    // --- Идентификатор ---
+    /// Номер вагона. None для безномерных.
+    pub car_number: Option<u64>,
+    /// Количество вагонов в узле (1 для именных, N для безномерных).
     pub car_count: i32,
 
-    #[serde(rename = "Период")]
-    pub period: Option<i32>,
-
-    #[serde(default, rename = "ГРУЖ/ПОР")]
-    pub status: String,
-
-    #[serde(default, rename = "Грузоподъемность вагона")]
-    pub capacity: f64,
-
-    #[serde(rename = "Кубатура вагона")]
-    pub volume: f64,
-
-    #[serde(default, rename = "Габарит вагона")]
-    pub gauge: String,
-
-    #[serde(default, rename = "Груз")]
-    pub cargo: Option<String>,
-
-    #[serde(rename = "ЕТСНГ")]
-    pub etsng: Option<String>,
-
-    #[serde(default, rename = "Предыдущий груз")]
-    pub prev_cargo: Option<String>,
-
-    #[serde(default, rename = "Предыдущий ЕТСНГ")]
-    pub prev_etsng: Option<String>,
-
-    #[serde(default, rename = "Станция отправления")]
-    pub station_from: String,
-
-    #[serde(default, rename = "Код станции отправления")]
-    pub station_from_code: String, // Используем String для сохранения нулей
-
-    #[serde(default, rename = "Дорога отправления")]
-    pub railway_from: String,
-
-    #[serde(default, rename = "Код дороги отправления")]
+    // --- Станция и дорога отправления (только именные) ---
+    pub station_from: Option<String>,
+    pub station_from_code: Option<String>,
+    pub railway_from: Option<String>,
     pub railway_from_code: Option<i32>,
+    pub railway_part_from: Option<String>,
 
-    #[serde(default, rename = "Отделение дороги отправления")]
-    pub r_division_from: Option<String>,
-
-    #[serde(default, rename = "Станция назначения")]
+    // --- Станция и дорога назначения ---
     pub station_to: String,
-
-    #[serde(rename = "Код станции назначения")]
     pub station_to_code: String,
-
-    #[serde(default, rename = "Дорога назначения")]
     pub railway_to: String,
-
-    #[serde(rename = "Код дороги назначения")]
     pub railway_to_code: Option<i32>,
+    pub railway_part_to: Option<String>,
 
-    #[serde(default, rename = "Отделение дороги назначения")]
-    pub r_division_to: Option<String>,
+    // --- Характеристики вагона (только именные) ---
+    pub capacity: f64,
+    pub volume: f64,
+    /// Тип вагона из OPZComment1 (например, "БКТ", "Прочие").
+    pub car_type: Option<String>,
+    pub car_model: Option<String>,
 
-    #[serde(default, rename = "Грузополучатель")]
-    pub recipient: String,
+    // --- Состояние груза (только именные) ---
+    /// "ГРУЖ" или "ПОР" (GRPOName).
+    pub status: Option<String>,
+    pub etsng: Option<String>,
+    pub etsng_name: Option<String>,
+    pub prev_etsng: Option<String>,
+    pub prev_etsng_name: Option<String>,
 
-    #[serde(default, rename = "Расстояние до станции назначения")]
-    pub distance_to_dest: Option<f64>,
+    // --- Ремонт (только именные) ---
+    pub days_to_repair: Option<f64>,
+    pub repair_type: Option<String>,
 
-    #[serde(default, rename = "Статус ремонта")]
-    pub repair_status: i32,
+    // --- Комментарии (только именные) ---
+    pub comment_odo: Option<String>,
+    pub comment_odo2: Option<String>,
+    /// Непустые OPZComment1..10, объединённые через " | ".
+    pub opz_comments: Option<String>,
 
-    #[serde(default, rename = "Дней до ремонта")]
-    pub days_to_repair: Option<i32>,
-
-    #[serde(default, rename = "Назначение")]
-    pub assignment: Option<String>,
+    pub next_claim: Option<String>,
+    pub idle_time: Option<f64>,
 }
 
 

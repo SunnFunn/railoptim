@@ -16,7 +16,10 @@ async fn main() -> Result<()> {
     let demand_nodes = client.fetch_demand_nodes().await?;
     println!("Получено узлов спроса: {}", demand_nodes.len());
 
-    let path = debug::save_checkpoint(&demand_nodes)?;
+    let supply_nodes = client.fetch_supply_nodes().await?;
+    println!("Получено узлов предложения: {}", supply_nodes.len());
+
+    let path = debug::save_checkpoint(&demand_nodes, &supply_nodes)?;
     println!("Данные сохранены: {}", path.display());
 
     Ok(())

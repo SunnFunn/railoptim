@@ -6,17 +6,20 @@ use std::path::PathBuf;
 use chrono::Local;
 use rust_xlsxwriter::{Format, FormatBorder, Workbook, XlsxError};
 
-use crate::node::DemandNode;
+use crate::node::{CarKind, DemandNode, SupplyNode};
 
 /// Сохраняет данные прогона в файл-чекпоинт `tmp/checkpoint_YYYY-MM-DD_HH-MM-SS.xlsx`.
 ///
-/// Каждый тип данных размещается на отдельном листе:
-/// - `DemandNodes` — узлы спроса (реализовано)
-/// - `SupplyNodes` — узлы образования порожних (будущий лист)
+/// Листы:
+/// - `DemandNodes` — узлы спроса
+/// - `SupplyNodes` — узлы предложения порожних
 /// - `Tariffs`     — тарифные данные (будущий лист)
 ///
 /// Папка `tmp/` создаётся автоматически. Поля `Vec<String>` выводятся через ` | `.
-pub fn save_checkpoint(nodes: &[DemandNode]) -> Result<PathBuf, XlsxError> {
+pub fn save_checkpoint(
+    demand: &[DemandNode],
+    supply: &[SupplyNode],
+) -> Result<PathBuf, XlsxError> {
     let tmp_dir = PathBuf::from("tmp");
     std::fs::create_dir_all(&tmp_dir)?;
 
@@ -24,6 +27,19 @@ pub fn save_checkpoint(nodes: &[DemandNode]) -> Result<PathBuf, XlsxError> {
     let path = tmp_dir.join(format!("checkpoint_{timestamp}.xlsx"));
 
     let mut workbook = Workbook::new();
+
+    write_demand_sheet(&mut workbook, demand)?;
+    write_supply_sheet(&mut workbook, supply)?;
+
+    workbook.save(&path)?;
+    Ok(path)
+}
+
+// ---------------------------------------------------------------------------
+// Лист DemandNodes
+// ---------------------------------------------------------------------------
+
+fn write_demand_sheet(workbook: &mut Workbook, nodes: &[DemandNode]) -> Result<(), XlsxError> {
     let ws = workbook.add_worksheet();
     ws.set_name("DemandNodes")?;
 
@@ -125,12 +141,122 @@ pub fn save_checkpoint(nodes: &[DemandNode]) -> Result<PathBuf, XlsxError> {
         ws.write_with_format(row, 27, n.cars_on_station,                 &num)?;
     }
 
-    // Автофильтр на всю таблицу
     ws.autofilter(0, 0, nodes.len() as u32, headers.len() as u16 - 1)?;
-
-    // Закрепить первую строку
     ws.set_freeze_panes(1, 0)?;
+    Ok(())
+}
 
-    workbook.save(&path)?;
-    Ok(path)
+// ---------------------------------------------------------------------------
+// Лист SupplyNodes
+// ---------------------------------------------------------------------------
+
+fn write_supply_sheet(workbook: &mut Workbook, nodes: &[SupplyNode]) -> Result<(), XlsxError> {
+    let ws = workbook.add_worksheet();
+    ws.set_name("SupplyNodes")?;
+
+    let hdr = Format::new()
+        .set_bold()
+        .set_border(FormatBorder::Thin)
+        .set_background_color(0x_E2_EF_DA);
+    let cell = Format::new().set_border(FormatBorder::Thin);
+    let num  = Format::new().set_border(FormatBorder::Thin).set_num_format("0");
+    let dec  = Format::new().set_border(FormatBorder::Thin).set_num_format("0.0");
+
+    let headers: &[(&str, f64)] = &[
+        ("ID",               6.0),
+        ("Группа",          10.0),
+        ("Номер вагона",    14.0),
+        ("Кол-во ваг.",     10.0),
+        // Станция отправления
+        ("Ст. отправления", 22.0),
+        ("Код ст. отпр.",   14.0),
+        ("Дорога отпр.",    16.0),
+        ("Код д. отпр.",    12.0),
+        ("Отд. д. отпр.",   16.0),
+        // Станция назначения
+        ("Ст. назначения",  22.0),
+        ("Код ст. назн.",   14.0),
+        ("Дорога назн.",    16.0),
+        ("Код д. назн.",    12.0),
+        ("Отд. д. назн.",   16.0),
+        // Характеристики
+        ("Грузоподъём.",    12.0),
+        ("Кубатура",        10.0),
+        ("Тип вагона",      12.0),
+        ("Модель",          12.0),
+        // Груз
+        ("Статус",           8.0),
+        ("ЕТСНГ",           12.0),
+        ("Груз (ЕТСНГ)",    28.0),
+        ("Пред. ЕТСНГ",     12.0),
+        ("Пред. груз",      28.0),
+        // Ремонт
+        ("Дней до рем.",    12.0),
+        ("Тип ремонта",     18.0),
+        // Комментарии
+        ("Комм. ОДО",       30.0),
+        ("Комм. ОДО2",      30.0),
+        ("ОПЗ коммент.",    30.0),
+        // Прочее
+        ("След. заявка",    16.0),
+        ("Простой (сут.)",  12.0),
+    ];
+
+    for (col, (title, width)) in headers.iter().enumerate() {
+        ws.write_with_format(0, col as u16, *title, &hdr)?;
+        ws.set_column_width(col as u16, *width)?;
+    }
+
+    let kind_str = |k: &CarKind| match k {
+        CarKind::Free     => "Своб.",
+        CarKind::Assigned => "Факт",
+        CarKind::NoNumber => "Безном.",
+    };
+
+    for (row_idx, n) in nodes.iter().enumerate() {
+        let row = (row_idx + 1) as u32;
+        macro_rules! s { ($v:expr) => { $v.as_deref().unwrap_or("") }; }
+
+        ws.write_with_format(row, 0,  n.s_id as u32,                          &num)?;
+        ws.write_with_format(row, 1,  kind_str(&n.kind),                       &cell)?;
+        ws.write_with_format(row, 2,  n.car_number.unwrap_or(0),               &num)?;
+        ws.write_with_format(row, 3,  n.car_count,                             &num)?;
+        // Отправление
+        ws.write_with_format(row, 4,  s!(&n.station_from),                     &cell)?;
+        ws.write_with_format(row, 5,  s!(&n.station_from_code),                &cell)?;
+        ws.write_with_format(row, 6,  s!(&n.railway_from),                     &cell)?;
+        ws.write_with_format(row, 7,  n.railway_from_code.unwrap_or(0),        &num)?;
+        ws.write_with_format(row, 8,  s!(&n.railway_part_from),                &cell)?;
+        // Назначение
+        ws.write_with_format(row, 9,  &n.station_to,                           &cell)?;
+        ws.write_with_format(row, 10, &n.station_to_code,                      &cell)?;
+        ws.write_with_format(row, 11, &n.railway_to,                           &cell)?;
+        ws.write_with_format(row, 12, n.railway_to_code.unwrap_or(0),          &num)?;
+        ws.write_with_format(row, 13, s!(&n.railway_part_to),                  &cell)?;
+        // Характеристики
+        ws.write_with_format(row, 14, n.capacity,                              &dec)?;
+        ws.write_with_format(row, 15, n.volume,                                &dec)?;
+        ws.write_with_format(row, 16, s!(&n.car_type),                         &cell)?;
+        ws.write_with_format(row, 17, s!(&n.car_model),                        &cell)?;
+        // Груз
+        ws.write_with_format(row, 18, s!(&n.status),                           &cell)?;
+        ws.write_with_format(row, 19, s!(&n.etsng),                            &cell)?;
+        ws.write_with_format(row, 20, s!(&n.etsng_name),                       &cell)?;
+        ws.write_with_format(row, 21, s!(&n.prev_etsng),                       &cell)?;
+        ws.write_with_format(row, 22, s!(&n.prev_etsng_name),                  &cell)?;
+        // Ремонт
+        ws.write_with_format(row, 23, n.days_to_repair.unwrap_or(0.0),         &dec)?;
+        ws.write_with_format(row, 24, s!(&n.repair_type),                      &cell)?;
+        // Комментарии
+        ws.write_with_format(row, 25, s!(&n.comment_odo),                      &cell)?;
+        ws.write_with_format(row, 26, s!(&n.comment_odo2),                     &cell)?;
+        ws.write_with_format(row, 27, s!(&n.opz_comments),                     &cell)?;
+        // Прочее
+        ws.write_with_format(row, 28, s!(&n.next_claim),                       &cell)?;
+        ws.write_with_format(row, 29, n.idle_time.unwrap_or(0.0),              &dec)?;
+    }
+
+    ws.autofilter(0, 0, nodes.len() as u32, headers.len() as u16 - 1)?;
+    ws.set_freeze_panes(1, 0)?;
+    Ok(())
 }

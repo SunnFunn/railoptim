@@ -1,0 +1,16 @@
+[
+  {
+    "StationFrom": "Новороссийск (Экспорт)",
+    "StationFromCode": "521001",
+    "RailWayFromName": "СКВ",
+    "RailWayFromCode": 51,
+    "StationTo": "Димитровград",
+    "StationToCode": "646207",
+    "RailWayToName": "КБШ",
+    "RailWayToCode": 63,
+    "Distance": 1791,
+    "PeriodOfDelivery": 8,
+    "Cost": 75343,
+    "ActualDate": "2026-04-07T00:00:00"
+  }
+]

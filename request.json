@@ -1,0 +1,14 @@
+{
+  "StationsFrom": [
+    {
+      "StationCode": "521001",
+      "RailWayShortName": "СКВ"
+    }
+  ],
+  "StationsTo": [
+    {
+      "StationCode": "646207",
+      "RailWayShortName": "КБШ"
+    }
+  ]
+}

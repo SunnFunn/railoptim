@@ -57,14 +57,29 @@ async fn main() -> Result<()> {
     // -----------------------------------------------------------------------
     // 4. Построение дуг транспортной задачи
     // -----------------------------------------------------------------------
-    let arcs = solver::build_task_arcs(&supply_nodes, &demand_nodes, &tariff_nodes);
-    println!("Сформировано дуг задачи:     {}", arcs.len());
+    let (arcs, arc_stats) = solver::build_task_arcs(&supply_nodes, &demand_nodes, &tariff_nodes);
 
-    let feasible = arcs.iter().filter(|a| a.period_ok && a.car_type_ok).count();
+    let total = arc_stats.total_pairs;
+    println!("Всего пар supply×demand:     {}", total);
     println!(
-        "  из них допустимых:         {} ({:.1}%)",
-        feasible,
-        100.0 * feasible as f64 / arcs.len().max(1) as f64
+        "  без тарифа:                {} ({:.1}%)",
+        arc_stats.no_tariff,
+        100.0 * arc_stats.no_tariff as f64 / total.max(1) as f64,
+    );
+    println!(
+        "  нарушение срока:           {} ({:.1}%)",
+        arc_stats.bad_period,
+        100.0 * arc_stats.bad_period as f64 / total.max(1) as f64,
+    );
+    println!(
+        "  несовм. тип вагона:        {} ({:.1}%)",
+        arc_stats.bad_type,
+        100.0 * arc_stats.bad_type as f64 / total.max(1) as f64,
+    );
+    println!(
+        "Допустимых дуг в LP:         {} ({:.1}%)",
+        arc_stats.feasible,
+        100.0 * arc_stats.feasible as f64 / total.max(1) as f64,
     );
 
     // -----------------------------------------------------------------------
@@ -80,11 +95,16 @@ async fn main() -> Result<()> {
     // -----------------------------------------------------------------------
     println!();
     println!("======= РЕЗУЛЬТАТЫ ОПТИМИЗАЦИИ =======");
-    println!("Статус решателя:   {}", optim_result.status);
-    println!("Назначено вагонов: {:.0}", optim_result.assigned_cars);
-    println!("Штрафных вагонов:  {:.0}", optim_result.penalty_cars);
+    println!("Статус решателя:      {}", optim_result.status);
+    println!("Назначено вагонов:    {:.0}", optim_result.assigned_cars);
+    if optim_result.excess_supply > 1e-4 {
+        println!("Избыток предложения:  {:.0} ваг. (dummy-спрос)", optim_result.excess_supply);
+    }
+    if optim_result.penalty_cars > 1e-4 {
+        println!("Неудовл. спрос:       {:.0} ваг. (dummy-предложение)", optim_result.penalty_cars);
+    }
     println!(
-        "Суммарная стоимость: {:.0} руб.",
+        "Суммарная стоимость:  {:.0} руб.",
         optim_result.total_cost
     );
     println!("======================================");

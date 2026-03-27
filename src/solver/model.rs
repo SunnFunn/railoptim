@@ -44,53 +44,93 @@ pub struct TaskArc {
 // Построение дуг
 // ---------------------------------------------------------------------------
 
-/// Строит список дуг транспортной задачи на основе узлов предложения, спроса
-/// и тарифной матрицы.
+/// Строит список **допустимых** дуг транспортной задачи.
 ///
-/// Дуга создаётся для каждой пары (supply, demand), для которой найден тариф
-/// по ключу `(supply.station_to_code, demand.station_code)`.
-/// Пары без тарифа пропускаются.
+/// В LP попадают только пары, для которых одновременно выполнены:
+/// - найден тариф по ключу `(supply.station_to_code, demand.station_code)`;
+/// - срок подсыла вписывается в плановый период (`period_ok`);
+/// - тип вагона совместим с требованиями спроса (`car_type_ok`).
+///
+/// Недопустимые пары отсеиваются до решателя — размерность LP уменьшается.
+/// Неудовлетворённый спрос обрабатывается slack-переменными в [`super::lp::solve`].
+///
+/// Возвращает `(arcs, stats)`, где `stats` — счётчики для диагностики.
 pub fn build_task_arcs(
     supply: &[SupplyNode],
     demand: &[DemandNode],
     tariffs: &[TariffNode],
-) -> Vec<TaskArc> {
+) -> (Vec<TaskArc>, ArcStats) {
     // Индекс тарифов: (код_откуда, код_куда) → TariffNode
     let tariff_index: HashMap<(&str, &str), &TariffNode> = tariffs
         .iter()
         .map(|t| ((t.station_from_code.as_str(), t.station_to_code.as_str()), t))
         .collect();
 
-    let mut arcs = Vec::new();
+    let mut arcs       = Vec::new();
+    let mut no_tariff  = 0usize;
+    let mut bad_period = 0usize;
+    let mut bad_type   = 0usize;
 
     for (s_idx, s) in supply.iter().enumerate() {
         for (d_idx, d) in demand.iter().enumerate() {
             let key = (s.station_to_code.as_str(), d.station_code.as_str());
 
-            if let Some(tariff) = tariff_index.get(&key) {
-                let period_ok   = tariff.period_of_delivery <= period_max_days(d.period);
-                let car_type_ok = car_type_compatible(
-                    s.car_type.as_deref(),
-                    d.car_type.as_deref(),
-                );
+            let Some(tariff) = tariff_index.get(&key) else {
+                no_tariff += 1;
+                continue;
+            };
 
-                arcs.push(TaskArc {
-                    arc_id: arcs.len(),
-                    s_idx,
-                    d_idx,
-                    supply_station_code: s.station_to_code.clone(),
-                    demand_station_code: d.station_code.clone(),
-                    cost:          tariff.cost,
-                    distance:      tariff.distance,
-                    delivery_days: tariff.period_of_delivery,
-                    period_ok,
-                    car_type_ok,
-                });
+            let period_ok   = tariff.period_of_delivery <= period_max_days(d.period);
+            let car_type_ok = car_type_compatible(s.car_type.as_deref(), d.car_type.as_deref());
+
+            if !period_ok   { bad_period += 1; }
+            if !car_type_ok { bad_type   += 1; }
+
+            // В LP добавляем только допустимые дуги.
+            // Неудовлетворённый спрос → slack-переменные в solve().
+            if !period_ok || !car_type_ok {
+                continue;
             }
+
+            arcs.push(TaskArc {
+                arc_id: arcs.len(),
+                s_idx,
+                d_idx,
+                supply_station_code: s.station_to_code.clone(),
+                demand_station_code: d.station_code.clone(),
+                cost:          tariff.cost,
+                distance:      tariff.distance,
+                delivery_days: tariff.period_of_delivery,
+                period_ok:     true,
+                car_type_ok:   true,
+            });
         }
     }
 
-    arcs
+    let stats = ArcStats {
+        total_pairs: supply.len() * demand.len(),
+        no_tariff,
+        bad_period,
+        bad_type,
+        feasible: arcs.len(),
+    };
+
+    (arcs, stats)
+}
+
+/// Диагностические счётчики из [`build_task_arcs`].
+#[derive(Debug)]
+pub struct ArcStats {
+    /// Всего пар (supply × demand).
+    pub total_pairs: usize,
+    /// Пар без тарифа.
+    pub no_tariff:  usize,
+    /// Пар с нарушением срока подсыла.
+    pub bad_period: usize,
+    /// Пар с несовместимым типом вагона.
+    pub bad_type:   usize,
+    /// Допустимых дуг (вошли в LP).
+    pub feasible:   usize,
 }
 
 // ---------------------------------------------------------------------------

@@ -1,3 +1,4 @@
+use chrono::NaiveDateTime;
 use serde::Deserialize;
 
 
@@ -160,4 +161,33 @@ pub struct DemandNode {
     pub car_count: i32,
     /// Количество вагонов на станции дляоценки ее загруженности.
     pub cars_on_station: i32,
+}
+
+/// Тарифный узел: стоимость, расстояние и срок доставки для пары станций.
+///
+/// Формируется из ответа `GetRailTariffRouteDataTransmission`.
+/// Используется как ребро графа «предложение → спрос» в оптимизационной задаче.
+#[derive(Debug, Clone)]
+pub struct TariffNode {
+    // --- Станция отправления ---
+    pub station_from:      String,
+    pub station_from_code: String,
+    pub railway_from:      String,
+    pub railway_from_code: i32,
+
+    // --- Станция назначения ---
+    pub station_to:      String,
+    pub station_to_code: String,
+    pub railway_to:      String,
+    pub railway_to_code: i32,
+
+    // --- Тариф ---
+    /// Расстояние в километрах.
+    pub distance: i32,
+    /// Нормативный срок доставки, сутки.
+    pub period_of_delivery: i32,
+    /// Стоимость перевозки, руб.
+    pub cost: i64,
+    /// Дата актуальности тарифа.
+    pub actual_date: NaiveDateTime,
 }

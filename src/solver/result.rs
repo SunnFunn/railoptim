@@ -34,7 +34,7 @@ pub struct AssignmentRecord {
     pub demand_period:       u8,
 
     // --- Тариф ---
-    pub cost_rub:      i64,
+    pub cost_rub:      f64,
     pub distance_km:   i32,
     pub delivery_days: i32,
     pub period_ok:     bool,

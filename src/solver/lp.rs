@@ -67,7 +67,7 @@ pub fn solve(
     // --- Переменные (колонки) ---
     for arc in arcs {
         let cost = if arc.period_ok && arc.car_type_ok {
-            arc.cost as f64
+            arc.cost
         } else {
             PENALTY_COST
         };
@@ -101,7 +101,7 @@ pub fn solve(
     for (arc, &qty) in arcs.iter().zip(col_vals.iter()) {
         if qty > 1e-4 {
             if arc.period_ok && arc.car_type_ok {
-                total_cost    += qty * arc.cost as f64;
+                total_cost    += qty * arc.cost;
                 assigned_cars += qty;
             } else {
                 penalty_cars += qty;

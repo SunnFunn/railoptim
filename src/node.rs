@@ -187,7 +187,7 @@ pub struct TariffNode {
     /// Нормативный срок доставки, сутки.
     pub period_of_delivery: i32,
     /// Стоимость перевозки, руб.
-    pub cost: i64,
+    pub cost: f64,
     /// Дата актуальности тарифа.
     pub actual_date: NaiveDateTime,
 }

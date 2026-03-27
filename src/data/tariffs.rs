@@ -51,7 +51,7 @@ struct TariffApiItem {
     #[serde(rename = "RailWayToCode")]   railway_to_code:   i32,
     #[serde(rename = "Distance")]        distance:          i32,
     #[serde(rename = "PeriodOfDelivery")] period_of_delivery: i32,
-    #[serde(rename = "Cost")]            cost:              i64,
+    #[serde(rename = "Cost")]            cost:              f64,
     #[serde(rename = "ActualDate")]      actual_date:       NaiveDateTime,
 }
 

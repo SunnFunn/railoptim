@@ -28,7 +28,7 @@ pub struct TaskArc {
     pub demand_station_code: String,
 
     /// Стоимость перевозки, руб.
-    pub cost: i64,
+    pub cost: f64,
     /// Расстояние, км.
     pub distance: i32,
     /// Нормативный срок подсыла, сут.

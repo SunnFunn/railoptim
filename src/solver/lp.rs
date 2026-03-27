@@ -88,20 +88,17 @@ pub fn solve(
     }
 
     // --- Dummy-узел СПРОСА (поглощает незадействованное предложение) ---
-    // Ёмкость = total_supply: любой узел предложения может полностью уйти в dummy.
+    // Верхняя граница ≤ total_supply: может поглотить до всего предложения, но не обязан.
     // Стоимость дуг = 0: незадействованные вагоны не штрафуются.
-    let dummy_demand_row = model.add_row(total_supply..=total_supply);
-    // let dummy_demand_row = model.add_row(total_supply..);
+    let dummy_demand_row = model.add_row(..total_supply);
     for s_row in &supply_rows {
-        // model.add_column(0.0, 0.0.., [(*s_row, 1.0), (dummy_demand_row, 1.0)]);
-        model.add_column(PENALTY_COST, 0.0.., [(*s_row, 1.0), (dummy_demand_row, 1.0)]);
+        model.add_column(0.0, 0.0.., [(*s_row, 1.0), (dummy_demand_row, 1.0)]);
     }
 
     // --- Dummy-узел ПРЕДЛОЖЕНИЯ (покрывает незакрытый спрос) ---
-    // Ёмкость = total_demand: каждый узел спроса может полностью уйти в штраф.
+    // Верхняя граница ≤ total_demand: может покрыть до всего спроса, но не обязан.
     // Стоимость дуг = PENALTY: решатель предпочитает реальные дуги.
-    let dummy_supply_row = model.add_row(total_demand..=total_demand);
-    // let dummy_supply_row = model.add_row(0.0..total_demand);
+    let dummy_supply_row = model.add_row(..total_demand);
     for d_row in &demand_rows {
         model.add_column(PENALTY_COST, 0.0.., [(dummy_supply_row, 1.0), (*d_row, 1.0)]);
     }

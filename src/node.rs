@@ -45,66 +45,61 @@ pub enum CarKind {
     Free,
     /// С номером, уже назначен и идёт по факту (OPZRailWayId != null).
     Assigned,
-    /// Безномерной (из opzNoNumberModelCollection); данных по вагону нет.
+    /// Безномерной (из opzNoNumberModelCollection).
     NoNumber,
 }
 
-/// Узел предложения порожних вагонов.
+/// Статус вагона по ремонту.
+#[derive(Debug, Clone, PartialEq)]
+pub enum RepairStatus {
+    /// Вагон не требует ремонта в горизонте планирования.
+    Ok,
+    /// Вагон подлежит ремонту: IsCarRepair=true или days_to_repair < 15.
+    NeedsRepair,
+}
+
+/// Сгруппированный узел предложения порожних вагонов.
+///
+/// Вагоны сгруппированы по однородным признакам: станция назначения, тип, ЕТСНГ,
+/// статус ремонта. Внутри группы индивидуальные данные собраны в списки.
 #[derive(Debug, Clone)]
 pub struct SupplyNode {
-    /// Уникальный ID узла, присваивается при конвертации.
+    /// Уникальный ID узла, присваивается при группировке.
     pub s_id: usize,
-
-    /// Группа вагона: свободный / по факту / безномерной.
+    /// Группа вагонов: свободные / по факту / безномерные.
     pub kind: CarKind,
-
-    // --- Идентификатор ---
-    /// Номер вагона. None для безномерных.
-    pub car_number: Option<u64>,
-    /// Количество вагонов в узле (1 для именных, N для безномерных).
+    /// Количество вагонов в группе.
     pub car_count: i32,
 
-    // --- Станция и дорога отправления (только именные) ---
-    pub station_from: Option<String>,
-    pub station_from_code: Option<String>,
-    pub railway_from: Option<String>,
-    pub railway_from_code: Option<i32>,
-    pub railway_part_from: Option<String>,
-
-    // --- Станция и дорога назначения ---
-    pub station_to: String,
+    // --- Ключ группировки ---
+    pub station_to:      String,
     pub station_to_code: String,
-    pub railway_to: String,
+    pub railway_to:      String,
     pub railway_to_code: Option<i32>,
     pub railway_part_to: Option<String>,
+    /// Тип вагона (например, "БКТ", "Прочие", "Т"). None для безномерных.
+    pub car_type:        Option<String>,
+    pub etsng:           Option<String>,
+    pub etsng_name:      Option<String>,
+    /// Статус ремонта группы.
+    pub repair_status:   RepairStatus,
+    /// "ГРУЖ" или "ПОР" (GRPOName). None для безномерных.
+    pub status:          Option<String>,
 
-    // --- Характеристики вагона (только именные) ---
-    pub capacity: f64,
-    pub volume: f64,
-    /// Тип вагона из OPZComment1 (например, "БКТ", "Прочие").
-    pub car_type: Option<String>,
-    pub car_model: Option<String>,
+    // --- Агрегированные: номера вагонов (пусто для NoNumber) ---
+    pub car_numbers: Vec<u64>,
 
-    // --- Состояние груза (только именные) ---
-    /// "ГРУЖ" или "ПОР" (GRPOName).
-    pub status: Option<String>,
-    pub etsng: Option<String>,
-    pub etsng_name: Option<String>,
-    pub prev_etsng: Option<String>,
-    pub prev_etsng_name: Option<String>,
+    // --- Агрегированные: станции/дороги отправления (по одной на каждый вагон) ---
+    pub stations_from:      Vec<String>,
+    pub stations_from_code: Vec<String>,
+    pub railways_from:      Vec<String>,
+    pub railways_from_code: Vec<i32>,
+    pub railways_part_from: Vec<String>,
 
-    // --- Ремонт (только именные) ---
-    pub days_to_repair: Option<f64>,
-    pub repair_type: Option<String>,
+    // --- Агрегированные: состояние груза ---
+    pub prev_etsngs:      Vec<String>,
+    pub prev_etsng_names: Vec<String>,
 
-    // --- Комментарии (только именные) ---
-    pub comment_odo: Option<String>,
-    pub comment_odo2: Option<String>,
-    /// Непустые OPZComment1..10, объединённые через " | ".
-    pub opz_comments: Option<String>,
-
-    pub next_claim: Option<String>,
-    pub idle_time: Option<f64>,
 }
 
 

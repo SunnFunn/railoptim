@@ -21,7 +21,8 @@ pub struct AssignmentRecord {
     // --- Предложение ---
     pub supply_id:           usize,
     pub supply_kind:         &'static str,
-    pub car_number:          Option<u64>,
+    /// Номера вагонов в группе (пусто для NoNumber).
+    pub car_numbers:         Vec<u64>,
     pub supply_station:      String,
     pub supply_station_code: String,
     pub supply_railway:      String,
@@ -78,7 +79,7 @@ pub fn build_report(
                 cars,
                 supply_id:           s.s_id,
                 supply_kind:         car_kind_str(&s.kind),
-                car_number:          s.car_number,
+                car_numbers:         s.car_numbers.clone(),
                 supply_station:      s.station_to.clone(),
                 supply_station_code: arc.supply_station_code.clone(),
                 supply_railway:      s.railway_to.clone(),

@@ -31,23 +31,25 @@ pub struct OptimResult {
 ///
 /// Выше любого реального тарифа — решатель предпочитает реальные дуги.
 /// Конечный — задача остаётся разрешимой при дефиците предложения.
-const PENALTY_COST: f64 = 10_000_000.0;
+const PENALTY_COST: f64 = 1_000_000.0;
 
 /// Решает сбалансированную транспортную задачу методом LP (HiGHS / IPM).
 ///
-/// # Балансировка через dummy-узлы
+/// # Балансировка через явные dummy-узлы
 ///
-/// Перед решением задача балансируется: добавляется ровно один dummy-узел,
-/// чтобы суммарное предложение точно равнялось суммарному спросу.
+/// Задача всегда сбалансирована: суммарное предложение = суммарный спрос.
+/// Достигается добавлением двух dummy-узлов с дугами ко/от **всех** реальных узлов:
 ///
-/// | Ситуация          | Действие                                                    |
-/// |-------------------|-------------------------------------------------------------|
-/// | supply > demand   | Dummy-узел **спроса**: поглощает излишек по стоимости 0    |
-/// | demand > supply   | Dummy-узел **предложения**: покрывает дефицит по PENALTY   |
-/// | supply == demand  | Dummy-узел не добавляется                                   |
+/// | Dummy-узел        | Ёмкость         | Стоимость дуги | Назначение                       |
+/// |-------------------|-----------------|----------------|----------------------------------|
+/// | Dummy **спрос**   | `total_supply`  | 0              | Поглощает незадействованное предложение |
+/// | Dummy **предложение** | `total_demand` | `PENALTY`  | Покрывает незакрытый спрос       |
 ///
-/// После балансировки ограничения предложения/спроса становятся **равенствами**,
-/// и LP решается строже и быстрее.
+/// Оба узла имеют ёмкость, равную **полному** предложению/спросу, а не дефициту.
+/// Это гарантирует разрешимость даже если отдельный узел спроса полностью
+/// изолирован (нет реальных дуг): он всегда покрывается dummy-предложением.
+///
+/// После балансировки все ограничения — **равенства**, LP решается строже и быстрее.
 ///
 /// # Возврат
 /// `(OptimResult, Vec<f64>)` — второй элемент содержит значения только
@@ -57,30 +59,21 @@ pub fn solve(
     supply: &[SupplyNode],
     demand: &[DemandNode],
 ) -> (OptimResult, Vec<f64>) {
-    let total_supply: i32 = supply.iter().map(|s| s.car_count).sum();
-    let total_demand: i32 = demand.iter().map(|d| d.car_count).sum();
-    let diff = total_supply - total_demand; // >0 профицит, <0 дефицит
+    let total_supply: f64 = supply.iter().map(|s| s.car_count as f64).sum();
+    let total_demand: f64 = demand.iter().map(|d| d.car_count as f64).sum();
 
     let mut model = ColProblem::default();
 
-    // --- Строки ограничений (равенства после добавления dummy) ---
-
-    // Предложение: Σ x[из s] = car_count[s]
+    // --- Строки предложения: Σ x[из s] = car_count[s] ---
     let supply_rows: Vec<_> = supply
         .iter()
-        .map(|s| {
-            let c = s.car_count as f64;
-            model.add_row(c..=c)
-        })
+        .map(|s| { let c = s.car_count as f64; model.add_row(c..=c) })
         .collect();
 
-    // Спрос: Σ x[в d] = car_count[d]
+    // --- Строки спроса: Σ x[в d] = car_count[d] ---
     let demand_rows: Vec<_> = demand
         .iter()
-        .map(|d| {
-            let c = d.car_count as f64;
-            model.add_row(c..=c)
-        })
+        .map(|d| { let c = d.car_count as f64; model.add_row(c..=c) })
         .collect();
 
     // --- Реальные дуговые переменные ---
@@ -92,28 +85,23 @@ pub fn solve(
         );
     }
 
-    // --- Dummy-узел для балансировки ---
-    let (n_dummy, dummy_is_demand) = if diff > 0 {
-        // Профицит: dummy-узел СПРОСА поглощает excess supply по стоимости 0.
-        // Каждый узел предложения получает дугу в dummy-demand.
-        let dummy_row = model.add_row(diff as f64..=diff as f64);
-        for s_row in &supply_rows {
-            model.add_column(0.0, 0.0.., [(*s_row, 1.0), (dummy_row, 1.0)]);
-        }
-        (supply.len(), true)
-    } else if diff < 0 {
-        // Дефицит: dummy-узел ПРЕДЛОЖЕНИЯ покрывает нехватку по штрафу.
-        // Каждый узел спроса получает дугу из dummy-supply.
-        let dummy_row = model.add_row((-diff) as f64..=(-diff) as f64);
-        for d_row in &demand_rows {
-            model.add_column(PENALTY_COST, 0.0.., [(dummy_row, 1.0), (*d_row, 1.0)]);
-        }
-        (demand.len(), false)
-    } else {
-        (0, false)
-    };
+    // --- Dummy-узел СПРОСА (поглощает незадействованное предложение) ---
+    // Ёмкость = total_supply: любой узел предложения может полностью уйти в dummy.
+    // Стоимость дуг = 0: незадействованные вагоны не штрафуются.
+    let dummy_demand_row = model.add_row(total_supply..=total_supply);
+    for s_row in &supply_rows {
+        model.add_column(0.0, 0.0.., [(*s_row, 1.0), (dummy_demand_row, 1.0)]);
+    }
 
-    // --- Запуск решателя ---
+    // --- Dummy-узел ПРЕДЛОЖЕНИЯ (покрывает незакрытый спрос) ---
+    // Ёмкость = total_demand: каждый узел спроса может полностью уйти в штраф.
+    // Стоимость дуг = PENALTY: решатель предпочитает реальные дуги.
+    let dummy_supply_row = model.add_row(total_demand..=total_demand);
+    for d_row in &demand_rows {
+        model.add_column(PENALTY_COST, 0.0.., [(dummy_supply_row, 1.0), (*d_row, 1.0)]);
+    }
+
+    // --- Решатель ---
     // IPM значительно быстрее simplex для задач с >50K переменных.
     let mut optimizer = model.optimise(Sense::Minimise);
     optimizer.set_option("solver",   "ipm");
@@ -121,30 +109,29 @@ pub fn solve(
     optimizer.set_option("parallel", "on");
     optimizer.set_option("threads",  8_i32);
 
-    let solved    = optimizer.solve();
-    let solution  = solved.get_solution();
-    let col_vals  = solution.columns();
+    let solved   = optimizer.solve();
+    let solution = solved.get_solution();
+    let col_vals = solution.columns();
 
-    // Столбцы: [реальные дуги (n_arcs)] + [dummy дуги (n_dummy)]
-    let n_arcs     = arcs.len();
-    let arc_vals   = &col_vals[..n_arcs];
-    let dummy_vals = &col_vals[n_arcs..n_arcs + n_dummy];
+    // Столбцы по порядку добавления:
+    // [реальные дуги (n_arcs)] [dummy-demand дуги (n_supply)] [dummy-supply дуги (n_demand)]
+    let n_arcs    = arcs.len();
+    let n_supply  = supply.len();
+    let n_demand  = demand.len();
 
-    let dummy_total: f64 = dummy_vals.iter().filter(|&&q| q > 1e-4).sum();
+    let arc_vals          = &col_vals[..n_arcs];
+    let dummy_demand_vals = &col_vals[n_arcs..n_arcs + n_supply];
+    let dummy_supply_vals = &col_vals[n_arcs + n_supply..n_arcs + n_supply + n_demand];
 
-    // --- Сбор статистики ---
+    // --- Статистика ---
     let total_cost: f64 = arcs.iter().zip(arc_vals)
         .filter(|(_, q)| **q > 1e-4)
         .map(|(a, &q)| q * a.cost)
         .sum();
 
     let assigned_cars: f64 = arc_vals.iter().filter(|&&q| q > 1e-4).sum();
-
-    let (penalty_cars, excess_supply) = if dummy_is_demand {
-        (0.0, dummy_total)   // профицит → лишние вагоны уходят в dummy-demand
-    } else {
-        (dummy_total, 0.0)   // дефицит → нехватка покрывается dummy-supply
-    };
+    let excess_supply: f64 = dummy_demand_vals.iter().filter(|&&q| q > 1e-4).sum();
+    let penalty_cars:  f64 = dummy_supply_vals.iter().filter(|&&q| q > 1e-4).sum();
 
     let result = OptimResult {
         total_cost,

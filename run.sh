@@ -40,7 +40,8 @@ export APP_ENV="$ENV"
 
 # --- ВЫБОР БИНАРНИКА ---
 if [ "$ENV" == "prod" ]; then
-    BINARY=("$dir/app/bin/railoptim")
+    # BINARY=("$dir/app/bin/railoptim")
+    BINARY=("$dir/target/release/railoptim")
 else
     BINARY=("$dir/target/release/railoptim")
 fi

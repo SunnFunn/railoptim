@@ -1,5 +1,0 @@
-[Пн 23 мар 2026 17:27:59 MSK] Запуск: /home/atretyakov/railoptim/app/bin/railoptim (env=prod)
-Получено узлов спроса: 250
-Получено узлов предложения: 1018
-Данные сохранены: tmp/checkpoint_2026-03-23_17-28-17.xlsx
-[SUCCESS] railoptim завершил работу успешно.

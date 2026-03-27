@@ -68,12 +68,14 @@ pub fn solve(
     let supply_rows: Vec<_> = supply
         .iter()
         .map(|s| { let c = s.car_count as f64; model.add_row(c..=c) })
+        // .map(|s| { let c = s.car_count as f64; model.add_row(0.0..c) })
         .collect();
 
     // --- Строки спроса: Σ x[в d] = car_count[d] ---
     let demand_rows: Vec<_> = demand
         .iter()
         .map(|d| { let c = d.car_count as f64; model.add_row(c..=c) })
+        // .map(|s| { let c = s.car_count as f64; model.add_row(c..) })
         .collect();
 
     // --- Реальные дуговые переменные ---
@@ -89,14 +91,17 @@ pub fn solve(
     // Ёмкость = total_supply: любой узел предложения может полностью уйти в dummy.
     // Стоимость дуг = 0: незадействованные вагоны не штрафуются.
     let dummy_demand_row = model.add_row(total_supply..=total_supply);
+    // let dummy_demand_row = model.add_row(total_supply..);
     for s_row in &supply_rows {
-        model.add_column(0.0, 0.0.., [(*s_row, 1.0), (dummy_demand_row, 1.0)]);
+        // model.add_column(0.0, 0.0.., [(*s_row, 1.0), (dummy_demand_row, 1.0)]);
+        model.add_column(PENALTY_COST, 0.0.., [(*s_row, 1.0), (dummy_demand_row, 1.0)]);
     }
 
     // --- Dummy-узел ПРЕДЛОЖЕНИЯ (покрывает незакрытый спрос) ---
     // Ёмкость = total_demand: каждый узел спроса может полностью уйти в штраф.
     // Стоимость дуг = PENALTY: решатель предпочитает реальные дуги.
     let dummy_supply_row = model.add_row(total_demand..=total_demand);
+    // let dummy_supply_row = model.add_row(0.0..total_demand);
     for d_row in &demand_rows {
         model.add_column(PENALTY_COST, 0.0.., [(dummy_supply_row, 1.0), (*d_row, 1.0)]);
     }
@@ -122,6 +127,8 @@ pub fn solve(
     let arc_vals          = &col_vals[..n_arcs];
     let dummy_demand_vals = &col_vals[n_arcs..n_arcs + n_supply];
     let dummy_supply_vals = &col_vals[n_arcs + n_supply..n_arcs + n_supply + n_demand];
+
+    println!("{:?}", arc_vals);
 
     // --- Статистика ---
     let total_cost: f64 = arcs.iter().zip(arc_vals)

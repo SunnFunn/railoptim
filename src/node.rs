@@ -103,7 +103,7 @@ pub struct SupplyNode {
 }
 
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 pub struct DemandNode {
     /// Уникальный ID узла спроса, присваивается при конвертации из API-ответа.
     #[serde(default)]

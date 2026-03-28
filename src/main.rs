@@ -91,10 +91,14 @@ async fn main() -> Result<()> {
     solver::print_greedy_result(&greedy_result, &supply_nodes, &demand_nodes);
 
     // -----------------------------------------------------------------------
-    // 6. LP-оптимизация (HiGHS)
+    // 6. ALNS-оптимизация (Adaptive Large Neighbourhood Search)
     // -----------------------------------------------------------------------
-    let (optim_result, solution) =
-        solver::solve(&arcs, &supply_nodes, &demand_nodes);
+    let alns_config = solver::AlnsConfig::default();
+    let alns_result = solver::run_alns(
+        &greedy_result, &arcs, &supply_nodes, &demand_nodes, &alns_config,
+    );
+    let optim_result = alns_result.to_optim_result();
+    let solution     = alns_result.arc_vals;
 
     // -----------------------------------------------------------------------
     // 7. Вывод результатов в терминал

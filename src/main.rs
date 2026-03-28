@@ -87,9 +87,9 @@ async fn main() -> Result<()> {
     // -----------------------------------------------------------------------
     solver::print_balance(&supply_nodes, &demand_nodes);
 
-    println!("{:?}", &supply_nodes[..5]);
-    println!("{:?}", &demand_nodes[..5]);
-    println!("{:?}", &arcs[..5]);
+    // println!("{:?}", &supply_nodes[..5]);
+    // println!("{:?}", &demand_nodes[..5]);
+    // println!("{:?}", &arcs[..5]);
 
     let (optim_result, solution) =
         solver::solve(&arcs, &supply_nodes, &demand_nodes);

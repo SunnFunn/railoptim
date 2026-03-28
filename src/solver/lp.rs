@@ -106,7 +106,7 @@ pub fn solve(
     // --- Решатель ---
     // IPM значительно быстрее simplex для задач с >50K переменных.
     let mut optimizer = model.optimise(Sense::Minimise);
-    optimizer.set_option("solver",   "ipm");
+    optimizer.set_option("solver",   "simplex");
     optimizer.set_option("presolve", "on");
     optimizer.set_option("parallel", "on");
     optimizer.set_option("threads",  8_i32);
@@ -124,8 +124,6 @@ pub fn solve(
     let arc_vals          = &col_vals[..n_arcs];
     let dummy_demand_vals = &col_vals[n_arcs..n_arcs + n_supply];
     let dummy_supply_vals = &col_vals[n_arcs + n_supply..n_arcs + n_supply + n_demand];
-
-    println!("{:?}", arc_vals);
 
     // --- Статистика ---
     let total_cost: f64 = arcs.iter().zip(arc_vals)

@@ -250,7 +250,8 @@ fn group_supply(
 
 impl ApiClient {
     pub async fn fetch_supply_nodes(&self) -> Result<Vec<SupplyNode>, ApiError> {
-        let doc_date = Utc::now().format("%Y-%m-%d").to_string();
+        // let doc_date = Utc::now().format("%Y-%m-%d").to_string();
+        let doc_date = "2026-03-27".to_string(); // TEMP: фиксированная дата для теста в выходной день
         let url = ApiEndpoint::Supply.url(&self.base_url);
 
         let response = self

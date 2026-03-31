@@ -11,7 +11,7 @@ use super::lp::{solve, OptimResult};
 // ---------------------------------------------------------------------------
 
 /// Бюджет времени ALNS по умолчанию.
-const DEFAULT_TIME_BUDGET: Duration = Duration::from_secs(600); // 10 минут
+const DEFAULT_TIME_BUDGET: Duration = Duration::from_secs(300); // 5 минут
 
 /// Начальная доля разрушения (K): 20% назначений.
 const DESTROY_RATIO_INIT: f64 = 0.20;

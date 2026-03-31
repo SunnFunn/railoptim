@@ -1,5 +1,6 @@
 pub mod client;
 pub mod demand;
+pub mod output;
 pub mod supply;
 pub mod tariffs;
 

@@ -27,9 +27,6 @@ async fn main() -> Result<()> {
     let supply_nodes = client.fetch_supply_nodes().await?;
     println!("Получено узлов предложения:  {}", supply_nodes.len());
 
-    let checkpoint = debug::save_checkpoint(&demand_nodes, &supply_nodes)?;
-    println!("Чекпоинт сохранён:           {}", checkpoint.display());
-
     // -----------------------------------------------------------------------
     // 3. Получение тарифов
     //    stations_from — уникальные станции образования порожних (station_to)
@@ -97,11 +94,27 @@ async fn main() -> Result<()> {
     let alns_result = solver::run_alns(
         &greedy_result, &arcs, &supply_nodes, &demand_nodes, &alns_config,
     );
-    let optim_result = alns_result.to_optim_result();
-    let solution     = alns_result.arc_vals;
+    let optim_result  = alns_result.to_optim_result();
+    let solution      = alns_result.arc_vals;
 
     // -----------------------------------------------------------------------
-    // 7. Вывод результатов в терминал
+    // 7. Построение выходных записей + сохранение чекпоинта и отправка в АПИ
+    // -----------------------------------------------------------------------
+    let output_records = solver::build_output_records(
+        &solution, &arcs, &supply_nodes, &demand_nodes,
+    );
+    println!("Записей для отправки в АПИ:  {}", output_records.len());
+
+    let checkpoint = debug::save_checkpoint(&demand_nodes, &supply_nodes, Some(&output_records))?;
+    println!("Чекпоинт сохранён:           {}", checkpoint.display());
+
+    match client.send_assignments(&output_records).await {
+        Ok(())   => println!("Назначения отправлены в АПИ: OK"),
+        Err(e)   => eprintln!("Ошибка отправки в АПИ:       {e}"),
+    }
+
+    // -----------------------------------------------------------------------
+    // 8. Вывод результатов в терминал
     // -----------------------------------------------------------------------
     println!();
     println!("======= РЕЗУЛЬТАТЫ ОПТИМИЗАЦИИ =======");
@@ -121,7 +134,7 @@ async fn main() -> Result<()> {
     println!();
 
     // -----------------------------------------------------------------------
-    // 8. Сохранение результатов в tmp/result_*.json
+    // 9. Сохранение результатов в tmp/result_*.json
     // -----------------------------------------------------------------------
     let report = solver::build_report(
         &optim_result,

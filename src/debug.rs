@@ -7,18 +7,20 @@ use chrono::Local;
 use rust_xlsxwriter::{Format, FormatBorder, Workbook, XlsxError};
 
 use crate::node::{CarKind, DemandNode, RepairStatus, SupplyNode};
+use crate::solver::result::OutputRecord;
 
 /// Сохраняет данные прогона в файл-чекпоинт `tmp/checkpoint_YYYY-MM-DD_HH-MM-SS.xlsx`.
 ///
 /// Листы:
 /// - `DemandNodes` — узлы спроса
 /// - `SupplyNodes` — узлы предложения порожних
-/// - `Tariffs`     — тарифные данные (будущий лист)
+/// - `Output`      — план назначений (если передан `Some`)
 ///
 /// Папка `tmp/` создаётся автоматически. Поля `Vec<String>` выводятся через ` | `.
 pub fn save_checkpoint(
-    demand: &[DemandNode],
-    supply: &[SupplyNode],
+    demand:  &[DemandNode],
+    supply:  &[SupplyNode],
+    output:  Option<&[OutputRecord]>,
 ) -> Result<PathBuf, XlsxError> {
     let tmp_dir = PathBuf::from("tmp");
     std::fs::create_dir_all(&tmp_dir)?;
@@ -30,6 +32,9 @@ pub fn save_checkpoint(
 
     write_demand_sheet(&mut workbook, demand)?;
     write_supply_sheet(&mut workbook, supply)?;
+    if let Some(records) = output {
+        write_output_sheet(&mut workbook, records)?;
+    }
 
     workbook.save(&path)?;
     Ok(path)
@@ -230,6 +235,104 @@ fn write_supply_sheet(workbook: &mut Workbook, nodes: &[SupplyNode]) -> Result<(
     }
 
     ws.autofilter(0, 0, nodes.len() as u32, headers.len() as u16 - 1)?;
+    ws.set_freeze_panes(1, 0)?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Лист Output (план назначений)
+// ---------------------------------------------------------------------------
+
+fn write_output_sheet(workbook: &mut Workbook, records: &[OutputRecord]) -> Result<(), XlsxError> {
+    let ws = workbook.add_worksheet();
+    ws.set_name("Output")?;
+
+    let hdr  = Format::new().set_bold().set_border(FormatBorder::Thin)
+                            .set_background_color(0x_FF_E6_99);
+    let cell = Format::new().set_border(FormatBorder::Thin);
+    let num  = Format::new().set_border(FormatBorder::Thin).set_num_format("0");
+    let dec  = Format::new().set_border(FormatBorder::Thin).set_num_format("0.00");
+
+    let headers: &[(&str, f64)] = &[
+        ("OPZ Date",            18.0),
+        // Доп. поля только для Excel
+        ("Тип вагона (вид)",    14.0),
+        ("Период погрузки",     16.0),
+        // Откуда
+        ("Дорога откуда",       16.0),
+        ("Отд. дороги откуда",  18.0),
+        ("Ст. откуда",          22.0),
+        ("Код ст. откуда",      14.0),
+        // Куда
+        ("Дорога куда",         16.0),
+        ("Отд. дороги куда",    18.0),
+        ("Ст. куда",            22.0),
+        ("Код ст. куда",        14.0),
+        // Назначение
+        ("Кол-во ваг.",         10.0),
+        ("Статус (ГРУЖ/ПОР)",   14.0),
+        ("Тип вагона",          12.0),
+        // Груз
+        ("Пред. ЕТСНГ",         28.0),
+        ("ЕТСНГ",               28.0),
+        // Заявка
+        ("ГУ-12",               16.0),
+        ("Номер заявки",        16.0),
+        ("Дата заявки",         18.0),
+        // Участники
+        ("Клиент",              24.0),
+        ("Грузоотправитель",    24.0),
+        ("Грузополучатель",     24.0),
+        // Тариф
+        ("Расстояние, км",      14.0),
+        ("Срок доставки, сут.", 16.0),
+        ("Стоимость, руб.",     16.0),
+        // Тип назначения
+        ("Тип назначения",      28.0),
+        // Вагоны
+        ("Номера вагонов",      50.0),
+    ];
+
+    for (col, (title, width)) in headers.iter().enumerate() {
+        ws.write_with_format(0, col as u16, *title, &hdr)?;
+        ws.set_column_width(col as u16, *width)?;
+    }
+
+    macro_rules! opt { ($v:expr) => { $v.as_deref().unwrap_or("") }; }
+
+    for (row_idx, r) in records.iter().enumerate() {
+        let row = (row_idx + 1) as u32;
+
+        ws.write_with_format(row,  0, &r.opz_date,                        &cell)?;
+        ws.write_with_format(row,  1, &r.supply_kind,                     &cell)?;
+        ws.write_with_format(row,  2, &r.period_label,                    &cell)?;
+        ws.write_with_format(row,  3, &r.railway_from,                    &cell)?;
+        ws.write_with_format(row,  4, opt!(&r.railway_from_div),          &cell)?;
+        ws.write_with_format(row,  5, &r.station_from,                    &cell)?;
+        ws.write_with_format(row,  6, &r.station_from_code,               &cell)?;
+        ws.write_with_format(row,  7, &r.railway_to,                      &cell)?;
+        ws.write_with_format(row,  8, opt!(&r.railway_to_div),            &cell)?;
+        ws.write_with_format(row,  9, &r.station_to,                      &cell)?;
+        ws.write_with_format(row, 10, &r.station_to_code,                 &cell)?;
+        ws.write_with_format(row, 11, r.assigned_cars,                    &num)?;
+        ws.write_with_format(row, 12, opt!(&r.load_status),               &cell)?;
+        ws.write_with_format(row, 13, opt!(&r.car_type),                  &cell)?;
+        ws.write_with_format(row, 14, opt!(&r.prev_etsng_name),           &cell)?;
+        ws.write_with_format(row, 15, opt!(&r.etsng_name),                &cell)?;
+        ws.write_with_format(row, 16, opt!(&r.gu12_number),               &cell)?;
+        ws.write_with_format(row, 17, opt!(&r.claim_number),              &cell)?;
+        ws.write_with_format(row, 18, opt!(&r.claim_date),                &cell)?;
+        ws.write_with_format(row, 19, opt!(&r.client),                    &cell)?;
+        ws.write_with_format(row, 20, opt!(&r.sender),                    &cell)?;
+        ws.write_with_format(row, 21, opt!(&r.customer),                  &cell)?;
+        ws.write_with_format(row, 22, r.distance,                         &num)?;
+        ws.write_with_format(row, 23, r.period_of_delivery,               &num)?;
+        ws.write_with_format(row, 24, r.cost,                             &dec)?;
+        ws.write_with_format(row, 25, &r.assignment_type,                 &cell)?;
+        ws.write_with_format(row, 26, r.car_numbers_list.join(" | "),     &cell)?;
+    }
+
+    ws.autofilter(0, 0, records.len() as u32, headers.len() as u16 - 1)?;
     ws.set_freeze_panes(1, 0)?;
     Ok(())
 }

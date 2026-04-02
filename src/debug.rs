@@ -179,6 +179,7 @@ fn write_supply_sheet(workbook: &mut Workbook, nodes: &[SupplyNode]) -> Result<(
         ("ЕТСНГ",           12.0),
         ("Груз (ЕТСНГ)",    28.0),
         ("Статус",           8.0),
+        ("Масс. выгр.",     12.0),
         // Агрегированные
         ("Номера вагонов",  40.0),
         ("Ст. отправления", 40.0),
@@ -224,14 +225,15 @@ fn write_supply_sheet(workbook: &mut Workbook, nodes: &[SupplyNode]) -> Result<(
         ws.write_with_format(row,  9, opt!(&n.car_type),     &cell)?;
         ws.write_with_format(row, 10, opt!(&n.etsng),        &cell)?;
         ws.write_with_format(row, 11, opt!(&n.etsng_name),   &cell)?;
-        ws.write_with_format(row, 12, opt!(&n.status),       &cell)?;
+        ws.write_with_format(row, 12, opt!(&n.status),                    &cell)?;
+        ws.write_with_format(row, 13, if n.is_mass_unloading { "Да" } else { "" }, &cell)?;
         // Агрегированные
-        ws.write_with_format(row, 13, join_u64(&n.car_numbers),        &cell)?;
-        ws.write_with_format(row, 14, join_str(&n.stations_from),      &cell)?;
-        ws.write_with_format(row, 15, join_str(&n.stations_from_code), &cell)?;
-        ws.write_with_format(row, 16, join_i32(&n.railways_from_code), &cell)?;
-        ws.write_with_format(row, 17, join_str(&n.prev_etsngs),        &cell)?;
-        ws.write_with_format(row, 18, join_str(&n.prev_etsng_names),   &cell)?;
+        ws.write_with_format(row, 14, join_u64(&n.car_numbers),        &cell)?;
+        ws.write_with_format(row, 15, join_str(&n.stations_from),      &cell)?;
+        ws.write_with_format(row, 16, join_str(&n.stations_from_code), &cell)?;
+        ws.write_with_format(row, 17, join_i32(&n.railways_from_code), &cell)?;
+        ws.write_with_format(row, 18, join_str(&n.prev_etsngs),        &cell)?;
+        ws.write_with_format(row, 19, join_str(&n.prev_etsng_names),   &cell)?;
     }
 
     ws.autofilter(0, 0, nodes.len() as u32, headers.len() as u16 - 1)?;

@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 use rand::prelude::*;
 
 use crate::node::{DemandNode, SupplyNode};
-use super::model::TaskArc;
+use super::model::{TaskArc, MIN_BATCH_FROM_MASS_STATION};
 use super::greedy::{Assignment, GreedyResult, greedy_to_arc_vals};
 use super::lp::{solve, OptimResult};
 
@@ -200,12 +200,15 @@ fn repair_greedy(
         if state.remaining_demand[d_idx] <= 0 { continue; }
 
         // Находим лучшую допустимую дугу для этого узла спроса.
+        let rem_demand = state.remaining_demand[d_idx];
         let best_arc = arcs.iter()
             .filter(|arc| {
-                arc.d_idx == d_idx
-                    && arc.period_ok
-                    && arc.car_type_ok
-                    && state.remaining_supply[arc.s_idx] > 0
+                if arc.d_idx != d_idx || !arc.period_ok || !arc.car_type_ok { return false; }
+                let avail = state.remaining_supply[arc.s_idx];
+                if avail <= 0 { return false; }
+                // Ограничение партии для станций массовой выгрузки.
+                let qty = avail.min(rem_demand);
+                !arc.is_mass_unloading || qty >= MIN_BATCH_FROM_MASS_STATION
             })
             .min_by(|a, b| {
                 a.cost.partial_cmp(&b.cost)
@@ -327,6 +330,7 @@ fn build_subproblem(
             delivery_days:       arc.delivery_days,
             period_ok:           arc.period_ok,
             car_type_ok:         arc.car_type_ok,
+            is_mass_unloading:   arc.is_mass_unloading,
         }
     }).collect();
 
@@ -362,7 +366,15 @@ fn repair_lp(
 
     if sub_arcs.is_empty() { return false; }
 
+    // Индекс оригинальных дуг по (s_idx, d_idx) для поиска флагов.
+    let orig_arc_idx: std::collections::HashMap<(usize, usize), &TaskArc> = arcs.iter()
+        .map(|a| ((a.s_idx, a.d_idx), a))
+        .collect();
+
     let (_, arc_vals) = solve(&sub_arcs, &sub_supply, &sub_demand);
+
+    // Запоминаем позицию до добавления новых назначений.
+    let before = state.assignments.len();
 
     // Применяем результат LP к состоянию.
     for (arc, &qty_f) in sub_arcs.iter().zip(arc_vals.iter()) {
@@ -372,12 +384,9 @@ fn repair_lp(
         let orig_s = s_map[arc.s_idx];
         let orig_d = d_map[arc.d_idx];
 
-        // Находим оригинальный arc_id.
-        // Ищем дугу с совпадающими orig_s/orig_d и флагами.
-        let orig_arc_id = arcs.iter()
-            .find(|a| a.s_idx == orig_s && a.d_idx == orig_d && a.period_ok && a.car_type_ok)
-            .map(|a| a.arc_id)
-            .unwrap_or(arc.arc_id); // fallback
+        // Ищем оригинальную дугу для arc_id и флага is_mass_unloading.
+        let orig_arc = orig_arc_idx.get(&(orig_s, orig_d)).copied();
+        let orig_arc_id = orig_arc.map(|a| a.arc_id).unwrap_or(arc.arc_id);
 
         let arc_cost = qty as f64 * arc.cost;
         state.remaining_supply[orig_s] -= qty;
@@ -392,6 +401,28 @@ fn repair_lp(
             total_cost: arc_cost,
         });
     }
+
+    // Пост-обработка: снимаем назначения, нарушающие ограничение минимальной партии
+    // для станций массовой выгрузки (допустимо только 0 или >= MIN_BATCH).
+    let mut i = before;
+    while i < state.assignments.len() {
+        let a = &state.assignments[i];
+        let violates = orig_arc_idx
+            .get(&(a.s_idx, a.d_idx))
+            .map(|arc| arc.is_mass_unloading && a.quantity < MIN_BATCH_FROM_MASS_STATION)
+            .unwrap_or(false);
+
+        if violates {
+            let removed_a = state.assignments.swap_remove(i);
+            state.remaining_supply[removed_a.s_idx] += removed_a.quantity;
+            state.remaining_demand[removed_a.d_idx] += removed_a.quantity;
+            state.total_cost -= removed_a.total_cost;
+            // Не инкрементируем i: swap_remove поставил другой элемент на это место.
+        } else {
+            i += 1;
+        }
+    }
+
     true
 }
 

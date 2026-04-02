@@ -3,6 +3,17 @@ use std::collections::HashMap;
 use crate::node::{DemandNode, SupplyNode, TariffNode};
 
 // ---------------------------------------------------------------------------
+// Константы ограничений
+// ---------------------------------------------------------------------------
+
+/// Минимальный допустимый размер партии вагонов, назначаемых с узла
+/// **станции массовой выгрузки** (`is_mass_unloading == true`) на один
+/// узел спроса. Значение 0 тоже допустимо (нет назначения вовсе).
+///
+/// Значение `x` на дуге должно удовлетворять: `x == 0 || x >= MIN_BATCH_FROM_MASS_STATION`.
+pub const MIN_BATCH_FROM_MASS_STATION: i32 = 5;
+
+// ---------------------------------------------------------------------------
 // Дуга транспортной задачи
 // ---------------------------------------------------------------------------
 
@@ -38,6 +49,9 @@ pub struct TaskArc {
     pub period_ok: bool,
     /// Тип вагона совместим с требованиями узла спроса.
     pub car_type_ok: bool,
+    /// Узел предложения находится на станции массовой выгрузки.
+    /// На таких дугах поток допустим только как `0` или `>= MIN_BATCH_FROM_MASS_STATION`.
+    pub is_mass_unloading: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -98,11 +112,12 @@ pub fn build_task_arcs(
                 d_idx,
                 supply_station_code: s.station_to_code.clone(),
                 demand_station_code: d.station_code.clone(),
-                cost:          tariff.cost,
-                distance:      tariff.distance,
-                delivery_days: tariff.period_of_delivery,
-                period_ok:     true,
-                car_type_ok:   true,
+                cost:              tariff.cost,
+                distance:          tariff.distance,
+                delivery_days:     tariff.period_of_delivery,
+                period_ok:         true,
+                car_type_ok:       true,
+                is_mass_unloading: s.is_mass_unloading,
             });
         }
     }

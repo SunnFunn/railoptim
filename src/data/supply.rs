@@ -6,6 +6,10 @@ use serde::Deserialize;
 use crate::node::{CarKind, RepairStatus, SupplyNode};
 use super::client::{ApiClient, ApiEndpoint, ApiError};
 
+/// Минимальное суммарное количество вагонов на станции назначения,
+/// при котором станция считается станцией массовой выгрузки.
+const MASS_UNLOADING_THRESHOLD: i32 = 50;
+
 // ---------------------------------------------------------------------------
 // Внутренние структуры десериализации
 // ---------------------------------------------------------------------------
@@ -239,9 +243,29 @@ fn group_supply(
                 railways_part_from: data.railways_part_from,
                 prev_etsngs:        data.prev_etsngs,
                 prev_etsng_names:   data.prev_etsng_names,
+                is_mass_unloading:  false, // заполняется ниже в mark_mass_unloading()
             }
         })
         .collect()
+}
+
+/// Помечает узлы предложения, относящиеся к станциям массовой выгрузки.
+///
+/// Станция считается массовой, если суммарное количество вагонов по всем
+/// узлам с одним `station_to_code` превышает [`MASS_UNLOADING_THRESHOLD`].
+fn mark_mass_unloading(nodes: &mut [SupplyNode]) {
+    // Шаг 1: суммируем car_count по station_to_code (владеющие ключи — нет borrow-конфликта).
+    let mut sums: HashMap<String, i32> = HashMap::new();
+    for node in nodes.iter() {
+        *sums.entry(node.station_to_code.clone()).or_insert(0) += node.car_count;
+    }
+
+    // Шаг 2: устанавливаем флаг.
+    for node in nodes.iter_mut() {
+        node.is_mass_unloading =
+            sums.get(&node.station_to_code).copied().unwrap_or(0)
+                > MASS_UNLOADING_THRESHOLD;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -280,6 +304,8 @@ impl ApiClient {
             no_number_all.extend(item.no_number);
         }
 
-        Ok(group_supply(numbered_all.into_iter(), no_number_all.into_iter()))
+        let mut nodes = group_supply(numbered_all.into_iter(), no_number_all.into_iter());
+        mark_mass_unloading(&mut nodes);
+        Ok(nodes)
     }
 }

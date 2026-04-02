@@ -1,5 +1,5 @@
 use crate::node::{DemandNode, SupplyNode};
-use super::model::TaskArc;
+use super::model::{TaskArc, MIN_BATCH_FROM_MASS_STATION};
 
 // ---------------------------------------------------------------------------
 // Результат жадного решения
@@ -110,6 +110,12 @@ pub fn greedy_initial_solution(
         }
 
         let qty = avail_supply.min(avail_demand);
+
+        // Ограничение партии для станций массовой выгрузки:
+        // допустимо только 0 или >= MIN_BATCH_FROM_MASS_STATION.
+        if arc.is_mass_unloading && qty < MIN_BATCH_FROM_MASS_STATION {
+            continue;
+        }
 
         remaining_supply[arc.s_idx] -= qty;
         remaining_demand[arc.d_idx] -= qty;

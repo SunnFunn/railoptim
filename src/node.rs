@@ -96,6 +96,11 @@ pub struct SupplyNode {
     pub railways_from_code: Vec<i32>,
     pub railways_part_from: Vec<String>,
 
+    /// `true` — станция назначения является станцией массовой выгрузки:
+    /// суммарное количество вагонов по всем узлам с этой станцией > порога.
+    /// Заполняется после группировки в [`crate::data::supply`].
+    pub is_mass_unloading: bool,
+
     // --- Агрегированные: состояние груза ---
     pub prev_etsngs:      Vec<String>,
     pub prev_etsng_names: Vec<String>,

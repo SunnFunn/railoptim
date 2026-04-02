@@ -4,7 +4,9 @@ use std::path::PathBuf;
 use chrono::Local;
 use serde::Serialize;
 
-use crate::node::{DemandNode, SupplyNode, CarKind};
+use std::collections::HashMap;
+
+use crate::node::{DemandNode, SupplyNode, CarKind, TariffNode};
 use super::lp::OptimResult;
 use super::model::TaskArc;
 
@@ -239,6 +241,109 @@ pub struct OutputRecord {
     pub supply_kind: String,
     #[serde(skip)]
     pub period_label: String,
+}
+
+/// Строит записи для вагонов `CarKind::Assigned` — они не участвуют в оптимизации
+/// и добавляются к результату напрямую с `assignment_type = "По факту"`.
+///
+/// Каждый `SupplyNode` типа `Assigned` разбивается на подзаписи по уникальным
+/// станциям отправления (`station_from_code`), так как вагоны в группе могут
+/// приходить с разных дорог. Каждая подзапись содержит количество вагонов
+/// из данной станции отправления и их номера.
+///
+/// Поля `StationTo` / `RailWayTo` одинаковы для всей группы (ключ группировки).
+/// Тариф ищется по паре `(station_from_code, station_to_code)`.
+pub fn build_assigned_output_records(
+    assigned_supply: &[SupplyNode],
+    tariff_nodes:    &[TariffNode],
+) -> Vec<OutputRecord> {
+    use std::collections::BTreeMap;
+
+    let now_str = Local::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
+
+    let tariff_idx: HashMap<(&str, &str), &TariffNode> = tariff_nodes
+        .iter()
+        .map(|t| ((t.station_from_code.as_str(), t.station_to_code.as_str()), t))
+        .collect();
+
+    let mut records: Vec<OutputRecord> = Vec::new();
+
+    for s in assigned_supply {
+        // ---------------------------------------------------------------
+        // Группируем вагоны по station_from_code внутри узла.
+        // Параллельные списки stations_from / railways_from / etc. строились
+        // с одинаковой условной логикой, поэтому индексы соответствуют друг
+        // другу внутри каждого списка (stations_from_code[i] ↔ stations_from[i]).
+        // car_numbers добавляются параллельно: car_numbers[i] — i-й вагон группы;
+        // stations_from_code может быть короче, если у части вагонов нет StationFrom.
+        // ---------------------------------------------------------------
+
+        // BTreeMap: from_code → (from_name, railway, railway_div, Vec<car_number>)
+        let mut sub: BTreeMap<String, (String, String, Option<String>, Vec<u64>)> =
+            BTreeMap::new();
+
+        for (i, code) in s.stations_from_code.iter().enumerate() {
+            let entry = sub.entry(code.clone()).or_insert_with(|| (
+                s.stations_from.get(i).cloned().unwrap_or_default(),
+                s.railways_from.get(i).cloned().unwrap_or_default(),
+                s.railways_part_from.get(i).cloned(),
+                Vec::new(),
+            ));
+            // Если car_numbers выровнен с stations_from_code — добавляем номер вагона.
+            if let Some(&car_num) = s.car_numbers.get(i) {
+                entry.3.push(car_num);
+            }
+        }
+
+        // Если данных о станции отправления нет совсем — одна запись с пустыми полями.
+        if sub.is_empty() {
+            sub.insert(String::new(), (
+                String::new(),
+                String::new(),
+                None,
+                s.car_numbers.clone(),
+            ));
+        }
+
+        // Один OutputRecord на каждую уникальную станцию отправления.
+        for (from_code, (from_name, rw_from, rw_div, car_nums)) in &sub {
+            let tariff = tariff_idx
+                .get(&(from_code.as_str(), s.station_to_code.as_str()))
+                .copied();
+
+            records.push(OutputRecord {
+                opz_date:          now_str.clone(),
+                railway_from:      rw_from.clone(),
+                railway_from_div:  rw_div.clone(),
+                station_from:      from_name.clone(),
+                station_from_code: from_code.clone(),
+                railway_to:        s.railway_to.clone(),
+                railway_to_div:    s.railway_part_to.clone(),
+                station_to:        s.station_to.clone(),
+                station_to_code:   s.station_to_code.clone(),
+                assigned_cars:     car_nums.len().max(1) as i32,
+                load_status:       s.status.clone(),
+                car_type:          s.car_type.clone(),
+                prev_etsng_name:   s.prev_etsng_names.first().cloned(),
+                etsng_name:        s.etsng_name.clone(),
+                gu12_number:       None,
+                claim_number:      None,
+                claim_date:        None,
+                client:            None,
+                sender:            None,
+                customer:          None,
+                distance:          tariff.map(|t| t.distance).unwrap_or(0),
+                period_of_delivery: tariff.map(|t| t.period_of_delivery).unwrap_or(0),
+                cost:              tariff.map(|t| t.cost).unwrap_or(0.0),
+                assignment_type:   "По факту".to_string(),
+                car_numbers_list:  car_nums.iter().map(|n| n.to_string()).collect(),
+                supply_kind:       "Факт".to_string(),
+                period_label:      String::new(),
+            });
+        }
+    }
+
+    records
 }
 
 /// Строит список записей для отправки в API из результата оптимизации.

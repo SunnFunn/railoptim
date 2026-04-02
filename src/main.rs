@@ -9,6 +9,7 @@ use std::collections::HashSet;
 use anyhow::Result;
 use config::Config;
 use data::{ApiClient, StationRef};
+use node::CarKind;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -27,14 +28,33 @@ async fn main() -> Result<()> {
     let supply_nodes = client.fetch_supply_nodes().await?;
     println!("Получено узлов предложения:  {}", supply_nodes.len());
 
+    // Разделяем: Assigned — уже назначены и не участвуют в оптимизации.
+    let (assigned_nodes, opt_supply): (Vec<_>, Vec<_>) = supply_nodes
+        .iter()
+        .cloned()
+        .partition(|s| s.kind == CarKind::Assigned);
+    println!("  свободных для назначения:  {}", opt_supply.len());
+    println!("  по факту (Assigned):       {}", assigned_nodes.len());
+
     // -----------------------------------------------------------------------
     // 3. Получение тарифов
-    //    stations_from — уникальные станции образования порожних (station_to)
-    //    stations_to   — уникальные станции погрузки (station_code)
+    //    stations_from: станции образования порожних opt_supply +
+    //                   станции отправления Assigned-вагонов
+    //    stations_to:   станции погрузки (demand) +
+    //                   станции назначения Assigned-вагонов
     // -----------------------------------------------------------------------
-    let stations_from: Vec<StationRef> = supply_nodes
+    let stations_from: Vec<StationRef> = opt_supply
         .iter()
         .map(|s| (s.station_to_code.clone(), s.railway_to.clone()))
+        .chain(
+            // Берём первую (или единственную) дорогу/станцию отправления каждой группы.
+            assigned_nodes.iter().flat_map(|s| {
+                s.stations_from_code.iter()
+                    .zip(s.railways_from.iter())
+                    .take(1)
+                    .map(|(code, rw)| (code.clone(), rw.clone()))
+            })
+        )
         .collect::<HashSet<_>>()
         .into_iter()
         .map(|(code, rw)| StationRef::new(code, rw))
@@ -43,6 +63,11 @@ async fn main() -> Result<()> {
     let stations_to: Vec<StationRef> = demand_nodes
         .iter()
         .map(|d| (d.station_code.clone(), d.railway_name.clone()))
+        .chain(
+            // Добавляем станции фактического назначения Assigned-вагонов.
+            assigned_nodes.iter()
+                .map(|s| (s.station_to_code.clone(), s.railway_to.clone()))
+        )
         .collect::<HashSet<_>>()
         .into_iter()
         .map(|(code, rw)| StationRef::new(code, rw))
@@ -54,7 +79,7 @@ async fn main() -> Result<()> {
     // -----------------------------------------------------------------------
     // 4. Построение дуг транспортной задачи
     // -----------------------------------------------------------------------
-    let (arcs, arc_stats) = solver::build_task_arcs(&supply_nodes, &demand_nodes, &tariff_nodes);
+    let (arcs, arc_stats) = solver::build_task_arcs(&opt_supply, &demand_nodes, &tariff_nodes);
 
     let total = arc_stats.total_pairs;
     println!("Всего пар supply×demand:     {}", total);
@@ -82,17 +107,17 @@ async fn main() -> Result<()> {
     // -----------------------------------------------------------------------
     // 5. Анализ баланса и начальное жадное решение
     // -----------------------------------------------------------------------
-    solver::print_balance(&supply_nodes, &demand_nodes);
+    solver::print_balance(&opt_supply, &demand_nodes);
 
-    let greedy_result = solver::greedy_initial_solution(&arcs, &supply_nodes, &demand_nodes);
-    solver::print_greedy_result(&greedy_result, &supply_nodes, &demand_nodes);
+    let greedy_result = solver::greedy_initial_solution(&arcs, &opt_supply, &demand_nodes);
+    solver::print_greedy_result(&greedy_result, &opt_supply, &demand_nodes);
 
     // -----------------------------------------------------------------------
     // 6. ALNS-оптимизация (Adaptive Large Neighbourhood Search)
     // -----------------------------------------------------------------------
     let alns_config = solver::AlnsConfig::default();
     let alns_result = solver::run_alns(
-        &greedy_result, &arcs, &supply_nodes, &demand_nodes, &alns_config,
+        &greedy_result, &arcs, &opt_supply, &demand_nodes, &alns_config,
     );
     let optim_result  = alns_result.to_optim_result();
     let solution      = alns_result.arc_vals;
@@ -100,10 +125,19 @@ async fn main() -> Result<()> {
     // -----------------------------------------------------------------------
     // 7. Построение выходных записей + сохранение чекпоинта и отправка в АПИ
     // -----------------------------------------------------------------------
-    let output_records = solver::build_output_records(
-        &solution, &arcs, &supply_nodes, &demand_nodes,
+    // Записи по оптимизированным назначениям (Free / NoNumber).
+    let mut output_records = solver::build_output_records(
+        &solution, &arcs, &opt_supply, &demand_nodes,
     );
-    println!("Записей для отправки в АПИ:  {}", output_records.len());
+    // Добавляем вагоны "По факту" (Assigned) — по одной записи на уникальную
+    // станцию отправления в каждой группе.
+    let assigned_records = solver::build_assigned_output_records(&assigned_nodes, &tariff_nodes);
+    let n_optim    = output_records.len();
+    let n_assigned = assigned_records.len();
+    output_records.extend(assigned_records);
+    println!("Записей для отправки в АПИ:  {} ({} оптим. + {} по факту)",
+        output_records.len(), n_optim, n_assigned,
+    );
 
     let checkpoint = debug::save_checkpoint(&demand_nodes, &supply_nodes, Some(&output_records))?;
     println!("Чекпоинт сохранён:           {}", checkpoint.display());
@@ -140,7 +174,7 @@ async fn main() -> Result<()> {
         &optim_result,
         &solution,
         &arcs,
-        &supply_nodes,
+        &opt_supply,
         &demand_nodes,
     );
 

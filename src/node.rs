@@ -86,6 +86,9 @@ pub struct SupplyNode {
     /// "ГРУЖ" или "ПОР" (GRPOName). None для безномерных.
     pub status:          Option<String>,
 
+    /// `1` — предложение из АПИ (1-е сутки); `10` — дислокация Redis+MSSQL (2–10 сутки).
+    pub supply_period: u8,
+
     // --- Агрегированные: номера вагонов (пусто для NoNumber) ---
     pub car_numbers: Vec<u64>,
 

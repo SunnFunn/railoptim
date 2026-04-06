@@ -241,6 +241,10 @@ pub struct OutputRecord {
     pub supply_kind: String,
     #[serde(skip)]
     pub period_label: String,
+    /// `1` — предложение 1-х суток (АПИ); `10` — дислокация 2–10 суток.
+    /// В POST АПИ попадают только записи с `supply_period == 1`.
+    #[serde(skip)]
+    pub supply_period: u8,
 }
 
 /// Строит записи для вагонов `CarKind::Assigned` — они не участвуют в оптимизации
@@ -339,6 +343,7 @@ pub fn build_assigned_output_records(
                 car_numbers_list:  car_nums.iter().map(|n| n.to_string()).collect(),
                 supply_kind:       "Факт".to_string(),
                 period_label:      String::new(),
+                supply_period:     s.supply_period,
             });
         }
     }
@@ -362,7 +367,11 @@ pub fn build_output_records(
             let s = &supply[arc.s_idx];
             let d = &demand[arc.d_idx];
 
-            let period_label = period_range_str(d.period).to_string();
+            let period_label = if s.supply_period == 10 {
+                format!("{} (предл. 10, 2-10 сут.)", period_range_str(d.period))
+            } else {
+                period_range_str(d.period).to_string()
+            };
 
             OutputRecord {
                 opz_date:          now_str.clone(),
@@ -392,7 +401,18 @@ pub fn build_output_records(
                 car_numbers_list:  s.car_numbers.iter().map(|n| n.to_string()).collect(),
                 supply_kind:       car_kind_str(&s.kind).to_string(),
                 period_label,
+                supply_period:     s.supply_period,
             }
         })
+        .collect()
+}
+
+/// Записи для тела POST в АПИ: только назначения по предложению 1-х суток (`supply_period == 1`).
+/// Решение оптимизации по вагонам периода 10 (2–10 суток) в API не передаётся.
+pub fn output_records_for_api(records: &[OutputRecord]) -> Vec<OutputRecord> {
+    records
+        .iter()
+        .filter(|r| r.supply_period == 1)
+        .cloned()
         .collect()
 }

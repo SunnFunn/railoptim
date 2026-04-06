@@ -1,43 +1,180 @@
-import pymssql
+#!/usr/bin/env python3
+"""
+Дислокация вагонов для периода 2–10 суток:
+  1) Redis: hash supply_data — ключи = номера вагонов;
+  2) MSSQL (pymssql): выборка по этим номерам.
+
+Переменные окружения — Redis:
+  REDIS_SUPPLY_HOST   (если не задан — печатается [] и выход 0)
+  REDIS_SUPPLY_PORT   (по умолчанию 6380)
+  REDIS_SUPPLY_DB     (по умолчанию 0)
+  REDIS_SUPPLY_PASS   (опционально)
+
+MSSQL (если задан REDIS_SUPPLY_HOST и в Redis есть ключи):
+  MSSQL_SERVER или MSSQL_HOST
+  MSSQL_USER
+  MSSQL_PASSWORD
+  MSSQL_DATABASE
+  MSSQL_DOMAIN      (опционально, префикс к логину)
+
+Вывод: JSON-массив объектов в формате полей NumberedCarItem (как в ответе АПИ railoptim).
+"""
+
+from __future__ import annotations
+
 import json
+import os
+import sys
+
+import pymssql
 import redis
 
 
-# функция получения данных о текущей дислокации вагонов Русагротранс
-# ----------------------------------------------------------------------------------------------------------------------------------------------------------------
-def fetch_dislocations(conndict, host, port, db, password, extime):
-    r = redis.Redis(host=host, port=port, db=db, password=password)
-
-    # из БД Redis необходимо получить номера вагонов и только по этим номерам вагонов отобрать из MSSQL сервера данные для узлов SupplyNode в преиод 2-10 сутки
-
-    ########### ИНСТРУКЦИИ по подключению к редис ##########################
-    # при подключении необходимо использовать следующие переменные окружения (только передеалй для питона):
-    # // выгружаем переменные окружения приложения
-    # let host = std::env::var("REDIS_SUPPLY_HOST").unwrap_or_else(|_| "localhost".to_string());
-    # let port = std::env::var("REDIS_SUPPLY_PORT")
-    #     .unwrap_or_else(|_| "6380".to_string())
-    #     .parse::<u16>()
-    #     .expect("Port must be a number");
-    # let db = std::env::var("REDIS_SUPPLY_DB")
-    #     .unwrap_or_else(|_| "0".to_string())
-    #     .parse::<i64>()
-    #     .expect("DB must be a number");
-
-    # // Оборачиваем пароль в SecretString сразу при получении
-    # let password = std::env::var("REDIS_SUPPLY_PASS")
-    #     .ok()
-    #     .map(SecretString::from);
+def _env(key: str, default: str | None = None) -> str | None:
+    v = os.environ.get(key)
+    if v is None or v == "":
+        return default
+    return v
 
 
-    conn = pymssql.connect(server=conndict['server'],
-                           user=(conndict['domain'] + conndict['user']),
-                           password=conndict['password'],
-                           database=conndict['database'])
-    
-    cursor = conn.cursor()
+def _car_type(capacity, volume) -> str:
+    try:
+        c = float(capacity or 0)
+        v = float(volume or 0)
+    except (TypeError, ValueError):
+        return "Прочие"
+    if v < 108.0 and c < 70.0:
+        return "Прочие"
+    if v >= 108.0 and c < 75.0:
+        return "БК"
+    if v < 108.0 and c >= 75.0:
+        return "Т"
+    return "БКТ"
 
-    stmt= \
-    f'''
+
+def _to_int_opt(x):
+    if x is None:
+        return None
+    try:
+        return int(x)
+    except (TypeError, ValueError):
+        return None
+
+
+def _to_float_opt(x):
+    if x is None:
+        return None
+    try:
+        return float(x)
+    except (TypeError, ValueError):
+        return None
+
+
+def _row_to_item(row: tuple) -> dict:
+    """Порядок полей совпадает с SELECT в запросе."""
+    (
+        car_number,
+        from_rw_part,
+        from_rw,
+        st_from_name,
+        st_from_code,
+        to_rw_part,
+        to_rw,
+        st_to_name,
+        st_to_code,
+        car_capacity,
+        car_body_volume,
+        _car_size,
+        is_car_repair,
+        car_next_repair_days,
+        fr_etsng_code,
+        fr_etsng_name,
+        code6,
+        prev_fr_etsng_name,
+        grpo_name,
+    ) = row
+
+    ct = _car_type(car_capacity, car_body_volume)
+    repair_days = _to_float_opt(car_next_repair_days)
+
+    return {
+        "CarNumber": int(car_number),
+        "StationFrom": st_from_name,
+        "StationFromCode": str(st_from_code).strip() if st_from_code is not None else None,
+        "RailWayFromShort": from_rw,
+        # В выборке DislocationPreview нет отдельных числовых кодов дорог — как в АПИ не заполняем.
+        "RailWayFromCode": None,
+        "RailWayPartFrom": from_rw_part,
+        "StationTo": st_to_name,
+        "StationToCode": str(st_to_code).strip() if st_to_code is not None else None,
+        "RailWayToShort": to_rw,
+        "RailWayToCode": None,
+        "RailWayPartTo": to_rw_part,
+        "OPZRailWayId": None,
+        "OPZComment1": ct,
+        "GRPOName": grpo_name,
+        "FrETSNGCode": str(fr_etsng_code).strip() if fr_etsng_code is not None else None,
+        "FrETSNGName": fr_etsng_name,
+        "PrevFrETSNGCode": str(code6).strip() if code6 is not None else None,
+        "PrevFrETSNGName": prev_fr_etsng_name,
+        "CarNextRepairDays": repair_days,
+        "IsCarRepair": bool(is_car_repair) if is_car_repair is not None else False,
+    }
+
+
+def main() -> None:
+    host = _env("REDIS_SUPPLY_HOST")
+    if not host:
+        print("[]", flush=True)
+        return
+
+    port = int(_env("REDIS_SUPPLY_PORT", "6380") or "6380")
+    db = int(_env("REDIS_SUPPLY_DB", "0") or "0")
+    password = _env("REDIS_SUPPLY_PASS")
+
+    r = redis.Redis(
+        host=host,
+        port=port,
+        db=db,
+        password=password,
+        decode_responses=True,
+    )
+    keys = r.hkeys("supply_data")
+    if not keys:
+        print("[]", flush=True)
+        return
+
+    numbers: list[int] = []
+    for k in keys:
+        try:
+            numbers.append(int(str(k).strip()))
+        except ValueError:
+            continue
+    if not numbers:
+        print("[]", flush=True)
+        return
+
+    server = _env("MSSQL_SERVER") or _env("MSSQL_HOST")
+    if not server:
+        print(
+            "dislocations: задан REDIS_SUPPLY_HOST и есть ключи, но не задан MSSQL_SERVER/MSSQL_HOST",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    user = _env("MSSQL_USER", "") or ""
+    pw = _env("MSSQL_PASSWORD", "") or ""
+    database = _env("MSSQL_DATABASE", "") or ""
+    domain = _env("MSSQL_DOMAIN", "") or ""
+
+    conn = pymssql.connect(
+        server=server,
+        user=domain + user,
+        password=pw,
+        database=database,
+    )
+
+    sql_template = """
     SELECT
         DP.CarNumber,
         DP.FromRailWayPart, DP.FromRailWay, DP.StationFromName, DP.StationFromCode,
@@ -49,17 +186,31 @@ def fetch_dislocations(conndict, host, port, db, password, extime):
         JOIN NSI.FrETSNG FR ON FR.Name = DP.PrevFrETSNGName
         JOIN dynamic.CarComment CC (NOLOCK) ON CC.CarId = DP.CarId
         LEFT JOIN NSI_ETRAN.ShipmentGoal SG (NOLOCK) ON DP.TranspPurpose = SG.NAME
-    WHERE DP.BelongType  IN ('Арендованный','В лизинге', 'Собственный')
-        AND CarKindName = 'Зерновозы';
-    '''
-        
-    cursor.execute(stmt)
-    ########## ИНСТРУКЦИИ узла SupplyNode для периода 2-10 сутки #############
-    # Поле CarKind узла для всех вагонов из периода 2-10 сутки --> Free
-    # Поле status узла для всех вагонов из поля DP.GRPOName
-    # поля etsng, etsng_name, prev_etsng, prev_etsng_name из полей DP.FrETSNGCode, DP.FrETSNGName, FR.Code6, DP.PrevFrETSNGName
-    # Поле car_type: Если DP.CarBodyVolume < 108.0 и DP.CarCapacity < 70.0 ---> Прочие; Если DP.CarBodyVolume >= 108.0 и DP.CarCapacity < 75.0 ---> БК;
-    # Если DP.CarBodyVolume < 108.0 и DP.CarCapacity >= 75.0 ---> Т; Если DP.CarBodyVolume >= 108.0 и DP.CarCapacity >= 75.0 ---> БКТ;
+    WHERE DP.BelongType IN (N'Арендованный', N'В лизинге', N'Собственный')
+        AND DP.CarKindName = N'Зерновозы'
+        AND DP.CarNumber IN ({})
+    """
 
-    cursor.close()
-    conn.close()
+    out: list[dict] = []
+    batch_size = 400
+    cur = conn.cursor()
+    try:
+        for i in range(0, len(numbers), batch_size):
+            chunk = numbers[i : i + batch_size]
+            in_list = ",".join(str(n) for n in chunk)
+            cur.execute(sql_template.format(in_list))
+            for row in cur.fetchall():
+                out.append(_row_to_item(row))
+    finally:
+        cur.close()
+        conn.close()
+
+    print(json.dumps(out, ensure_ascii=False), flush=True)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as exc:  # noqa: BLE001
+        print(f"dislocations.py: {exc}", file=sys.stderr)
+        sys.exit(1)

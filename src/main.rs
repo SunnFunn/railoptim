@@ -25,7 +25,25 @@ async fn main() -> Result<()> {
     let demand_nodes = client.fetch_demand_nodes().await?;
     println!("Получено узлов спроса:       {}", demand_nodes.len());
 
-    let supply_nodes = client.fetch_supply_nodes().await?;
+    let mut supply_nodes = client.fetch_supply_nodes().await?;
+    match data::dislocations::fetch_dislocation_supply_nodes() {
+        Ok(extra) if !extra.is_empty() => {
+            println!(
+                "  узлов дислокации (2-10 сут., период 10): {}",
+                extra.len()
+            );
+            supply_nodes.extend(extra);
+        }
+        Ok(_) => {}
+        Err(e) => eprintln!(
+            "  дислокация 2-10 сут.: не загружена ({}), продолжаем только АПИ",
+            e
+        ),
+    }
+    for (i, n) in supply_nodes.iter_mut().enumerate() {
+        n.s_id = i + 1;
+    }
+    data::supply::apply_mass_unloading_flags(&mut supply_nodes);
     println!("Получено узлов предложения:  {}", supply_nodes.len());
 
     // Разделяем: Assigned — уже назначены и не участвуют в оптимизации.
@@ -135,14 +153,30 @@ async fn main() -> Result<()> {
     let n_optim    = output_records.len();
     let n_assigned = assigned_records.len();
     output_records.extend(assigned_records);
-    println!("Записей для отправки в АПИ:  {} ({} оптим. + {} по факту)",
-        output_records.len(), n_optim, n_assigned,
+
+    let api_records = solver::output_records_for_api(&output_records);
+    let n_api       = api_records.len();
+    let n_skip_10   = output_records.len() - n_api;
+    println!(
+        "Записей в отчёте (Excel):    {} ({} оптим. + {} по факту)",
+        output_records.len(),
+        n_optim,
+        n_assigned,
     );
+    if n_skip_10 > 0 {
+        println!(
+            "  в POST АПИ (только 1 сут.): {} (без периода предл. 10: {})",
+            n_api,
+            n_skip_10,
+        );
+    } else {
+        println!("Записей в POST АПИ:          {}", n_api);
+    }
 
     let checkpoint = debug::save_checkpoint(&demand_nodes, &supply_nodes, Some(&output_records))?;
     println!("Чекпоинт сохранён:           {}", checkpoint.display());
 
-    match client.send_assignments(&output_records).await {
+    match client.send_assignments(&api_records).await {
         Ok(())   => println!("Назначения отправлены в АПИ: OK"),
         Err(e)   => eprintln!("Ошибка отправки в АПИ:       {e}"),
     }

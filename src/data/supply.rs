@@ -96,6 +96,8 @@ struct NoNumberItem {
 #[derive(Hash, Eq, PartialEq, Clone)]
 struct GroupKey {
     kind_ord:        u8,   // 0=Free, 1=Assigned, 2=NoNumber
+    /// 1 — АПИ; 10 — дислокация 2–10 суток.
+    supply_period:   u8,
     station_to:      String,
     station_to_code: String,
     railway_to:      String,
@@ -147,9 +149,12 @@ fn kind_to_ord(kind: &CarKind) -> u8 {
 }
 
 /// Группирует плоский список вагонов в агрегированные узлы предложения.
+///
+/// `supply_period`: `1` для данных АПИ, `10` для дислокации (2–10 сутки).
 fn group_supply(
     numbered: impl Iterator<Item = NumberedCarItem>,
     no_number: impl Iterator<Item = NoNumberItem>,
+    supply_period: u8,
 ) -> Vec<SupplyNode> {
     let mut groups: HashMap<GroupKey, GroupData> = HashMap::new();
     // Сохраняем порядок первого появления ключа.
@@ -163,6 +168,7 @@ fn group_supply(
 
         let key = GroupKey {
             kind_ord:        kind_to_ord(&kind),
+            supply_period,
             station_to:      c.station_to.clone().unwrap_or_default(),
             station_to_code: c.station_to_code.clone().unwrap_or_default(),
             railway_to:      c.railway_to_short.clone().unwrap_or_default(),
@@ -195,6 +201,7 @@ fn group_supply(
     for c in no_number {
         let key = GroupKey {
             kind_ord:        kind_to_ord(&CarKind::NoNumber),
+            supply_period,
             station_to:      c.station_to.clone().unwrap_or_default(),
             station_to_code: c.station_to_code.clone().unwrap_or_default(),
             railway_to:      c.railway_to_short.clone().unwrap_or_default(),
@@ -235,6 +242,7 @@ fn group_supply(
                 etsng_name:      key.etsng_name,
                 repair_status:   if key.needs_repair { RepairStatus::NeedsRepair } else { RepairStatus::Ok },
                 status:          key.status,
+                supply_period:   key.supply_period,
                 car_numbers:        data.car_numbers,
                 stations_from:      data.stations_from,
                 stations_from_code: data.stations_from_code,
@@ -249,11 +257,24 @@ fn group_supply(
         .collect()
 }
 
+/// Узлы предложения из JSON, который печатает `dislocations.py`
+/// (массив объектов в формате полей `NumberedCarItem` из АПИ).
+///
+/// Период предложения `supply_period = 10` (2–10 сутки).
+pub fn supply_nodes_from_dislocation_json(json: &str) -> Result<Vec<SupplyNode>, serde_json::Error> {
+    let numbered: Vec<NumberedCarItem> = serde_json::from_str(json)?;
+    Ok(group_supply(
+        numbered.into_iter(),
+        std::iter::empty::<NoNumberItem>(),
+        10,
+    ))
+}
+
 /// Помечает узлы предложения, относящиеся к станциям массовой выгрузки.
 ///
 /// Станция считается массовой, если суммарное количество вагонов по всем
 /// узлам с одним `station_to_code` превышает [`MASS_UNLOADING_THRESHOLD`].
-fn mark_mass_unloading(nodes: &mut [SupplyNode]) {
+pub fn apply_mass_unloading_flags(nodes: &mut [SupplyNode]) {
     // Шаг 1: суммируем car_count по station_to_code (владеющие ключи — нет borrow-конфликта).
     let mut sums: HashMap<String, i32> = HashMap::new();
     for node in nodes.iter() {
@@ -304,8 +325,10 @@ impl ApiClient {
             no_number_all.extend(item.no_number);
         }
 
-        let mut nodes = group_supply(numbered_all.into_iter(), no_number_all.into_iter());
-        mark_mass_unloading(&mut nodes);
-        Ok(nodes)
+        Ok(group_supply(
+            numbered_all.into_iter(),
+            no_number_all.into_iter(),
+            1,
+        ))
     }
 }

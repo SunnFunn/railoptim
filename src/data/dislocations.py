@@ -18,6 +18,9 @@ MSSQL (если задан REDIS_SUPPLY_HOST и в Redis есть ключи):
   MSSQL_DOMAIN      (опционально, префикс к логину)
 
 Вывод: JSON-массив объектов в формате полей NumberedCarItem (как в ответе АПИ railoptim).
+
+Коды дорог в запросе: DP.FromRailwayCode, DP.ToRailwayCode. При других именах колонок в БД
+используйте алиасы, например: YourCol AS FromRailWayCode.
 """
 
 from __future__ import annotations
@@ -77,10 +80,12 @@ def _row_to_item(row: tuple) -> dict:
         car_number,
         from_rw_part,
         from_rw,
+        from_rw_code,
         st_from_name,
         st_from_code,
         to_rw_part,
         to_rw,
+        to_rw_code,
         st_to_name,
         st_to_code,
         car_capacity,
@@ -103,13 +108,12 @@ def _row_to_item(row: tuple) -> dict:
         "StationFrom": st_from_name,
         "StationFromCode": str(st_from_code).strip() if st_from_code is not None else None,
         "RailWayFromShort": from_rw,
-        # В выборке DislocationPreview нет отдельных числовых кодов дорог — как в АПИ не заполняем.
-        "RailWayFromCode": None,
+        "RailWayFromCode": _to_int_opt(from_rw_code),
         "RailWayPartFrom": from_rw_part,
         "StationTo": st_to_name,
         "StationToCode": str(st_to_code).strip() if st_to_code is not None else None,
         "RailWayToShort": to_rw,
-        "RailWayToCode": None,
+        "RailWayToCode": _to_int_opt(to_rw_code),
         "RailWayPartTo": to_rw_part,
         "OPZRailWayId": None,
         "OPZComment1": ct,
@@ -178,8 +182,8 @@ def main() -> None:
     sql_template = """
     SELECT
         DP.CarNumber,
-        DP.FromRailWayPart, DP.FromRailWay, DP.StationFromName, DP.StationFromCode,
-        DP.ToRailWayPart, DP.ToRailWay, DP.StationToName, DP.StationToCode,
+        DP.FromRailWayPart, DP.FromRailWay, DP.FromRailwayCode, DP.StationFromName, DP.StationFromCode,
+        DP.ToRailWayPart, DP.ToRailWay, DP.ToRailwayCode, DP.StationToName, DP.StationToCode,
         DP.CarCapacity, DP.CarBodyVolume, DP.CarSize, DP.IsCarRepair, DP.CarNextRepairDays,
         DP.FrETSNGCode, DP.FrETSNGName, FR.Code6, DP.PrevFrETSNGName,
         DP.GRPOName

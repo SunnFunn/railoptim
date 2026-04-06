@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import fire
 
 import pymssql
 import redis
@@ -154,17 +155,17 @@ def main() -> None:
         print("[]", flush=True)
         return
 
-    server = _env("MSSQL_SERVER") or _env("MSSQL_HOST")
+    server = _env("MSSQL_SERVER_MSKASUVPL")
     if not server:
         print(
-            "dislocations: задан REDIS_SUPPLY_HOST и есть ключи, но не задан MSSQL_SERVER/MSSQL_HOST",
+            "dislocations: задан REDIS_SUPPLY_HOST и есть ключи, но не задан MSSQL_SERVER",
             file=sys.stderr,
         )
         sys.exit(1)
 
-    user = _env("MSSQL_USER", "") or ""
-    pw = _env("MSSQL_PASSWORD", "") or ""
-    database = _env("MSSQL_DATABASE", "") or ""
+    user = _env("DOMAIN_USER", "") or ""
+    pw = _env("PASSWORD", "") or ""
+    database = _env("MSSQL_DB_ASUVP", "") or ""
     domain = _env("MSSQL_DOMAIN", "") or ""
 
     conn = pymssql.connect(
@@ -208,9 +209,13 @@ def main() -> None:
     print(json.dumps(out, ensure_ascii=False), flush=True)
 
 
+# if __name__ == "__main__":
+#     try:
+#         main()
+#     except Exception as exc:  # noqa: BLE001
+#         print(f"dislocations.py: {exc}", file=sys.stderr)
+#         sys.exit(1)
+
 if __name__ == "__main__":
-    try:
-        main()
-    except Exception as exc:  # noqa: BLE001
-        print(f"dislocations.py: {exc}", file=sys.stderr)
-        sys.exit(1)
+    # Fire автоматически обработает ошибки и выведет их в stderr
+    fire.Fire(main)

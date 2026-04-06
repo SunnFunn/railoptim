@@ -1,5 +1,6 @@
 //! Дислокация вагонов (2–10 сутки): данные из Redis + MSSQL через Python (`dislocations.py`).
 
+use::std::env;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -9,7 +10,11 @@ use super::supply::supply_nodes_from_dislocation_json;
 
 /// Запускает `src/data/dislocations.py` (pymssql + redis), читает JSON массива вагонов со stdout.
 pub fn fetch_dislocation_supply_nodes() -> Result<Vec<crate::node::SupplyNode>> {
-    let script = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/data/dislocations.py");
+    // let script = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/data/dislocations.py");
+    // Получаем текущую директорию и ПРИСОЕДИНЯЕМ путь к файлу
+    let script = std::env::current_dir()
+        .context("Не удалось получить текущую директорию")?
+        .join("src/data/dislocations.py"); // добавляем путь к файлу
     let output = Command::new("python3")
         .arg(&script)
         .output()

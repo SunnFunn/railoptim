@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
 Дислокация вагонов для периода 2–10 суток:
-  1) Redis: hash supply_data — ключи = номера вагонов;
-  2) MSSQL (pymssql): выборка по этим номерам.
+  1) Redis: hash `supply_data` — ключ = номер вагона, value = JSON; в список попадают только
+     вагоны, у которых в value поле `OPZperiod` равно 10 (период 2–10 суток).
+  2) MSSQL (pymssql): выборка по отобранным номерам.
 
 Переменные окружения — Redis:
   REDIS_SUPPLY_HOST   (если не задан — печатается [] и выход 0)
@@ -72,6 +73,43 @@ def _to_float_opt(x):
         return float(x)
     except (TypeError, ValueError):
         return None
+
+
+def _is_opz_period_10(raw: str | None) -> bool:
+    """
+    В value поля hash `supply_data` ожидается JSON с полем OPZperiod.
+    Учитывается только период 10 (10-суточное предложение).
+    """
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        return False
+    try:
+        obj = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return False
+    if not isinstance(obj, dict):
+        return False
+    period = obj.get("OPZperiod")
+    if period is None:
+        period = obj.get("opzperiod")
+    if period is None:
+        return False
+    try:
+        return int(period) == 10
+    except (TypeError, ValueError):
+        return str(period).strip() == "10"
+
+
+def _wagon_numbers_for_supply_period_10(r: redis.Redis) -> list[int]:
+    """Номера вагонов из supply_data, у которых в JSON value OPZperiod == 10."""
+    numbers: list[int] = []
+    for field, raw in r.hgetall("supply_data").items():
+        try:
+            n = int(str(field).strip())
+        except ValueError:
+            continue
+        if _is_opz_period_10(raw):
+            numbers.append(n)
+    return numbers
 
 
 def _row_to_item(row: tuple) -> dict:
@@ -144,17 +182,7 @@ def main() -> None:
         password=password,
         decode_responses=True,
     )
-    keys = r.hkeys("supply_data")
-    if not keys:
-        print("[]", flush=True)
-        return
-
-    numbers: list[int] = []
-    for k in keys:
-        try:
-            numbers.append(int(str(k).strip()))
-        except ValueError:
-            continue
+    numbers = _wagon_numbers_for_supply_period_10(r)
     if not numbers:
         print("[]", flush=True)
         return

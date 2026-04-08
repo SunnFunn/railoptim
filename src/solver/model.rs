@@ -96,7 +96,11 @@ pub fn build_task_arcs(
                 continue;
             };
 
-            let period_ok   = tariff.period_of_delivery <= period_max_days(d.period);
+            let period_ok = delivery_period_ok(
+                tariff.period_of_delivery,
+                d.period,
+                s.supply_period,
+            );
             let car_type_ok = car_type_compatible(s.car_type.as_deref(), d.car_type.as_deref());
 
             if !period_ok   { bad_period += 1; }

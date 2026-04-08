@@ -217,10 +217,11 @@ def shipment_goals_for_cars() -> None:
     # Те же ограничения, что и в основной выборке дислокации (кроме JOIN к FrETSNG —
     # для цели назначения достаточно предпросмотра вагона).
     sql_template = """
-    SELECT DP.CarNumber, DP.ShipmentGoalId
+    SELECT DP.CarNumber, SG.ShipmentGoalId
     FROM DislocationPreview DP (NOLOCK)
-    WHERE DP.BelongType IN (N'Арендованный', N'В лизинге', N'Собственный')
-        AND DP.CarKindName = N'Зерновозы'
+    LEFT JOIN NSI_ETRAN.ShipmentGoal SG (NOLOCK) ON DP.TranspPurpose = SG.NAME
+    WHERE DP.CarKindName = N'Зерновозы'
+        --AND DP.BelongType IN (N'Арендованный', N'В лизинге', N'Собственный')
         AND DP.CarNumber IN ({})
     """
 
@@ -280,7 +281,7 @@ def main() -> None:
         DP.CarCapacity, DP.CarBodyVolume, DP.CarSize, DP.IsCarRepair, DP.CarNextRepairDays,
         DP.FrETSNGCode, DP.FrETSNGName, FR.Code6, DP.PrevFrETSNGName,
         DP.GRPOName,
-        DP.ShipmentGoalId
+        SG.ShipmentGoalId
     FROM DislocationPreview DP (NOLOCK)
         JOIN NSI.FrETSNG FR ON FR.Name = DP.PrevFrETSNGName
         JOIN dynamic.CarComment CC (NOLOCK) ON CC.CarId = DP.CarId

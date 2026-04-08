@@ -214,7 +214,7 @@ def main() -> None:
         DP.ToRailWayPart, DP.ToRailWay, DP.ToRailwayCode, DP.StationToName, DP.StationToCode,
         DP.CarCapacity, DP.CarBodyVolume, DP.CarSize, DP.IsCarRepair, DP.CarNextRepairDays,
         DP.FrETSNGCode, DP.FrETSNGName, FR.Code6, DP.PrevFrETSNGName,
-        DP.GRPOName
+        DP.GRPOName, DP.ShipmentGoalId
     FROM DislocationPreview DP (NOLOCK)
         JOIN NSI.FrETSNG FR ON FR.Name = DP.PrevFrETSNGName
         JOIN dynamic.CarComment CC (NOLOCK) ON CC.CarId = DP.CarId

@@ -3,3 +3,4 @@
 /app
 /logs
 .cursorrules
+*.log

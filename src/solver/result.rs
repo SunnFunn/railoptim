@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use chrono::Local;
 use serde::Serialize;
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use crate::node::{DemandNode, SupplyNode, CarKind, TariffNode};
 use super::lp::OptimResult;
@@ -247,22 +247,33 @@ pub struct OutputRecord {
     pub supply_period: u8,
 }
 
-/// Строит записи для вагонов `CarKind::Assigned` — они не участвуют в оптимизации
-/// и добавляются к результату напрямую с `assignment_type = "По факту"`.
+/// Текст поля `AssignmentType` для вагонов Assigned по `DislocationPreview.ShipmentGoalId`.
+///
+/// Маппинг: 1 — под погрузку; 6 — в ремонт; 8 — в промывку; 24 — в распыление;
+/// иначе (включая отсутствие цели) — «По факту».
+pub fn assignment_type_for_shipment_goal(goal_id: Option<i32>) -> &'static str {
+    match goal_id {
+        Some(1)  => "По факту под погрузку",
+        Some(6)  => "По факту в ремонт",
+        Some(8)  => "По факту в промывку",
+        Some(24) => "По факту в распыление",
+        _        => "По факту",
+    }
+}
+
+/// Строит записи для вагонов `CarKind::Assigned` — они не участвуют в оптимизации.
 ///
 /// Каждый `SupplyNode` типа `Assigned` разбивается на подзаписи по уникальным
-/// станциям отправления (`station_from_code`), так как вагоны в группе могут
-/// приходить с разных дорог. Каждая подзапись содержит количество вагонов
-/// из данной станции отправления и их номера.
+/// станциям отправления (`station_from_code`), затем по типу назначения из
+/// [`assignment_type_for_shipment_goal`] (данные `shipment_goals`: номер вагона → `ShipmentGoalId`).
 ///
 /// Поля `StationTo` / `RailWayTo` одинаковы для всей группы (ключ группировки).
 /// Тариф ищется по паре `(station_from_code, station_to_code)`.
 pub fn build_assigned_output_records(
     assigned_supply: &[SupplyNode],
     tariff_nodes:    &[TariffNode],
+    shipment_goals:  &HashMap<u64, Option<i32>>,
 ) -> Vec<OutputRecord> {
-    use std::collections::BTreeMap;
-
     let now_str = Local::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
 
     let tariff_idx: HashMap<(&str, &str), &TariffNode> = tariff_nodes
@@ -309,42 +320,51 @@ pub fn build_assigned_output_records(
             ));
         }
 
-        // Один OutputRecord на каждую уникальную станцию отправления.
+        // На каждую станцию отправления — отдельные записи по типу назначения (ShipmentGoalId).
         for (from_code, (from_name, rw_from, rw_div, car_nums)) in &sub {
             let tariff = tariff_idx
                 .get(&(from_code.as_str(), s.station_to_code.as_str()))
                 .copied();
 
-            records.push(OutputRecord {
-                opz_date:          now_str.clone(),
-                railway_from:      rw_from.clone(),
-                railway_from_div:  rw_div.clone(),
-                station_from:      from_name.clone(),
-                station_from_code: from_code.clone(),
-                railway_to:        s.railway_to.clone(),
-                railway_to_div:    s.railway_part_to.clone(),
-                station_to:        s.station_to.clone(),
-                station_to_code:   s.station_to_code.clone(),
-                assigned_cars:     car_nums.len().max(1) as i32,
-                load_status:       s.status.clone(),
-                car_type:          s.car_type.clone(),
-                prev_etsng_name:   s.prev_etsng_names.first().cloned(),
-                etsng_name:        s.etsng_name.clone(),
-                gu12_number:       None,
-                claim_number:      None,
-                claim_date:        None,
-                client:            None,
-                sender:            None,
-                customer:          None,
-                distance:          tariff.map(|t| t.distance).unwrap_or(0),
-                period_of_delivery: tariff.map(|t| t.period_of_delivery).unwrap_or(0),
-                cost:              tariff.map(|t| t.cost).unwrap_or(0.0),
-                assignment_type:   "По факту".to_string(),
-                car_numbers_list:  car_nums.iter().map(|n| n.to_string()).collect(),
-                supply_kind:       "Факт".to_string(),
-                period_label:      String::new(),
-                supply_period:     s.supply_period,
-            });
+            let mut by_assignment: BTreeMap<&'static str, Vec<u64>> = BTreeMap::new();
+            for &car in car_nums {
+                let gid = shipment_goals.get(&car).copied().flatten();
+                let at = assignment_type_for_shipment_goal(gid);
+                by_assignment.entry(at).or_default().push(car);
+            }
+
+            for (assignment_type, cars) in by_assignment {
+                records.push(OutputRecord {
+                    opz_date:          now_str.clone(),
+                    railway_from:      rw_from.clone(),
+                    railway_from_div:  rw_div.clone(),
+                    station_from:      from_name.clone(),
+                    station_from_code: from_code.clone(),
+                    railway_to:        s.railway_to.clone(),
+                    railway_to_div:    s.railway_part_to.clone(),
+                    station_to:        s.station_to.clone(),
+                    station_to_code:   s.station_to_code.clone(),
+                    assigned_cars:     cars.len().max(1) as i32,
+                    load_status:       s.status.clone(),
+                    car_type:          s.car_type.clone(),
+                    prev_etsng_name:   s.prev_etsng_names.first().cloned(),
+                    etsng_name:        s.etsng_name.clone(),
+                    gu12_number:       None,
+                    claim_number:      None,
+                    claim_date:        None,
+                    client:            None,
+                    sender:            None,
+                    customer:          None,
+                    distance:          tariff.map(|t| t.distance).unwrap_or(0),
+                    period_of_delivery: tariff.map(|t| t.period_of_delivery).unwrap_or(0),
+                    cost:              tariff.map(|t| t.cost).unwrap_or(0.0),
+                    assignment_type:   assignment_type.to_string(),
+                    car_numbers_list:  cars.iter().map(|n| n.to_string()).collect(),
+                    supply_kind:       "Факт".to_string(),
+                    period_label:      String::new(),
+                    supply_period:     s.supply_period,
+                });
+            }
         }
     }
 

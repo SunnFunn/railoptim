@@ -29,8 +29,6 @@ from __future__ import annotations
 import json
 import os
 import sys
-import fire
-
 import pymssql
 import redis
 
@@ -136,6 +134,7 @@ def _row_to_item(row: tuple) -> dict:
         code6,
         prev_fr_etsng_name,
         grpo_name,
+        shipment_goal_id,
     ) = row
 
     ct = _car_type(car_capacity, car_body_volume)
@@ -162,7 +161,85 @@ def _row_to_item(row: tuple) -> dict:
         "PrevFrETSNGName": prev_fr_etsng_name,
         "CarNextRepairDays": repair_days,
         "IsCarRepair": bool(is_car_repair) if is_car_repair is not None else False,
+        "ShipmentGoalId": _to_int_opt(shipment_goal_id),
     }
+
+
+def _mssql_connect():
+    server = _env("MSSQL_SERVER_MSKASUVPL")
+    if not server:
+        return None
+    user = _env("DOMAIN_USER", "") or ""
+    pw = _env("PASSWORD", "") or ""
+    database = _env("MSSQL_DB_ASUVP", "") or ""
+    domain = _env("MSSQL_DOMAIN", "") or ""
+    return pymssql.connect(
+        server=server,
+        user=domain + user,
+        password=pw,
+        database=database,
+    )
+
+
+def shipment_goals_for_cars() -> None:
+    """
+    Режим для Rust: stdin — JSON-массив номеров вагонов (int).
+    Stdout — JSON-объект { "номер_строкой": ShipmentGoalId | null, ... }
+    по строкам DislocationPreview (те же фильтры, что в основном запросе).
+    """
+    raw = sys.stdin.read()
+    if not raw.strip():
+        print("{}", flush=True)
+        return
+    try:
+        car_numbers = json.loads(raw)
+    except json.JSONDecodeError:
+        print("{}", flush=True)
+        return
+    if not isinstance(car_numbers, list) or not car_numbers:
+        print("{}", flush=True)
+        return
+    nums: list[int] = []
+    for x in car_numbers:
+        try:
+            nums.append(int(x))
+        except (TypeError, ValueError):
+            continue
+    if not nums:
+        print("{}", flush=True)
+        return
+
+    conn = _mssql_connect()
+    if conn is None:
+        print("dislocations shipment_goals: нет MSSQL_SERVER_MSKASUVPL", file=sys.stderr)
+        sys.exit(1)
+
+    # Те же ограничения, что и в основной выборке дислокации (кроме JOIN к FrETSNG —
+    # для цели назначения достаточно предпросмотра вагона).
+    sql_template = """
+    SELECT DP.CarNumber, DP.ShipmentGoalId
+    FROM DislocationPreview DP (NOLOCK)
+    WHERE DP.BelongType IN (N'Арендованный', N'В лизинге', N'Собственный')
+        AND DP.CarKindName = N'Зерновозы'
+        AND DP.CarNumber IN ({})
+    """
+
+    out: dict[str, int | None] = {}
+    batch_size = 400
+    cur = conn.cursor()
+    try:
+        for i in range(0, len(nums), batch_size):
+            chunk = nums[i : i + batch_size]
+            in_list = ",".join(str(n) for n in chunk)
+            cur.execute(sql_template.format(in_list))
+            for row in cur.fetchall():
+                cn, gid = row
+                out[str(int(cn))] = _to_int_opt(gid)
+    finally:
+        cur.close()
+        conn.close()
+
+    print(json.dumps(out, ensure_ascii=False), flush=True)
 
 
 def main() -> None:
@@ -187,25 +264,13 @@ def main() -> None:
         print("[]", flush=True)
         return
 
-    server = _env("MSSQL_SERVER_MSKASUVPL")
-    if not server:
+    conn = _mssql_connect()
+    if conn is None:
         print(
-            "dislocations: задан REDIS_SUPPLY_HOST и есть ключи, но не задан MSSQL_SERVER",
+            "dislocations: задан REDIS_SUPPLY_HOST и есть ключи, но не задан MSSQL_SERVER_MSKASUVPL",
             file=sys.stderr,
         )
         sys.exit(1)
-
-    user = _env("DOMAIN_USER", "") or ""
-    pw = _env("PASSWORD", "") or ""
-    database = _env("MSSQL_DB_ASUVP", "") or ""
-    domain = _env("MSSQL_DOMAIN", "") or ""
-
-    conn = pymssql.connect(
-        server=server,
-        user=domain + user,
-        password=pw,
-        database=database,
-    )
 
     sql_template = """
     SELECT
@@ -214,7 +279,8 @@ def main() -> None:
         DP.ToRailWayPart, DP.ToRailWay, DP.ToRailwayCode, DP.StationToName, DP.StationToCode,
         DP.CarCapacity, DP.CarBodyVolume, DP.CarSize, DP.IsCarRepair, DP.CarNextRepairDays,
         DP.FrETSNGCode, DP.FrETSNGName, FR.Code6, DP.PrevFrETSNGName,
-        DP.GRPOName
+        DP.GRPOName,
+        DP.ShipmentGoalId
     FROM DislocationPreview DP (NOLOCK)
         JOIN NSI.FrETSNG FR ON FR.Name = DP.PrevFrETSNGName
         JOIN dynamic.CarComment CC (NOLOCK) ON CC.CarId = DP.CarId
@@ -241,13 +307,17 @@ def main() -> None:
     print(json.dumps(out, ensure_ascii=False), flush=True)
 
 
-# if __name__ == "__main__":
-#     try:
-#         main()
-#     except Exception as exc:  # noqa: BLE001
-#         print(f"dislocations.py: {exc}", file=sys.stderr)
-#         sys.exit(1)
-
 if __name__ == "__main__":
-    # Fire автоматически обработает ошибки и выведет их в stderr
-    fire.Fire(main)
+    # Без подкоманды — прежнее поведение (совместимость с `python3 dislocations.py`).
+    if len(sys.argv) > 1 and sys.argv[1] == "shipment_goals":
+        shipment_goals_for_cars()
+    elif len(sys.argv) > 1 and sys.argv[1] in ("--help", "-h", "help"):
+        print(
+            "Использование:\n"
+            "  python3 dislocations.py              — выгрузка периода 10 (Redis+MSSQL)\n"
+            "  python3 dislocations.py shipment_goals < cars.json  — цели назначения по номерам",
+            file=sys.stderr,
+        )
+        sys.exit(0)
+    else:
+        main()

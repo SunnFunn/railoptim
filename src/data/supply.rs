@@ -61,6 +61,8 @@ struct NumberedCarItem {
     #[serde(rename = "CarNextRepairTypeName", default)] repair_type:    Option<String>,
     /// true — вагон подлежит ремонту по признаку АПИ.
     #[serde(rename = "IsCarRepair", default)] is_car_repair: bool,
+    /// Цель назначения из DislocationPreview (дислокация); в ответе АПИ обычно нет.
+    #[serde(rename = "ShipmentGoalId", default)] shipment_goal_id: Option<i32>,
 }
 
 impl NumberedCarItem {

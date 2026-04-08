@@ -147,9 +147,27 @@ async fn main() -> Result<()> {
     let mut output_records = solver::build_output_records(
         &solution, &arcs, &opt_supply, &demand_nodes,
     );
-    // Добавляем вагоны "По факту" (Assigned) — по одной записи на уникальную
-    // станцию отправления в каждой группе.
-    let assigned_records = solver::build_assigned_output_records(&assigned_nodes, &tariff_nodes);
+    // Добавляем вагоны "По факту" (Assigned): ShipmentGoalId из DislocationPreview → тип назначения.
+    let assigned_car_numbers: Vec<u64> = assigned_nodes
+        .iter()
+        .flat_map(|s| s.car_numbers.iter().copied())
+        .collect();
+    let shipment_goals = match data::dislocations::fetch_shipment_goals_for_car_numbers(
+        &assigned_car_numbers,
+    ) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!(
+                "  ShipmentGoalId для Assigned: не загружен ({e}); для всех — «По факту»"
+            );
+            std::collections::HashMap::new()
+        }
+    };
+    let assigned_records = solver::build_assigned_output_records(
+        &assigned_nodes,
+        &tariff_nodes,
+        &shipment_goals,
+    );
     let n_optim    = output_records.len();
     let n_assigned = assigned_records.len();
     output_records.extend(assigned_records);

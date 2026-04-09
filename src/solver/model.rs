@@ -13,6 +13,11 @@ use crate::node::{DemandNode, SupplyNode, TariffNode};
 /// Значение `x` на дуге должно удовлетворять: `x == 0 || x >= MIN_BATCH_FROM_MASS_STATION`.
 pub const MIN_BATCH_FROM_MASS_STATION: i32 = 5;
 
+/// Штраф к тарифу (руб.) за каждые полные сутки выхода за допустимое окно срока подсыла
+/// `[L - 3, U + 3]` для предложений с [`SupplyNode::supply_period`] **не равным** 10.
+/// Для `supply_period == 10` по-прежнему действует жёсткий отсев дуг без штрафа.
+pub const PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_RUB: f64 = 50_000.0;
+
 // ---------------------------------------------------------------------------
 // Дуга транспортной задачи
 // ---------------------------------------------------------------------------
@@ -45,8 +50,10 @@ pub struct TaskArc {
     /// Нормативный срок подсыла, сут.
     pub delivery_days: i32,
 
-    /// Срок подсыла допустим относительно окна погрузки по периоду спроса (±3 сут от границ;
-    /// для `supply_period == 10` окно сдвинуто на −5 сут, см. [`delivery_period_ok`]).
+    /// Срок подсыла в пределах окна `[L−3, U+3]` по периоду спроса без штрафа.
+    /// Если `false`, для `supply_period != 10` дуга всё же допустима, но к тарифу добавлен штраф
+    /// (см. [`PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_RUB`]); для `supply_period == 10`
+    /// в граф попадают только дуги с `period_ok == true`.
     pub period_ok: bool,
     /// Тип вагона совместим с требованиями узла спроса.
     pub car_type_ok: bool,
@@ -63,9 +70,13 @@ pub struct TaskArc {
 ///
 /// В LP попадают только пары, для которых одновременно выполнены:
 /// - найден тариф по ключу `(supply.station_to_code, demand.station_code)`;
-/// - срок подсыла (`period_of_delivery`) попадает в допустимое окно относительно периода
-///   погрузки спроса (`period_ok`, см. [`delivery_period_ok`]);
-/// - тип вагона совместим с требованиями спроса (`car_type_ok`).
+/// - тип вагона совместим с требованиями спроса (`car_type_ok`) — **жёстко**;
+/// - срок подсыла:
+///   - при [`SupplyNode::supply_period`] == 10 — как [`delivery_period_ok`]: дуга отбрасывается,
+///     если срок не в окне (со сдвигом −5 сут);
+///   - иначе (в т.ч. период 1 из АПИ) — дуга **не** отбрасывается: при выходе за `[L−3, U+3]`
+///     к [`TariffNode::cost`] добавляется [`PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_RUB`]
+///     за каждую полную сутку нарушения; [`TaskArc::period_ok`] отражает отсутствие нарушения.
 ///
 /// Недопустимые пары отсеиваются до решателя — размерность LP уменьшается.
 /// Неудовлетворённый спрос обрабатывается slack-переменными в [`super::lp::solve`].
@@ -86,6 +97,7 @@ pub fn build_task_arcs(
     let mut no_tariff  = 0usize;
     let mut bad_period = 0usize;
     let mut bad_type   = 0usize;
+    let mut arcs_period_penalized = 0usize;
 
     for (s_idx, s) in supply.iter().enumerate() {
         for (d_idx, d) in demand.iter().enumerate() {
@@ -96,21 +108,37 @@ pub fn build_task_arcs(
                 continue;
             };
 
-            let period_ok = delivery_period_ok(
-                tariff.period_of_delivery,
-                d.period,
-                s.supply_period,
-            );
             let car_type_ok = car_type_compatible(s.car_type.as_deref(), d.car_type.as_deref());
-
-            if !period_ok   { bad_period += 1; }
-            if !car_type_ok { bad_type   += 1; }
-
-            // В LP добавляем только допустимые дуги.
-            // Неудовлетворённый спрос → slack-переменные в solve().
-            if !period_ok || !car_type_ok {
+            if !car_type_ok {
+                bad_type += 1;
                 continue;
             }
+
+            let (period_ok, cost) = if s.supply_period == 10 {
+                let ok = delivery_period_ok(
+                    tariff.period_of_delivery,
+                    d.period,
+                    s.supply_period,
+                );
+                if !ok {
+                    bad_period += 1;
+                    continue;
+                }
+                (true, tariff.cost)
+            } else {
+                let Some(violation_days) =
+                    delivery_window_violation_days(tariff.period_of_delivery, d.period)
+                else {
+                    bad_period += 1;
+                    continue;
+                };
+                let period_ok = violation_days == 0;
+                if violation_days > 0 {
+                    arcs_period_penalized += 1;
+                }
+                let penalty = violation_days as f64 * PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_RUB;
+                (period_ok, tariff.cost + penalty)
+            };
 
             arcs.push(TaskArc {
                 arc_id: arcs.len(),
@@ -118,10 +146,10 @@ pub fn build_task_arcs(
                 d_idx,
                 supply_station_code: s.station_to_code.clone(),
                 demand_station_code: d.station_code.clone(),
-                cost:              tariff.cost,
+                cost,
                 distance:          tariff.distance,
                 delivery_days:     tariff.period_of_delivery,
-                period_ok:         true,
+                period_ok,
                 car_type_ok:       true,
                 is_mass_unloading: s.is_mass_unloading,
             });
@@ -134,6 +162,7 @@ pub fn build_task_arcs(
         bad_period,
         bad_type,
         feasible: arcs.len(),
+        arcs_period_penalized,
     };
 
     (arcs, stats)
@@ -146,12 +175,14 @@ pub struct ArcStats {
     pub total_pairs: usize,
     /// Пар без тарифа.
     pub no_tariff:  usize,
-    /// Пар с нарушением срока подсыла.
+    /// Пар отсеяно по сроку подсыла (только жёсткий режим: нет границ периода или `supply_period == 10`).
     pub bad_period: usize,
     /// Пар с несовместимым типом вагона.
     pub bad_type:   usize,
     /// Допустимых дуг (вошли в LP).
     pub feasible:   usize,
+    /// Дуг с ненулевым штрафом за срок подсыла (`supply_period != 10`, вне `[L−3, U+3]`).
+    pub arcs_period_penalized: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -198,6 +229,21 @@ pub(crate) fn delivery_period_ok(
         max_days -= 5;
     }
     delivery_days >= min_days && delivery_days <= max_days
+}
+
+/// Число полных суток, на которое `delivery_days` выходит за окно `[L - 3, U + 3]` по периоду спроса.
+/// `None`, если период спроса не сопоставлен с границами L, U.
+fn delivery_window_violation_days(delivery_days: i32, demand_period: u8) -> Option<i32> {
+    let (l, u) = demand_period_day_bounds(demand_period)?;
+    let min_days = l - 3;
+    let max_days = u + 3;
+    if delivery_days < min_days {
+        Some(min_days - delivery_days)
+    } else if delivery_days > max_days {
+        Some(delivery_days - max_days)
+    } else {
+        Some(0)
+    }
 }
 
 /// Совместимость типа вагона с требованиями узла спроса.

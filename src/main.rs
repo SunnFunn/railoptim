@@ -107,9 +107,14 @@ async fn main() -> Result<()> {
         100.0 * arc_stats.no_tariff as f64 / total.max(1) as f64,
     );
     println!(
-        "  нарушение срока:           {} ({:.1}%)",
+        "  нарушение срока (жёстко):  {} ({:.1}%)",
         arc_stats.bad_period,
         100.0 * arc_stats.bad_period as f64 / total.max(1) as f64,
+    );
+    println!(
+        "  дуг со штрафом за срок:    {} ({:.1}%)",
+        arc_stats.arcs_period_penalized,
+        100.0 * arc_stats.arcs_period_penalized as f64 / total.max(1) as f64,
     );
     println!(
         "  несовм. тип вагона:        {} ({:.1}%)",

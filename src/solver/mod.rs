@@ -4,7 +4,9 @@ pub mod lp;
 pub mod model;
 pub mod result;
 
-pub use model::{build_task_arcs, ArcStats, TaskArc};
+pub use model::{
+    build_task_arcs, ArcStats, TaskArc, PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_RUB,
+};
 pub use lp::{solve, print_balance, OptimResult};
 pub use result::{
     assignment_type_for_shipment_goal, build_report, save_result, build_output_records,

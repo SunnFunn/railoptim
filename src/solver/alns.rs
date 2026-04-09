@@ -203,7 +203,7 @@ fn repair_greedy(
         let rem_demand = state.remaining_demand[d_idx];
         let best_arc = arcs.iter()
             .filter(|arc| {
-                if arc.d_idx != d_idx || !arc.period_ok || !arc.car_type_ok { return false; }
+                if arc.d_idx != d_idx || !arc.car_type_ok { return false; }
                 let avail = state.remaining_supply[arc.s_idx];
                 if avail <= 0 { return false; }
                 // Ограничение партии для станций массовой выгрузки.
@@ -257,8 +257,7 @@ fn extract_subproblem_arcs<'a>(
     // Прямые дуги: касаются разрушенных узлов.
     let mut direct: Vec<&TaskArc> = arcs.iter()
         .filter(|arc| {
-            arc.period_ok
-                && arc.car_type_ok
+            arc.car_type_ok
                 && (s_indices.contains(&arc.s_idx) || d_indices.contains(&arc.d_idx))
         })
         .collect();
@@ -270,8 +269,7 @@ fn extract_subproblem_arcs<'a>(
     for &d_idx in &d_indices {
         let mut neighbours: Vec<&TaskArc> = arcs.iter()
             .filter(|arc| {
-                arc.period_ok
-                    && arc.car_type_ok
+                arc.car_type_ok
                     && arc.d_idx == d_idx
                     && !direct_arc_ids.contains(&arc.arc_id)
             })

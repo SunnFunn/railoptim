@@ -87,9 +87,21 @@ impl AlnsState {
     /// Полная целевая функция, согласованная с LP:
     /// стоимость реальных дуг + штраф за незакрытый спрос + штраф за избыток предложения.
     pub fn objective_cost(&self) -> f64 {
+        let (unmet_demand, excess_supply) = self.unmet_and_excess();
+        self.total_cost + PENALTY_COST * (unmet_demand + excess_supply) as f64
+    }
+
+    /// Текущие остатки по спросу и предложению.
+    pub fn unmet_and_excess(&self) -> (i32, i32) {
         let unmet_demand: i32 = self.remaining_demand.iter().filter(|&&d| d > 0).sum();
         let excess_supply: i32 = self.remaining_supply.iter().filter(|&&s| s > 0).sum();
-        self.total_cost + PENALTY_COST * (unmet_demand + excess_supply) as f64
+        (unmet_demand, excess_supply)
+    }
+
+    /// Штрафная часть целевой функции (без реальной стоимости дуг).
+    pub fn penalty_component_cost(&self) -> f64 {
+        let (unmet_demand, excess_supply) = self.unmet_and_excess();
+        PENALTY_COST * (unmet_demand + excess_supply) as f64
     }
 }
 
@@ -479,8 +491,15 @@ pub fn run_alns(
     };
 
     println!("--- ALNS СТАРТ ---");
-    println!("Начальная стоимость: {:.2} руб.", best_state.total_cost);
-    println!("Начальная цель ALNS: {:.2} руб.", best_state.objective_cost());
+    let (start_unmet, start_excess) = best_state.unmet_and_excess();
+    println!("Начальная real_cost:      {:.2} руб.", best_state.total_cost);
+    println!(
+        "Начальная objective_cost: {:.2} руб. (penalty: {:.2}, unmet: {}, excess: {})",
+        best_state.objective_cost(),
+        best_state.penalty_component_cost(),
+        start_unmet,
+        start_excess,
+    );
     println!("Назначений:          {}", best_state.assignments.len());
     println!("Бюджет времени:      {} сек.", config.time_budget.as_secs());
     println!("------------------");
@@ -538,10 +557,13 @@ pub fn run_alns(
                 .max(DESTROY_RATIO_MIN);
 
             println!(
-                "[iter {:>5}] ✓ улучшение цели {:.2} руб. | стоимость {:.2} | K={:.0}%",
+                "[iter {:>5}] ✓ objective -{:.2} | real {:.2} | penalty {:.2} | unmet {} | excess {} | K={:.0}%",
                 stats.iterations,
                 improvement,
                 best_state.total_cost,
+                best_state.penalty_component_cost(),
+                best_state.unmet_and_excess().0,
+                best_state.unmet_and_excess().1,
                 destroy_ratio * 100.0,
             );
         } else {
@@ -578,7 +600,15 @@ pub fn run_alns(
     println!("--- ALNS ФИНИШ ---");
     println!("Итераций:            {}", stats.iterations);
     println!("Улучшений:           {}", stats.improvements);
-    println!("Лучшая стоимость:    {:.2} руб.", best_state.total_cost);
+    let (final_unmet, final_excess) = best_state.unmet_and_excess();
+    println!("Лучшая real_cost:    {:.2} руб.", best_state.total_cost);
+    println!(
+        "Лучшая objective:    {:.2} руб. (penalty: {:.2}, unmet: {}, excess: {})",
+        best_state.objective_cost(),
+        best_state.penalty_component_cost(),
+        final_unmet,
+        final_excess,
+    );
     println!("Затрачено:           {:.1} сек.", stats.elapsed.as_secs_f64());
     println!("Финальный K:         {:.0}%", stats.final_destroy_ratio * 100.0);
     println!("------------------");

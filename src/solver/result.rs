@@ -245,6 +245,10 @@ pub struct OutputRecord {
     /// В POST АПИ попадают только записи с `supply_period == 1`.
     #[serde(skip)]
     pub supply_period: u8,
+    /// Период спроса (1..4) для оптимизационных записей; 0 для "по факту".
+    /// Используется только в debug-Excel, в API не отправляется.
+    #[serde(skip)]
+    pub demand_period: u8,
 }
 
 /// Текст поля `AssignmentType` для вагонов Assigned по `DislocationPreview.ShipmentGoalId`.
@@ -363,6 +367,7 @@ pub fn build_assigned_output_records(
                     supply_kind:       "Факт".to_string(),
                     period_label:      String::new(),
                     supply_period:     s.supply_period,
+                    demand_period:     0,
                 });
             }
         }
@@ -422,6 +427,7 @@ pub fn build_output_records(
                 supply_kind:       car_kind_str(&s.kind).to_string(),
                 period_label,
                 supply_period:     s.supply_period,
+                demand_period:     d.period,
             }
         })
         .collect()

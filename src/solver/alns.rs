@@ -4,7 +4,7 @@ use rand::prelude::*;
 use crate::node::{DemandNode, SupplyNode};
 use super::model::{TaskArc, MIN_BATCH_FROM_MASS_STATION};
 use super::greedy::{Assignment, GreedyResult, greedy_to_arc_vals};
-use super::lp::{solve, OptimResult};
+use super::lp::{solve, OptimResult, PENALTY_COST};
 
 // ---------------------------------------------------------------------------
 // Константы
@@ -82,6 +82,14 @@ impl AlnsState {
     /// Пересчитывает `total_cost` из списка назначений.
     pub fn recalculate_cost(&mut self) {
         self.total_cost = self.assignments.iter().map(|a| a.total_cost).sum();
+    }
+
+    /// Полная целевая функция, согласованная с LP:
+    /// стоимость реальных дуг + штраф за незакрытый спрос + штраф за избыток предложения.
+    pub fn objective_cost(&self) -> f64 {
+        let unmet_demand: i32 = self.remaining_demand.iter().filter(|&&d| d > 0).sum();
+        let excess_supply: i32 = self.remaining_supply.iter().filter(|&&s| s > 0).sum();
+        self.total_cost + PENALTY_COST * (unmet_demand + excess_supply) as f64
     }
 }
 
@@ -472,6 +480,7 @@ pub fn run_alns(
 
     println!("--- ALNS СТАРТ ---");
     println!("Начальная стоимость: {:.2} руб.", best_state.total_cost);
+    println!("Начальная цель ALNS: {:.2} руб.", best_state.objective_cost());
     println!("Назначений:          {}", best_state.assignments.len());
     println!("Бюджет времени:      {} сек.", config.time_budget.as_secs());
     println!("------------------");
@@ -500,8 +509,24 @@ pub fn run_alns(
         candidate.recalculate_cost();
 
         // --- ACCEPT (только если лучше) ---
-        if candidate.total_cost < best_state.total_cost {
-            let improvement = best_state.total_cost - candidate.total_cost;
+        let candidate_obj = candidate.objective_cost();
+        let best_obj = best_state.objective_cost();
+
+        let candidate_assigned: i32 = candidate.assignments.iter().map(|a| a.quantity).sum();
+        let best_assigned: i32 = best_state.assignments.iter().map(|a| a.quantity).sum();
+
+        let accept = if candidate_obj + 1e-6 < best_obj {
+            true
+        } else if (candidate_obj - best_obj).abs() <= 1e-6 {
+            // Tie-break: при равной цели предпочитаем большее покрытие, затем меньшую реальную стоимость.
+            (candidate_assigned > best_assigned)
+                || (candidate_assigned == best_assigned && candidate.total_cost < best_state.total_cost)
+        } else {
+            false
+        };
+
+        if accept {
+            let improvement = best_obj - candidate_obj;
             best_state    = candidate.clone();
             current_state = candidate;
 
@@ -513,7 +538,7 @@ pub fn run_alns(
                 .max(DESTROY_RATIO_MIN);
 
             println!(
-                "[iter {:>5}] ✓ улучшение {:.2} руб. | стоимость {:.2} | K={:.0}%",
+                "[iter {:>5}] ✓ улучшение цели {:.2} руб. | стоимость {:.2} | K={:.0}%",
                 stats.iterations,
                 improvement,
                 best_state.total_cost,

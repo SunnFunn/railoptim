@@ -8,6 +8,7 @@ use rust_xlsxwriter::{Format, FormatBorder, Workbook, XlsxError};
 
 use crate::node::{CarKind, DemandNode, RepairStatus, SupplyNode};
 use crate::solver::result::OutputRecord;
+use crate::solver::PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_RUB;
 
 /// Сохраняет данные прогона в файл-чекпоинт `tmp/checkpoint_YYYY-MM-DD_HH-MM-SS.xlsx`.
 ///
@@ -304,8 +305,40 @@ fn write_output_sheet(workbook: &mut Workbook, records: &[OutputRecord]) -> Resu
 
     macro_rules! opt { ($v:expr) => { $v.as_deref().unwrap_or("") }; }
 
+    fn demand_period_day_bounds(period: u8) -> Option<(i32, i32)> {
+        match period {
+            1 => Some((1, 5)),
+            2 => Some((6, 8)),
+            3 => Some((9, 10)),
+            4 => Some((11, 15)),
+            _ => None,
+        }
+    }
+
+    fn delivery_window_violation_days(delivery_days: i32, demand_period: u8) -> i32 {
+        let Some((l, u)) = demand_period_day_bounds(demand_period) else {
+            return 0;
+        };
+        let min_days = l - 3;
+        let max_days = u + 3;
+        if delivery_days < min_days {
+            min_days - delivery_days
+        } else if delivery_days > max_days {
+            delivery_days - max_days
+        } else {
+            0
+        }
+    }
+
     for (row_idx, r) in records.iter().enumerate() {
         let row = (row_idx + 1) as u32;
+        let delay_penalty = if r.supply_period != 10 && r.demand_period > 0 {
+            delivery_window_violation_days(r.period_of_delivery, r.demand_period) as f64
+                * PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_RUB
+        } else {
+            0.0
+        };
+        let real_cost = (r.cost - delay_penalty).max(0.0);
 
         ws.write_with_format(row,  0, &r.opz_date,                        &cell)?;
         ws.write_with_format(row,  1, &r.supply_kind,                     &cell)?;
@@ -331,7 +364,7 @@ fn write_output_sheet(workbook: &mut Workbook, records: &[OutputRecord]) -> Resu
         ws.write_with_format(row, 21, opt!(&r.customer),                  &cell)?;
         ws.write_with_format(row, 22, r.distance,                         &num)?;
         ws.write_with_format(row, 23, r.period_of_delivery,               &num)?;
-        ws.write_with_format(row, 24, r.cost,                             &dec)?;
+        ws.write_with_format(row, 24, real_cost,                          &dec)?;
         ws.write_with_format(row, 25, &r.assignment_type,                 &cell)?;
         ws.write_with_format(row, 26, r.car_numbers_list.join(" | "),     &cell)?;
     }

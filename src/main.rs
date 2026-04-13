@@ -144,6 +144,25 @@ async fn main() -> Result<()> {
     );
     let optim_result  = alns_result.to_optim_result();
     let solution      = alns_result.arc_vals;
+    let mut remaining_supply_p1 = 0_i32;
+    let mut remaining_supply_p10 = 0_i32;
+    for (s, &rem) in opt_supply
+        .iter()
+        .zip(alns_result.best_state.remaining_supply.iter())
+    {
+        if rem <= 0 {
+            continue;
+        }
+        match s.supply_period {
+            1 => remaining_supply_p1 += rem,
+            10 => remaining_supply_p10 += rem,
+            _ => {}
+        }
+    }
+    let remaining_supply_other = (optim_result.excess_supply as i32
+        - remaining_supply_p1
+        - remaining_supply_p10)
+        .max(0);
 
     // -----------------------------------------------------------------------
     // 7. Построение выходных записей + сохранение чекпоинта и отправка в АПИ
@@ -213,6 +232,10 @@ async fn main() -> Result<()> {
     println!("Назначено вагонов:    {:.0}", optim_result.assigned_cars);
     if optim_result.excess_supply > 1e-4 {
         println!("Избыток предложения:  {:.0} ваг. (dummy-спрос)", optim_result.excess_supply);
+        println!(
+            "  остаток по периодам предложения: p1={} p10={} прочие={}",
+            remaining_supply_p1, remaining_supply_p10, remaining_supply_other
+        );
     }
     if optim_result.penalty_cars > 1e-4 {
         println!("Неудовл. спрос:       {:.0} ваг. (dummy-предложение)", optim_result.penalty_cars);

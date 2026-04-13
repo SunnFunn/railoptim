@@ -92,7 +92,8 @@ pub fn solve(
     // Стоимость дуг = 0: незадействованные вагоны не штрафуются.
     let dummy_demand_row = model.add_row(..total_supply);
     for s_row in &supply_rows {
-        model.add_column(0.0, 0.0.., [(*s_row, 1.0), (dummy_demand_row, 1.0)]);
+        // model.add_column(0.0, 0.0.., [(*s_row, 1.0), (dummy_demand_row, 1.0)]);
+        model.add_column(PENALTY_COST, 0.0.., [(*s_row, 1.0), (dummy_demand_row, 1.0)]);
     }
 
     // --- Dummy-узел ПРЕДЛОЖЕНИЯ (покрывает незакрытый спрос) ---

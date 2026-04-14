@@ -16,7 +16,7 @@ pub const MIN_BATCH_FROM_MASS_STATION: i32 = 5;
 /// Штраф к тарифу (руб.) за каждые полные сутки выхода за допустимое окно срока подсыла
 /// `[L - 3, U + 3]` для предложений с [`SupplyNode::supply_period`] **не равным** 10.
 /// Для `supply_period == 10` по-прежнему действует жёсткий отсев дуг без штрафа.
-pub const PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_RUB: f64 = 50_000.0;
+pub const PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_RUB: f64 = 70_000.0;
 
 // ---------------------------------------------------------------------------
 // Дуга транспортной задачи

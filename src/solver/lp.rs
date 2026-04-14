@@ -31,7 +31,7 @@ pub struct OptimResult {
 ///
 /// Выше любого реального тарифа — решатель предпочитает реальные дуги.
 /// Конечный — задача остаётся разрешимой при дефиците предложения.
-pub const PENALTY_COST: f64 = 1_000_000.0;
+pub const PENALTY_COST: f64 = 500_000.0;
 
 /// Решает сбалансированную транспортную задачу методом LP (HiGHS / IPM).
 ///
@@ -92,8 +92,8 @@ pub fn solve(
     // Стоимость дуг = 0: незадействованные вагоны не штрафуются.
     let dummy_demand_row = model.add_row(..total_supply);
     for s_row in &supply_rows {
-        // model.add_column(0.0, 0.0.., [(*s_row, 1.0), (dummy_demand_row, 1.0)]);
-        model.add_column(PENALTY_COST, 0.0.., [(*s_row, 1.0), (dummy_demand_row, 1.0)]);
+        model.add_column(0.0, 0.0.., [(*s_row, 1.0), (dummy_demand_row, 1.0)]);
+        // model.add_column(PENALTY_COST, 0.0.., [(*s_row, 1.0), (dummy_demand_row, 1.0)]);
     }
 
     // --- Dummy-узел ПРЕДЛОЖЕНИЯ (покрывает незакрытый спрос) ---

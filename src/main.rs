@@ -9,7 +9,7 @@ use std::collections::HashSet;
 use anyhow::Result;
 use config::Config;
 use data::{ApiClient, StationRef};
-use node::CarKind;
+use node::{CarKind, RepairStatus};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -46,12 +46,21 @@ async fn main() -> Result<()> {
     data::supply::apply_mass_unloading_flags(&mut supply_nodes);
     println!("Получено узлов предложения:  {}", supply_nodes.len());
 
-    // Разделяем: Assigned — уже назначены и не участвуют в оптимизации.
-    let (assigned_nodes, opt_supply): (Vec<_>, Vec<_>) = supply_nodes
+    // Разделяем по трём группам:
+    //  1. Assigned  — уже назначены по факту, не участвуют в оптимизации.
+    //  2. NeedsRepair — требуют ремонта, исключаются из оптимизации → «В ремонт».
+    //  3. opt_supply  — свободные вагоны, участвуют в оптимизации.
+    let (assigned_nodes, non_assigned): (Vec<_>, Vec<_>) = supply_nodes
         .iter()
         .cloned()
         .partition(|s| s.kind == CarKind::Assigned);
+
+    let (repair_nodes, opt_supply): (Vec<_>, Vec<_>) = non_assigned
+        .into_iter()
+        .partition(|s| s.repair_status == RepairStatus::NeedsRepair);
+
     println!("  свободных для назначения:  {}", opt_supply.len());
+    println!("  требуют ремонта (В ремонт):{}", repair_nodes.len());
     println!("  по факту (Assigned):       {}", assigned_nodes.len());
 
     // -----------------------------------------------------------------------
@@ -192,18 +201,25 @@ async fn main() -> Result<()> {
         &tariff_nodes,
         &shipment_goals,
     );
+    // Добавляем вагоны «В ремонт» (NeedsRepair): тип назначения зафиксирован,
+    // ремонтная станция пока = текущая (TODO: маппинг по депо).
+    let repair_records = solver::build_repair_output_records(&repair_nodes);
+
     let n_optim    = output_records.len();
     let n_assigned = assigned_records.len();
+    let n_repair   = repair_records.len();
     output_records.extend(assigned_records);
+    output_records.extend(repair_records);
 
     let api_records = solver::output_records_for_api(&output_records);
     let n_api       = api_records.len();
     let n_skip_10   = output_records.len() - n_api;
     println!(
-        "Записей в отчёте (Excel):    {} ({} оптим. + {} по факту)",
+        "Записей в отчёте (Excel):    {} ({} оптим. + {} по факту + {} в ремонт)",
         output_records.len(),
         n_optim,
         n_assigned,
+        n_repair,
     );
     if n_skip_10 > 0 {
         println!(

@@ -24,7 +24,7 @@ struct SupplyApiItem {
     no_number: Vec<NoNumberItem>,
 }
 
-/// Именной вагон из `opzCarNumberModelCollection`.
+/// Номерной вагон из `opzCarNumberModelCollection`.
 #[derive(Deserialize, Debug)]
 struct NumberedCarItem {
     #[serde(rename = "CarNumber")] car_number: u64,
@@ -61,7 +61,7 @@ struct NumberedCarItem {
     #[serde(rename = "CarNextRepairTypeName", default)] repair_type:    Option<String>,
     /// true — вагон подлежит ремонту по признаку АПИ.
     #[serde(rename = "IsCarRepair", default)] is_car_repair: bool,
-    /// Цель назначения из DislocationPreview (дислокация); в ответе АПИ обычно нет.
+    /// Цель назначения из DislocationPreview (дислокация); в ответе АПИ нет.
     #[serde(rename = "ShipmentGoalId", default)] shipment_goal_id: Option<i32>,
 }
 

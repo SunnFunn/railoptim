@@ -11,12 +11,12 @@ use crate::node::{DemandNode, SupplyNode, TariffNode};
 /// узел спроса. Значение 0 тоже допустимо (нет назначения вовсе).
 ///
 /// Значение `x` на дуге должно удовлетворять: `x == 0 || x >= MIN_BATCH_FROM_MASS_STATION`.
-pub const MIN_BATCH_FROM_MASS_STATION: i32 = 5;
+pub const MIN_BATCH_FROM_MASS_STATION: i32 = 3;
 
 /// Штраф к тарифу (руб.) за каждые полные сутки выхода за допустимое окно срока подсыла
 /// `[L - 3, U + 3]` для предложений с [`SupplyNode::supply_period`] **не равным** 10.
 /// Для `supply_period == 10` по-прежнему действует жёсткий отсев дуг без штрафа.
-pub const PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_RUB: f64 = 70_000.0;
+pub const PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_RUB: f64 = 10_000.0;
 
 /// Надбавка к стоимости дуг предложения с `supply_period == 10` (дислокация 2–10 суток).
 ///
@@ -28,7 +28,7 @@ pub const PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_RUB: f64 = 70_000.0;
 /// Значение выбрано как ~20–30% среднего тарифа и существенно ниже
 /// [`super::lp::PENALTY_COST`] — period=10 остаётся конкурентным там, где
 /// period=1 объективно недоступен (нет тарифа, нарушение срока).
-pub const PERIOD10_COST_SURCHARGE_RUB: f64 = 100_000.0;
+pub const PERIOD10_COST_SURCHARGE_RUB: f64 = 40_000.0;
 
 // ---------------------------------------------------------------------------
 // Дуга транспортной задачи

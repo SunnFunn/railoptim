@@ -162,7 +162,7 @@ pub struct DemandNode {
     pub car_type: Option<String>,
     /// Потребность в вагонах = PlannedCarsToLoad − ProvidedCarsToLoad (≥ 0).
     pub car_count: i32,
-    /// Количество вагонов на станции дляоценки ее загруженности.
+    /// Количество вагонов на станции для оценки ее загруженности.
     pub cars_on_station: i32,
 }
 

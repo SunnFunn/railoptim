@@ -7,6 +7,7 @@ pub mod result;
 pub use model::{
     build_task_arcs, ArcStats, TaskArc,
     PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_RUB,
+    PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_PERIOD10_RUB,
     PERIOD10_COST_SURCHARGE_RUB,
 };
 pub use lp::{solve, print_balance, OptimResult};

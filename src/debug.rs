@@ -8,7 +8,10 @@ use rust_xlsxwriter::{Format, FormatBorder, Workbook, XlsxError};
 
 use crate::node::{CarKind, DemandNode, RepairStatus, SupplyNode};
 use crate::solver::result::OutputRecord;
-use crate::solver::PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_RUB;
+use crate::solver::{
+    PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_RUB,
+    PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_PERIOD10_RUB,
+};
 
 /// Сохраняет данные прогона в файл-чекпоинт `tmp/checkpoint_YYYY-MM-DD_HH-MM-SS.xlsx`.
 ///
@@ -263,6 +266,7 @@ fn write_output_sheet(workbook: &mut Workbook, records: &[OutputRecord]) -> Resu
         // Доп. поля только для Excel
         ("Тип вагона (вид)",    14.0),
         ("Период погрузки",     16.0),
+        ("Период предложения",  16.0),
         // Откуда
         ("Дорога откуда",       16.0),
         ("Отд. дороги откуда",  18.0),
@@ -315,12 +319,13 @@ fn write_output_sheet(workbook: &mut Workbook, records: &[OutputRecord]) -> Resu
         }
     }
 
-    fn delivery_window_violation_days(delivery_days: i32, demand_period: u8) -> i32 {
+    fn delivery_window_violation_days(delivery_days: i32, demand_period: u8, supply_period: u8) -> i32 {
         let Some((l, u)) = demand_period_day_bounds(demand_period) else {
             return 0;
         };
-        let min_days = l - 3;
-        let max_days = u + 3;
+        let shift    = if supply_period == 10 { 5 } else { 0 };
+        let min_days = l - 3 - shift;
+        let max_days = u + 3 - shift;
         if delivery_days < min_days {
             min_days - delivery_days
         } else if delivery_days > max_days {
@@ -332,9 +337,14 @@ fn write_output_sheet(workbook: &mut Workbook, records: &[OutputRecord]) -> Resu
 
     for (row_idx, r) in records.iter().enumerate() {
         let row = (row_idx + 1) as u32;
-        let delay_penalty = if r.supply_period != 10 && r.demand_period > 0 {
-            delivery_window_violation_days(r.period_of_delivery, r.demand_period) as f64
-                * PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_RUB
+        let delay_penalty = if r.demand_period > 0 {
+            let penalty_rate = if r.supply_period == 10 {
+                PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_PERIOD10_RUB
+            } else {
+                PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_RUB
+            };
+            delivery_window_violation_days(r.period_of_delivery, r.demand_period, r.supply_period)
+                as f64 * penalty_rate
         } else {
             0.0
         };
@@ -343,30 +353,31 @@ fn write_output_sheet(workbook: &mut Workbook, records: &[OutputRecord]) -> Resu
         ws.write_with_format(row,  0, &r.opz_date,                        &cell)?;
         ws.write_with_format(row,  1, &r.supply_kind,                     &cell)?;
         ws.write_with_format(row,  2, &r.period_label,                    &cell)?;
-        ws.write_with_format(row,  3, &r.railway_from,                    &cell)?;
-        ws.write_with_format(row,  4, opt!(&r.railway_from_div),          &cell)?;
-        ws.write_with_format(row,  5, &r.station_from,                    &cell)?;
-        ws.write_with_format(row,  6, &r.station_from_code,               &cell)?;
-        ws.write_with_format(row,  7, &r.railway_to,                      &cell)?;
-        ws.write_with_format(row,  8, opt!(&r.railway_to_div),            &cell)?;
-        ws.write_with_format(row,  9, &r.station_to,                      &cell)?;
-        ws.write_with_format(row, 10, &r.station_to_code,                 &cell)?;
-        ws.write_with_format(row, 11, r.assigned_cars,                    &num)?;
-        ws.write_with_format(row, 12, opt!(&r.load_status),               &cell)?;
-        ws.write_with_format(row, 13, opt!(&r.car_type),                  &cell)?;
-        ws.write_with_format(row, 14, opt!(&r.prev_etsng_name),           &cell)?;
-        ws.write_with_format(row, 15, opt!(&r.etsng_name),                &cell)?;
-        ws.write_with_format(row, 16, opt!(&r.gu12_number),               &cell)?;
-        ws.write_with_format(row, 17, opt!(&r.claim_number),              &cell)?;
-        ws.write_with_format(row, 18, opt!(&r.claim_date),                &cell)?;
-        ws.write_with_format(row, 19, opt!(&r.client),                    &cell)?;
-        ws.write_with_format(row, 20, opt!(&r.sender),                    &cell)?;
-        ws.write_with_format(row, 21, opt!(&r.customer),                  &cell)?;
-        ws.write_with_format(row, 22, r.distance,                         &num)?;
-        ws.write_with_format(row, 23, r.period_of_delivery,               &num)?;
-        ws.write_with_format(row, 24, real_cost,                          &dec)?;
-        ws.write_with_format(row, 25, &r.assignment_type,                 &cell)?;
-        ws.write_with_format(row, 26, r.car_numbers_list.join(" | "),     &cell)?;
+        ws.write_with_format(row,  3, r.supply_period,                    &num)?;
+        ws.write_with_format(row,  4, &r.railway_from,                    &cell)?;
+        ws.write_with_format(row,  5, opt!(&r.railway_from_div),          &cell)?;
+        ws.write_with_format(row,  6, &r.station_from,                    &cell)?;
+        ws.write_with_format(row,  7, &r.station_from_code,               &cell)?;
+        ws.write_with_format(row,  8, &r.railway_to,                      &cell)?;
+        ws.write_with_format(row,  9, opt!(&r.railway_to_div),            &cell)?;
+        ws.write_with_format(row, 10, &r.station_to,                      &cell)?;
+        ws.write_with_format(row, 11, &r.station_to_code,                 &cell)?;
+        ws.write_with_format(row, 12, r.assigned_cars,                    &num)?;
+        ws.write_with_format(row, 13, opt!(&r.load_status),               &cell)?;
+        ws.write_with_format(row, 14, opt!(&r.car_type),                  &cell)?;
+        ws.write_with_format(row, 15, opt!(&r.prev_etsng_name),           &cell)?;
+        ws.write_with_format(row, 16, opt!(&r.etsng_name),                &cell)?;
+        ws.write_with_format(row, 17, opt!(&r.gu12_number),               &cell)?;
+        ws.write_with_format(row, 18, opt!(&r.claim_number),              &cell)?;
+        ws.write_with_format(row, 19, opt!(&r.claim_date),                &cell)?;
+        ws.write_with_format(row, 20, opt!(&r.client),                    &cell)?;
+        ws.write_with_format(row, 21, opt!(&r.sender),                    &cell)?;
+        ws.write_with_format(row, 22, opt!(&r.customer),                  &cell)?;
+        ws.write_with_format(row, 23, r.distance,                         &num)?;
+        ws.write_with_format(row, 24, r.period_of_delivery,               &num)?;
+        ws.write_with_format(row, 25, real_cost,                          &dec)?;
+        ws.write_with_format(row, 26, &r.assignment_type,                 &cell)?;
+        ws.write_with_format(row, 27, r.car_numbers_list.join(" | "),     &cell)?;
     }
 
     ws.autofilter(0, 0, records.len() as u32, headers.len() as u16 - 1)?;

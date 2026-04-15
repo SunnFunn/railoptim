@@ -11,12 +11,19 @@ use crate::node::{DemandNode, SupplyNode, TariffNode};
 /// узел спроса. Значение 0 тоже допустимо (нет назначения вовсе).
 ///
 /// Значение `x` на дуге должно удовлетворять: `x == 0 || x >= MIN_BATCH_FROM_MASS_STATION`.
-pub const MIN_BATCH_FROM_MASS_STATION: i32 = 3;
+pub const MIN_BATCH_FROM_MASS_STATION: i32 = 5;
 
 /// Штраф к тарифу (руб.) за каждые полные сутки выхода за допустимое окно срока подсыла
 /// `[L - 3, U + 3]` для предложений с [`SupplyNode::supply_period`] **не равным** 10.
-/// Для `supply_period == 10` по-прежнему действует жёсткий отсев дуг без штрафа.
-pub const PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_RUB: f64 = 10_000.0;
+pub const PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_RUB: f64 = 70_000.0;
+
+/// Штраф к тарифу (руб.) за каждые полные сутки нарушения окна для предложений
+/// с [`SupplyNode::supply_period`] == 10 (дислокация 2–10 суток).
+///
+/// Вдвое выше [`PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_RUB`], что отражает бо́льшую
+/// неопределённость в сроках порожних из дислокации. Окно при этом сдвигается на −5 сут.:
+/// проверяется `[L − 3 − 5, U + 3 − 5]`.
+pub const PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_PERIOD10_RUB: f64 = 140_000.0;
 
 /// Надбавка к стоимости дуг предложения с `supply_period == 10` (дислокация 2–10 суток).
 ///
@@ -28,7 +35,7 @@ pub const PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_RUB: f64 = 10_000.0;
 /// Значение выбрано как ~20–30% среднего тарифа и существенно ниже
 /// [`super::lp::PENALTY_COST`] — period=10 остаётся конкурентным там, где
 /// period=1 объективно недоступен (нет тарифа, нарушение срока).
-pub const PERIOD10_COST_SURCHARGE_RUB: f64 = 40_000.0;
+pub const PERIOD10_COST_SURCHARGE_RUB: f64 = 50_000.0;
 
 // ---------------------------------------------------------------------------
 // Дуга транспортной задачи
@@ -83,14 +90,14 @@ pub struct TaskArc {
 /// В LP попадают только пары, для которых одновременно выполнены:
 /// - найден тариф по ключу `(supply.station_to_code, demand.station_code)`;
 /// - тип вагона совместим с требованиями спроса (`car_type_ok`) — **жёстко**;
-/// - срок подсыла:
-///   - при [`SupplyNode::supply_period`] == 10 — как [`delivery_period_ok`]: дуга отбрасывается,
-///     если срок не в окне (со сдвигом −5 сут);
-///   - иначе (в т.ч. период 1 из АПИ) — дуга **не** отбрасывается: при выходе за `[L−3, U+3]`
-///     к [`TariffNode::cost`] добавляется [`PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_RUB`]
-///     за каждую полную сутку нарушения; [`TaskArc::period_ok`] отражает отсутствие нарушения.
+/// - период спроса имеет табличные границы — иначе дуга отбрасывается жёстко.
 ///
-/// Недопустимые пары отсеиваются до решателя — размерность LP уменьшается.
+/// Нарушение допустимого окна срока подсыла — **мягкое** для всех периодов предложения:
+/// - период 1: окно `[L−3, U+3]`, штраф [`PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_RUB`]/сут.
+/// - период 10: окно `[L−3−5, U+3−5]` (сдвиг −5 сут.), штраф
+///   [`PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_PERIOD10_RUB`]/сут. (вдвое выше).
+///
+/// [`TaskArc::period_ok`] == `true` означает, что нарушения окна нет.
 /// Неудовлетворённый спрос обрабатывается slack-переменными в [`super::lp::solve`].
 ///
 /// Возвращает `(arcs, stats)`, где `stats` — счётчики для диагностики.
@@ -126,21 +133,17 @@ pub fn build_task_arcs(
                 continue;
             }
 
-            let (period_ok, cost) = if s.supply_period == 10 {
-                let ok = delivery_period_ok(
+            let (period_ok, cost) = {
+                let penalty_rate = if s.supply_period == 10 {
+                    PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_PERIOD10_RUB
+                } else {
+                    PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_RUB
+                };
+                let Some(violation_days) = delivery_window_violation_days(
                     tariff.period_of_delivery,
                     d.period,
                     s.supply_period,
-                );
-                if !ok {
-                    bad_period += 1;
-                    continue;
-                }
-                (true, tariff.cost)
-            } else {
-                let Some(violation_days) =
-                    delivery_window_violation_days(tariff.period_of_delivery, d.period)
-                else {
+                ) else {
                     bad_period += 1;
                     continue;
                 };
@@ -148,7 +151,7 @@ pub fn build_task_arcs(
                 if violation_days > 0 {
                     arcs_period_penalized += 1;
                 }
-                let penalty = violation_days as f64 * PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_RUB;
+                let penalty = violation_days as f64 * penalty_rate;
                 (period_ok, tariff.cost + penalty)
             };
 
@@ -253,12 +256,22 @@ pub(crate) fn delivery_period_ok(
     delivery_days >= min_days && delivery_days <= max_days
 }
 
-/// Число полных суток, на которое `delivery_days` выходит за окно `[L - 3, U + 3]` по периоду спроса.
-/// `None`, если период спроса не сопоставлен с границами L, U.
-fn delivery_window_violation_days(delivery_days: i32, demand_period: u8) -> Option<i32> {
+/// Число полных суток, на которое `delivery_days` выходит за допустимое окно по периоду спроса.
+///
+/// Окно для `supply_period != 10`: `[L − 3, U + 3]`.
+/// Окно для `supply_period == 10`: `[L − 3 − 5, U + 3 − 5]` (сдвиг −5 сут., т.к.
+/// порожние из дислокации освобождаются в среднем на 5 суток позже).
+///
+/// Возвращает `None`, если период спроса не имеет табличных границ L, U.
+fn delivery_window_violation_days(
+    delivery_days: i32,
+    demand_period: u8,
+    supply_period:  u8,
+) -> Option<i32> {
     let (l, u) = demand_period_day_bounds(demand_period)?;
-    let min_days = l - 3;
-    let max_days = u + 3;
+    let shift    = if supply_period == 10 { 5 } else { 0 };
+    let min_days = l - 3 - shift;
+    let max_days = u + 3 - shift;
     if delivery_days < min_days {
         Some(min_days - delivery_days)
     } else if delivery_days > max_days {

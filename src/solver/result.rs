@@ -7,6 +7,7 @@ use serde::Serialize;
 use std::collections::{BTreeMap, HashMap};
 
 use crate::node::{DemandNode, SupplyNode, CarKind, TariffNode};
+use crate::data::repairs::RepairStation;
 use super::lp::OptimResult;
 use super::model::TaskArc;
 
@@ -443,48 +444,77 @@ pub fn output_records_for_api(records: &[OutputRecord]) -> Vec<OutputRecord> {
         .collect()
 }
 
+/// Возвращает тарифный узел с минимальной стоимостью среди всех тарифов,
+/// отправление которых совпадает с `station_from_code`.
+fn best_repair_tariff<'a>(
+    station_from_code: &str,
+    repair_tariffs: &'a [TariffNode],
+) -> Option<&'a TariffNode> {
+    repair_tariffs
+        .iter()
+        .filter(|t| t.station_from_code == station_from_code)
+        .min_by(|a, b| a.cost.partial_cmp(&b.cost).unwrap_or(std::cmp::Ordering::Equal))
+}
+
 /// Строит записи для вагонов `RepairStatus::NeedsRepair` — они не участвуют в оптимизации.
 ///
-/// Тип назначения — «В ремонт». Станция назначения пока совпадает со станцией
-/// текущего нахождения вагона (`station_to`); в будущем заменить на таблицу
-/// ремонтных депо по станции/дороге.
-pub fn build_repair_output_records(repair_supply: &[SupplyNode]) -> Vec<OutputRecord> {
+/// Тип назначения — «В ремонт». Ремонтная станция выбирается из `repair_tariffs`
+/// как станция с минимальным тарифом подсыла от текущего местонахождения вагона.
+/// Если тариф не найден, станция назначения совпадает с текущей.
+/// Поле `customer` заполняется из `repair_stations` по коду выбранной ремонтной станции.
+pub fn build_repair_output_records(
+    repair_supply:   &[SupplyNode],
+    repair_tariffs:  &[TariffNode],
+    repair_stations: &[RepairStation],
+) -> Vec<OutputRecord> {
     let now_str = Local::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
+
+    // Индекс: код ремонтной станции → грузополучатель (первый RecipName).
+    let recip_by_code: HashMap<&str, &str> = repair_stations
+        .iter()
+        .filter_map(|rs| rs.recip_name.first().map(|name| (rs.station_code.as_str(), name.as_str())))
+        .collect();
 
     repair_supply
         .iter()
-        .map(|s| OutputRecord {
-            opz_date:           now_str.clone(),
-            // Вагон находится на station_to (пустой, прибывший сюда).
-            railway_from:       s.railway_to.clone(),
-            railway_from_div:   s.railway_part_to.clone(),
-            station_from:       s.station_to.clone(),
-            station_from_code:  s.station_to_code.clone(),
-            // Ремонтная станция пока = текущая (TODO: маппинг по депо).
-            railway_to:         s.railway_to.clone(),
-            railway_to_div:     s.railway_part_to.clone(),
-            station_to:         s.station_to.clone(),
-            station_to_code:    s.station_to_code.clone(),
-            assigned_cars:      s.car_count,
-            load_status:        s.status.clone(),
-            car_type:           s.car_type.clone(),
-            prev_etsng_name:    s.prev_etsng_names.first().cloned(),
-            etsng_name:         s.etsng_name.clone(),
-            gu12_number:        None,
-            claim_number:       None,
-            claim_date:         None,
-            client:             None,
-            sender:             None,
-            customer:           None,
-            distance:           0,
-            period_of_delivery: 0,
-            cost:               0.0,
-            assignment_type:    "В ремонт".to_string(),
-            car_numbers_list:   s.car_numbers.iter().map(|n| n.to_string()).collect(),
-            supply_kind:        "Repair".to_string(),
-            period_label:       String::new(),
-            supply_period:      s.supply_period,
-            demand_period:      0,
+        .map(|s| {
+            let best = best_repair_tariff(&s.station_to_code, repair_tariffs);
+            let repair_station_code = best
+                .map(|t| t.station_to_code.as_str())
+                .unwrap_or(s.station_to_code.as_str());
+            let customer = recip_by_code.get(repair_station_code).map(|&n| n.to_string());
+            OutputRecord {
+                opz_date:           now_str.clone(),
+                railway_from:       s.railway_to.clone(),
+                railway_from_div:   s.railway_part_to.clone(),
+                station_from:       s.station_to.clone(),
+                station_from_code:  s.station_to_code.clone(),
+                railway_to:         best.map(|t| t.railway_to.clone()).unwrap_or_else(|| s.railway_to.clone()),
+                railway_to_div:     None,
+                station_to:         best.map(|t| t.station_to.clone()).unwrap_or_else(|| s.station_to.clone()),
+                station_to_code:    best.map(|t| t.station_to_code.clone()).unwrap_or_else(|| s.station_to_code.clone()),
+                assigned_cars:      s.car_count,
+                load_status:        s.status.clone(),
+                car_type:           s.car_type.clone(),
+                prev_etsng_name:    s.prev_etsng_names.first().cloned(),
+                etsng_name:         s.etsng_name.clone(),
+                gu12_number:        None,
+                claim_number:       None,
+                claim_date:         None,
+                client:             None,
+                sender:             None,
+                customer,
+                distance:           best.map(|t| t.distance).unwrap_or(0),
+                period_of_delivery: best.map(|t| t.period_of_delivery).unwrap_or(0),
+                cost:               best.map(|t| t.cost).unwrap_or(0.0),
+                assignment_type:    "В ремонт".to_string(),
+                car_numbers_list:   s.car_numbers.iter().map(|n| n.to_string()).collect(),
+                supply_kind:        "Repair".to_string(),
+                period_label:       String::new(),
+                supply_period:      s.supply_period,
+                demand_period:      0,
+            }
         })
         .collect()
 }
+

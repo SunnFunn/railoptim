@@ -13,8 +13,8 @@ pub use model::{
 pub use lp::{solve, print_balance, OptimResult};
 pub use result::{
     assignment_type_for_shipment_goal, build_report, save_result, build_output_records,
-    build_assigned_output_records, build_repair_output_records, output_records_for_api,
-    OutputRecord,
+    build_assigned_output_records, build_repair_output_records,
+    output_records_for_api, OutputRecord,
 };
 pub use greedy::{greedy_initial_solution, greedy_to_arc_vals, print_greedy_result, GreedyResult};
 pub use alns::{run_alns, AlnsConfig, AlnsResult};

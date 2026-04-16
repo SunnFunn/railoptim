@@ -104,6 +104,58 @@ async fn main() -> Result<()> {
     println!("Получено тарифов:            {}", tariff_nodes.len());
 
     // -----------------------------------------------------------------------
+    // 3а. Тарифы до ремонтных станций (data/repairs.json)
+    //     stations_from: текущие станции ремонтных вагонов (repair_nodes)
+    //     stations_to:   все ремонтные станции из словаря
+    //     Assigned-вагоны сохраняют исходные назначения, в расчёт не входят.
+    // -----------------------------------------------------------------------
+    let repair_stations = match data::load_repair_stations("data/repairs.json") {
+        Ok(rs) if !rs.is_empty() => {
+            println!("Загружено ремонтных станций: {}", rs.len());
+            rs
+        }
+        Ok(_) => {
+            eprintln!("  data/repairs.json пуст; ремонтный маршрут не будет выбран");
+            vec![]
+        }
+        Err(e) => {
+            eprintln!("  data/repairs.json не загружен ({}); ремонтный маршрут не будет выбран", e);
+            vec![]
+        }
+    };
+
+    let repair_tariffs = if !repair_stations.is_empty() && !repair_nodes.is_empty() {
+        let repair_from: Vec<StationRef> = repair_nodes
+            .iter()
+            .map(|s| (s.station_to_code.clone(), s.railway_to.clone()))
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .map(|(code, rw)| StationRef::new(code, rw))
+            .collect();
+
+        let repair_to: Vec<StationRef> = repair_stations
+            .iter()
+            .map(|rs| (rs.station_code.clone(), rs.railway.clone()))
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .map(|(code, rw)| StationRef::new(code, rw))
+            .collect();
+
+        match client.fetch_tariffs(&repair_from, &repair_to).await {
+            Ok(t) => {
+                println!("Тарифов до ремонтных ст.:    {}", t.len());
+                t
+            }
+            Err(e) => {
+                eprintln!("  тарифы до ремонтных станций: не загружены ({})", e);
+                vec![]
+            }
+        }
+    } else {
+        vec![]
+    };
+
+    // -----------------------------------------------------------------------
     // 4. Построение дуг транспортной задачи
     // -----------------------------------------------------------------------
     let (arcs, arc_stats) = solver::build_task_arcs(&opt_supply, &demand_nodes, &tariff_nodes);
@@ -196,14 +248,18 @@ async fn main() -> Result<()> {
             std::collections::HashMap::new()
         }
     };
+    // Assigned-вагоны сохраняют исходные назначения без изменений.
     let assigned_records = solver::build_assigned_output_records(
         &assigned_nodes,
         &tariff_nodes,
         &shipment_goals,
     );
-    // Добавляем вагоны «В ремонт» (NeedsRepair): тип назначения зафиксирован,
-    // ремонтная станция пока = текущая (TODO: маппинг по депо).
-    let repair_records = solver::build_repair_output_records(&repair_nodes);
+
+    // Вагоны «В ремонт» (NeedsRepair): выбираем ремонтную станцию с min тарифом,
+    // грузополучатель берётся из словаря repairs.json.
+    let repair_records = solver::build_repair_output_records(
+        &repair_nodes, &repair_tariffs, &repair_stations,
+    );
 
     let n_optim    = output_records.len();
     let n_assigned = assigned_records.len();

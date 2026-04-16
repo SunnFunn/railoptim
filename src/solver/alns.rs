@@ -1,8 +1,9 @@
+use std::collections::HashSet;
 use std::time::{Duration, Instant};
 use rand::prelude::*;
 
 use crate::node::{DemandNode, SupplyNode};
-use super::model::{TaskArc, MIN_BATCH_FROM_MASS_STATION};
+use super::model::{collect_mass_pair_violations, TaskArc};
 use super::greedy::{Assignment, GreedyResult, greedy_to_arc_vals};
 use super::lp::{solve, OptimResult, PENALTY_COST};
 
@@ -197,6 +198,45 @@ fn destroy_random(
 }
 
 // ---------------------------------------------------------------------------
+// Общий post-processing: удаление нарушений MIN_BATCH на уровне пары станций
+// ---------------------------------------------------------------------------
+
+/// Проверяет все назначения в `state` на соответствие ограничению MIN_BATCH
+/// для пар станций массовой выгрузки и удаляет нарушающие назначения,
+/// возвращая вагоны в остатки предложения и спроса.
+///
+/// Проверяются ВСЕ назначения (не только новые), т.к. операция destroy могла
+/// нарушить ранее корректные пары.
+fn remove_mass_pair_violations(state: &mut AlnsState, arcs: &[TaskArc]) {
+    let violations: HashSet<(String, String)> = collect_mass_pair_violations(
+        state.assignments.iter().map(|a| (a.arc_id, a.quantity)),
+        arcs,
+    )
+    .into_iter()
+    .collect();
+
+    if violations.is_empty() {
+        return;
+    }
+
+    let mut i = state.assignments.len();
+    while i > 0 {
+        i -= 1;
+        let a = &state.assignments[i];
+        let arc = &arcs[a.arc_id];
+        if arc.is_mass_unloading {
+            let pair = (arc.supply_station_code.clone(), arc.demand_station_code.clone());
+            if violations.contains(&pair) {
+                let removed = state.assignments.swap_remove(i);
+                state.remaining_supply[removed.s_idx] += removed.quantity;
+                state.remaining_demand[removed.d_idx] += removed.quantity;
+                state.total_cost -= removed.total_cost;
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Оператор ремонта: жадная реинсерция
 // ---------------------------------------------------------------------------
 
@@ -220,15 +260,14 @@ fn repair_greedy(
         if state.remaining_demand[d_idx] <= 0 { continue; }
 
         // Находим лучшую допустимую дугу для этого узла спроса.
+        // Ограничение MIN_BATCH для mass-unloading проверяется на уровне
+        // пары станций в post-processing ниже — не на отдельной дуге.
         let rem_demand = state.remaining_demand[d_idx];
         let best_arc = arcs.iter()
             .filter(|arc| {
                 if arc.d_idx != d_idx || !arc.car_type_ok { return false; }
                 let avail = state.remaining_supply[arc.s_idx];
-                if avail <= 0 { return false; }
-                // Ограничение партии для станций массовой выгрузки.
-                let qty = avail.min(rem_demand);
-                !arc.is_mass_unloading || qty >= MIN_BATCH_FROM_MASS_STATION
+                avail > 0
             })
             .min_by(|a, b| {
                 a.cost.partial_cmp(&b.cost)
@@ -237,8 +276,7 @@ fn repair_greedy(
             });
 
         if let Some(arc) = best_arc {
-            let qty = state.remaining_supply[arc.s_idx]
-                .min(state.remaining_demand[arc.d_idx]);
+            let qty = state.remaining_supply[arc.s_idx].min(rem_demand);
 
             let arc_cost = qty as f64 * arc.cost;
             state.remaining_supply[arc.s_idx] -= qty;
@@ -254,6 +292,9 @@ fn repair_greedy(
             });
         }
     }
+
+    // Post-processing: удаляем назначения по парам станций ниже порога.
+    remove_mass_pair_violations(state, arcs);
 }
 
 // ---------------------------------------------------------------------------
@@ -420,26 +461,11 @@ fn repair_lp(
         });
     }
 
-    // Пост-обработка: снимаем назначения, нарушающие ограничение минимальной партии
-    // для станций массовой выгрузки (допустимо только 0 или >= MIN_BATCH).
-    let mut i = before;
-    while i < state.assignments.len() {
-        let a = &state.assignments[i];
-        let violates = orig_arc_idx
-            .get(&(a.s_idx, a.d_idx))
-            .map(|arc| arc.is_mass_unloading && a.quantity < MIN_BATCH_FROM_MASS_STATION)
-            .unwrap_or(false);
-
-        if violates {
-            let removed_a = state.assignments.swap_remove(i);
-            state.remaining_supply[removed_a.s_idx] += removed_a.quantity;
-            state.remaining_demand[removed_a.d_idx] += removed_a.quantity;
-            state.total_cost -= removed_a.total_cost;
-            // Не инкрементируем i: swap_remove поставил другой элемент на это место.
-        } else {
-            i += 1;
-        }
-    }
+    // Пост-обработка: проверяем суммарный поток по парам станций массовой выгрузки.
+    // Удаляем все назначения для пар, у которых total > 0 && total < MIN_BATCH.
+    // Проверяем ВСЕ назначения: destroy мог нарушить ранее корректные пары.
+    let _ = before; // поле использовано выше при добавлении новых назначений
+    remove_mass_pair_violations(state, arcs);
 
     true
 }

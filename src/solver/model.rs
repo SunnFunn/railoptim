@@ -291,3 +291,35 @@ fn car_type_compatible(supply_type: Option<&str>, demand_type: Option<&str>) -> 
         _ => true,
     }
 }
+
+// ---------------------------------------------------------------------------
+// Проверка ограничения MIN_BATCH на уровне пары станций
+// ---------------------------------------------------------------------------
+
+/// Возвращает пары станций `(supply_station_code, demand_station_code)`, для которых
+/// суммарный поток из mass-unloading источника нарушает ограничение:
+/// `0 < total < MIN_BATCH_FROM_MASS_STATION`.
+///
+/// Принимает итератор `(arc_id, quantity)` — не зависит от конкретного типа назначения,
+/// что позволяет использовать функцию как из `greedy.rs`, так и из `alns.rs`.
+///
+/// `arc_id` должен соответствовать индексу в срезе `arcs` (`arc.arc_id == index`).
+pub fn collect_mass_pair_violations(
+    flow: impl Iterator<Item = (usize, i32)>,
+    arcs: &[TaskArc],
+) -> Vec<(String, String)> {
+    let mut totals: HashMap<(&str, &str), i32> = HashMap::new();
+    for (arc_id, quantity) in flow {
+        let arc = &arcs[arc_id];
+        if arc.is_mass_unloading {
+            *totals
+                .entry((arc.supply_station_code.as_str(), arc.demand_station_code.as_str()))
+                .or_insert(0) += quantity;
+        }
+    }
+    totals
+        .into_iter()
+        .filter(|(_, total)| *total > 0 && *total < MIN_BATCH_FROM_MASS_STATION)
+        .map(|((s, d), _)| (s.to_string(), d.to_string()))
+        .collect()
+}

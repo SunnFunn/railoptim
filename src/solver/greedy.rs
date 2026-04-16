@@ -1,5 +1,7 @@
+use std::collections::HashSet;
+
 use crate::node::{DemandNode, SupplyNode};
-use super::model::{TaskArc, MIN_BATCH_FROM_MASS_STATION};
+use super::model::{collect_mass_pair_violations, TaskArc};
 
 // ---------------------------------------------------------------------------
 // Результат жадного решения
@@ -111,12 +113,6 @@ pub fn greedy_initial_solution(
 
         let qty = avail_supply.min(avail_demand);
 
-        // Ограничение партии для станций массовой выгрузки:
-        // допустимо только 0 или >= MIN_BATCH_FROM_MASS_STATION.
-        if arc.is_mass_unloading && qty < MIN_BATCH_FROM_MASS_STATION {
-            continue;
-        }
-
         remaining_supply[arc.s_idx] -= qty;
         remaining_demand[arc.d_idx] -= qty;
 
@@ -135,6 +131,38 @@ pub fn greedy_initial_solution(
         // Ранний выход: весь спрос закрыт.
         if remaining_demand.iter().all(|&d| d <= 0) {
             break;
+        }
+    }
+
+    // --- Post-processing: удаляем назначения по парам станций ниже порога ---
+    // Станция массовой выгрузки → станция погрузки: суммарный поток должен быть
+    // 0 или >= MIN_BATCH_FROM_MASS_STATION. Собираем нарушающие пары и удаляем
+    // все назначения для них, возвращая вагоны в остатки.
+    {
+        let violations: HashSet<(String, String)> = collect_mass_pair_violations(
+            assignments.iter().map(|a| (a.arc_id, a.quantity)),
+            arcs,
+        )
+        .into_iter()
+        .collect();
+
+        if !violations.is_empty() {
+            let mut i = assignments.len();
+            while i > 0 {
+                i -= 1;
+                let a = &assignments[i];
+                let arc = &arcs[a.arc_id];
+                if arc.is_mass_unloading {
+                    let pair = (arc.supply_station_code.clone(), arc.demand_station_code.clone());
+                    if violations.contains(&pair) {
+                        let removed = assignments.swap_remove(i);
+                        remaining_supply[removed.s_idx] += removed.quantity;
+                        remaining_demand[removed.d_idx] += removed.quantity;
+                        total_cost    -= removed.total_cost;
+                        assigned_cars -= removed.quantity;
+                    }
+                }
+            }
         }
     }
 

@@ -377,7 +377,14 @@ pub fn build_assigned_output_records(
     records
 }
 
-/// Строит список записей для отправки в API из результата оптимизации.
+/// Строит список записей из результата оптимизации.
+///
+/// Для каждого активного узла предложения (`s_idx`) номера вагонов
+/// нарезаются последовательно по дугам с ненулевым потоком: каждая
+/// дуга получает ровно `qty` номеров из `SupplyNode::car_numbers`.
+/// Оставшиеся вагоны (ушедшие в dummy-спрос) получают отдельную запись
+/// с `assignment_type = "Затягивание грузовой операции"` и
+/// `station_to == station_from` (остаются на месте).
 pub fn build_output_records(
     solution: &[f64],
     arcs:     &[TaskArc],
@@ -386,12 +393,48 @@ pub fn build_output_records(
 ) -> Vec<OutputRecord> {
     let now_str = Local::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
 
-    arcs.iter()
-        .zip(solution.iter())
-        .filter(|(_, qty)| **qty > 1e-4)
-        .map(|(arc, &qty)| {
-            let s = &supply[arc.s_idx];
+    // --- Шаг 1: группируем активные дуги по s_idx, сохраняя порядок arc_id ---
+    // Значение: Vec<(arc, qty_int)>, отсортированы по arc_id.
+    let mut arcs_by_supply: HashMap<usize, Vec<(&TaskArc, i32)>> = HashMap::new();
+    for (arc, qty_f) in arcs.iter().zip(solution.iter()) {
+        if *qty_f < 1e-4 {
+            continue;
+        }
+        let qty = qty_f.round() as i32;
+        if qty <= 0 {
+            continue;
+        }
+        arcs_by_supply.entry(arc.s_idx).or_default().push((arc, qty));
+    }
+    // Сортируем каждую группу по arc_id для детерминированного порядка нарезки.
+    for group in arcs_by_supply.values_mut() {
+        group.sort_unstable_by_key(|(arc, _)| arc.arc_id);
+    }
+
+    let mut records: Vec<OutputRecord> = Vec::new();
+
+    // --- Шаг 2: для каждого узла предложения с активными дугами ---
+    // Перебираем в порядке s_idx, чтобы выход был детерминирован.
+    let mut sorted_s_idxs: Vec<usize> = arcs_by_supply.keys().copied().collect();
+    sorted_s_idxs.sort_unstable();
+
+    for s_idx in sorted_s_idxs {
+        let s = &supply[s_idx];
+        let group = &arcs_by_supply[&s_idx];
+
+        let car_nums = &s.car_numbers;
+        let mut cursor: usize = 0;
+
+        // --- Шаг 2а: записи по назначенным дугам ---
+        for &(arc, qty) in group {
             let d = &demand[arc.d_idx];
+
+            let take = (qty as usize).min(car_nums.len().saturating_sub(cursor));
+            let slice: Vec<String> = car_nums[cursor..cursor + take]
+                .iter()
+                .map(|n| n.to_string())
+                .collect();
+            cursor += take;
 
             let period_label = if s.supply_period == 10 {
                 format!("{} (предл. 10, 2-10 сут.)", period_range_str(d.period))
@@ -399,47 +442,132 @@ pub fn build_output_records(
                 period_range_str(d.period).to_string()
             };
 
-            OutputRecord {
-                opz_date:          now_str.clone(),
-                railway_from:      s.railway_to.clone(),
-                railway_from_div:  s.railway_part_to.clone(),
-                station_from:      s.station_to.clone(),
-                station_from_code: s.station_to_code.clone(),
-                railway_to:        d.railway_name.clone(),
-                railway_to_div:    d.railway_part.clone(),
-                station_to:        d.station_name.clone(),
-                station_to_code:   d.station_code.clone(),
-                assigned_cars:     qty.round() as i32,
-                load_status:       s.status.clone(),
-                car_type:          s.car_type.clone(),
-                prev_etsng_name:   s.prev_etsng_names.first().cloned(),
-                etsng_name:        s.etsng_name.clone(),
-                gu12_number:       d.gu12_number.as_ref().and_then(|v| v.first().cloned()),
-                claim_number:      d.request_numbers.as_ref().and_then(|v| v.first().cloned()),
-                claim_date:        d.request_dates.as_ref().and_then(|v| v.first().cloned()),
-                client:            d.client.as_ref().and_then(|v| v.first().cloned()),
-                sender:            d.sender.clone(),
-                customer:          d.recipient.as_ref().and_then(|v| v.first().cloned()),
-                distance:          arc.distance,
+            records.push(OutputRecord {
+                opz_date:           now_str.clone(),
+                railway_from:       s.railway_to.clone(),
+                railway_from_div:   s.railway_part_to.clone(),
+                station_from:       s.station_to.clone(),
+                station_from_code:  s.station_to_code.clone(),
+                railway_to:         d.railway_name.clone(),
+                railway_to_div:     d.railway_part.clone(),
+                station_to:         d.station_name.clone(),
+                station_to_code:    d.station_code.clone(),
+                assigned_cars:      qty,
+                load_status:        s.status.clone(),
+                car_type:           s.car_type.clone(),
+                prev_etsng_name:    s.prev_etsng_names.first().cloned(),
+                etsng_name:         s.etsng_name.clone(),
+                gu12_number:        d.gu12_number.as_ref().and_then(|v| v.first().cloned()),
+                claim_number:       d.request_numbers.as_ref().and_then(|v| v.first().cloned()),
+                claim_date:         d.request_dates.as_ref().and_then(|v| v.first().cloned()),
+                client:             d.client.as_ref().and_then(|v| v.first().cloned()),
+                sender:             d.sender.clone(),
+                customer:           d.recipient.as_ref().and_then(|v| v.first().cloned()),
+                distance:           arc.distance,
                 period_of_delivery: arc.delivery_days,
-                cost:              arc.cost,
-                assignment_type:   format!("Под погрузку в {period_label} сутки"),
-                car_numbers_list:  s.car_numbers.iter().map(|n| n.to_string()).collect(),
-                supply_kind:       car_kind_str(&s.kind).to_string(),
+                cost:               arc.cost,
+                assignment_type:    format!("Под погрузку в {period_label} сутки"),
+                car_numbers_list:   slice,
+                supply_kind:        car_kind_str(&s.kind).to_string(),
                 period_label,
-                supply_period:     s.supply_period,
-                demand_period:     d.period,
-            }
-        })
-        .collect()
+                supply_period:      s.supply_period,
+                demand_period:      d.period,
+            });
+        }
+
+        // --- Шаг 2б: остаток — вагоны, ушедшие в dummy (не назначены) ---
+        if cursor < car_nums.len() {
+            let leftover: Vec<String> = car_nums[cursor..]
+                .iter()
+                .map(|n| n.to_string())
+                .collect();
+            let leftover_count = leftover.len() as i32;
+            records.push(OutputRecord {
+                opz_date:           now_str.clone(),
+                railway_from:       s.railway_to.clone(),
+                railway_from_div:   s.railway_part_to.clone(),
+                station_from:       s.station_to.clone(),
+                station_from_code:  s.station_to_code.clone(),
+                railway_to:         s.railway_to.clone(),
+                railway_to_div:     s.railway_part_to.clone(),
+                station_to:         s.station_to.clone(),
+                station_to_code:    s.station_to_code.clone(),
+                assigned_cars:      leftover_count,
+                load_status:        s.status.clone(),
+                car_type:           s.car_type.clone(),
+                prev_etsng_name:    None,
+                etsng_name:         None,
+                gu12_number:        None,
+                claim_number:       None,
+                claim_date:         None,
+                client:             None,
+                sender:             None,
+                customer:           None,
+                distance:           0,
+                period_of_delivery: 0,
+                cost:               0.0,
+                assignment_type:    "Затягивание грузовой операции".to_string(),
+                car_numbers_list:   leftover,
+                supply_kind:        car_kind_str(&s.kind).to_string(),
+                period_label:       String::new(),
+                supply_period:      s.supply_period,
+                demand_period:      0,
+            });
+        }
+    }
+
+    // --- Шаг 3: вагоны узлов без активных дуг вовсе (весь узел — dummy) ---
+    // Это узлы, у которых нет ни одной активной дуги в solution.
+    for (s_idx, s) in supply.iter().enumerate() {
+        if arcs_by_supply.contains_key(&s_idx) {
+            continue; // уже обработан выше
+        }
+        // Только именные вагоны (NoNumber не имеют car_numbers).
+        if s.car_numbers.is_empty() {
+            continue;
+        }
+        records.push(OutputRecord {
+            opz_date:           now_str.clone(),
+            railway_from:       s.railway_to.clone(),
+            railway_from_div:   s.railway_part_to.clone(),
+            station_from:       s.station_to.clone(),
+            station_from_code:  s.station_to_code.clone(),
+            railway_to:         s.railway_to.clone(),
+            railway_to_div:     s.railway_part_to.clone(),
+            station_to:         s.station_to.clone(),
+            station_to_code:    s.station_to_code.clone(),
+            assigned_cars:      s.car_count,
+            load_status:        s.status.clone(),
+            car_type:           s.car_type.clone(),
+            prev_etsng_name:    None,
+            etsng_name:         None,
+            gu12_number:        None,
+            claim_number:       None,
+            claim_date:         None,
+            client:             None,
+            sender:             None,
+            customer:           None,
+            distance:           0,
+            period_of_delivery: 0,
+            cost:               0.0,
+            assignment_type:    "Затягивание грузовой операции".to_string(),
+            car_numbers_list:   s.car_numbers.iter().map(|n| n.to_string()).collect(),
+            supply_kind:        car_kind_str(&s.kind).to_string(),
+            period_label:       String::new(),
+            supply_period:      s.supply_period,
+            demand_period:      0,
+        });
+    }
+
+    records
 }
 
-/// Записи для тела POST в АПИ: только назначения по предложению 1-х суток (`supply_period == 1`).
-/// Решение оптимизации по вагонам периода 10 (2–10 суток) в API не передаётся.
+/// Записи для тела POST в АПИ: только назначения по предложению 1-х суток (`supply_period == 1`),
+/// без записей «Затягивание грузовой операции» (они только для Excel).
 pub fn output_records_for_api(records: &[OutputRecord]) -> Vec<OutputRecord> {
     records
         .iter()
-        .filter(|r| r.supply_period == 1)
+        .filter(|r| r.supply_period == 1 && r.assignment_type != "Затягивание грузовой операции")
         .cloned()
         .collect()
 }

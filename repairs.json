@@ -1,0 +1,1074 @@
+[
+    {
+        "RepairRailWay": "ВСБ",
+        "RepairStationName": "Азей",
+        "RepairStationCode": "922205",
+        "RecipName": [
+            "Эксплуатационное вагонное депо Иркутск-Сорт.-СП Восточно-Сибирской дирекции инфраструктуры-СП Центральной дирекции инфраструктуры-филиала ОАО\"РЖД\""
+        ],
+        "RecipOKPO": [
+            "68594560"
+        ]
+    },
+    {
+        "RepairRailWay": "ВСБ",
+        "RepairStationName": "Нижнеудинск",
+        "RepairStationCode": "921202",
+        "RecipName": [
+            "АО \"ВРК-1\""
+        ],
+        "RecipOKPO": [
+            "94174901"
+        ]
+    },
+    {
+        "RepairRailWay": "ГОР",
+        "RepairStationName": "Арзамас 2",
+        "RepairStationCode": "244208",
+        "RecipName": [
+            "АО \"ОМК Стальной путь\""
+        ],
+        "RecipOKPO": [
+            "78970426"
+        ]
+    },
+    {
+        "RepairRailWay": "ГОР",
+        "RepairStationName": "Муром 1",
+        "RepairStationCode": "240000",
+        "RecipName": [
+            "АО \"ОМК Стальной путь\"",
+            "ООО \"Муромский завод ТрансПутьМаш\""
+        ],
+        "RecipOKPO": [
+            "91003530",
+            "78970426"
+        ]
+    },
+    {
+        "RepairRailWay": "ГОР",
+        "RepairStationName": "Нижний Новгород-Сортировочный",
+        "RepairStationCode": "260003",
+        "RecipName": [
+            "АО \"ВРК-1\""
+        ],
+        "RecipOKPO": [
+            "94174901"
+        ]
+    },
+    {
+        "RepairRailWay": "ДВС",
+        "RepairStationName": "Ружино",
+        "RepairStationCode": "973705",
+        "RecipName": [
+            "АО \"ВРК-1\""
+        ],
+        "RecipOKPO": [
+            "94174901"
+        ]
+    },
+    {
+        "RepairRailWay": "ДВС",
+        "RepairStationName": "Хабаровск 2",
+        "RepairStationCode": "970001",
+        "RecipName": [
+            "Эксплуатационное вагонное депо Хабаровск-2 - структурное подразделение Дальневосточной дирекции инфраструктуры - структурного подразделения Центральной дирекции инфраструктуры - филиала ОАО \"РЖД\""
+        ],
+        "RecipOKPO": [
+            "67918167"
+        ]
+    },
+    {
+        "RepairRailWay": "ЗАБ",
+        "RepairStationName": "Белогорск",
+        "RepairStationCode": "950008",
+        "RecipName": [
+            "АО \"ОМК Стальной путь\""
+        ],
+        "RecipOKPO": [
+            "78970426"
+        ]
+    },
+    {
+        "RepairRailWay": "ЗАБ",
+        "RepairStationName": "Белогорск 2",
+        "RepairStationCode": "950101",
+        "RecipName": [
+            "Эксплуатационное вагонное депо Белогорск - СП Забайкальской дирекции инфраструктуры - СП Центральной дирекции инфраструктуры - филиала ОАО \"РЖД\""
+        ],
+        "RecipOKPO": [
+            "76800370"
+        ]
+    },
+    {
+        "RepairRailWay": "ЗСБ",
+        "RepairStationName": "Алтайская",
+        "RepairStationCode": "840005",
+        "RecipName": [
+            "Эксплуатационное вагонное депо Алтайская (ВЧД-11)-структурное подразделение Западно-Сибирской дирекции инфраструктуры-структурного подразделения Западно-Сибирской железной дороги-филиала открытого акционерного общества \"Российские железные дороги\""
+        ],
+        "RecipOKPO": [
+            "01090887"
+        ]
+    },
+    {
+        "RepairRailWay": "ЗСБ",
+        "RepairStationName": "Белово",
+        "RepairStationCode": "862305",
+        "RecipName": [
+            "ВЧДЭ-23 Белово"
+        ],
+        "RecipOKPO": [
+            "74289803"
+        ]
+    },
+    {
+        "RepairRailWay": "ЗСБ",
+        "RepairStationName": "Инская",
+        "RepairStationCode": "850007",
+        "RecipName": [
+            "ВЧДЭ-6 Инская",
+            "АО \"ВРК-1\""
+        ],
+        "RecipOKPO": [
+            "94174901",
+            "99849255"
+        ]
+    },
+    {
+        "RepairRailWay": "ЗСБ",
+        "RepairStationName": "Карбышево I",
+        "RepairStationCode": "830304",
+        "RecipName": [
+            "ООО \"ЖД Профи\""
+        ],
+        "RecipOKPO": [
+            "03391917"
+        ]
+    },
+    {
+        "RepairRailWay": "ЗСБ",
+        "RepairStationName": "Кемерово-Сортировочное",
+        "RepairStationCode": "870000",
+        "RecipName": [
+            "ВЧДЭ-27 Тайга"
+        ],
+        "RecipOKPO": [
+            "72280962"
+        ]
+    },
+    {
+        "RepairRailWay": "ЗСБ",
+        "RepairStationName": "Омск-Пассажирский",
+        "RepairStationCode": "830709",
+        "RecipName": [
+            "АО \"ВРК-1\""
+        ],
+        "RecipOKPO": [
+            "94174901"
+        ]
+    },
+    {
+        "RepairRailWay": "ЗСБ",
+        "RepairStationName": "Прокопьевск",
+        "RepairStationCode": "863907",
+        "RecipName": [
+            "ООО \"Новотранс КС\""
+        ],
+        "RecipOKPO": [
+            "28236193"
+        ]
+    },
+    {
+        "RepairRailWay": "ЗСБ",
+        "RepairStationName": "Татарская",
+        "RepairStationCode": "833001",
+        "RecipName": [
+            "ООО \"Татарскзернопродукт\""
+        ],
+        "RecipOKPO": [
+            "57216300"
+        ]
+    },
+    {
+        "RepairRailWay": "ЗСБ",
+        "RepairStationName": "Топки",
+        "RepairStationCode": "871107",
+        "RecipName": [
+            "ООО «ВРК «СИБИРЬ»"
+        ],
+        "RecipOKPO": [
+            "91740470"
+        ]
+    },
+    {
+        "RepairRailWay": "КБШ",
+        "RepairStationName": "Дема",
+        "RepairStationCode": "650005",
+        "RecipName": [
+            "ООО \"Новая вагоноремонтная компания\""
+        ],
+        "RecipOKPO": [
+            "86491409"
+        ]
+    },
+    {
+        "RepairRailWay": "КБШ",
+        "RepairStationName": "Кинель",
+        "RepairStationCode": "657305",
+        "RecipName": [
+            "АО \"ВРК-1\""
+        ],
+        "RecipOKPO": [
+            "94174901"
+        ]
+    },
+    {
+        "RepairRailWay": "КБШ",
+        "RepairStationName": "Косяковка",
+        "RepairStationCode": "652602",
+        "RecipName": [
+            "ООО \"Артель\""
+        ],
+        "RecipOKPO": [
+            "15586075"
+        ]
+    },
+    {
+        "RepairRailWay": "КБШ",
+        "RepairStationName": "Октябрьск",
+        "RepairStationCode": "638107",
+        "RecipName": [
+            "АО \"ВРК-1\""
+        ],
+        "RecipOKPO": [
+            "94174901"
+        ]
+    },
+    {
+        "RepairRailWay": "КБШ",
+        "RepairStationName": "Пенза 3",
+        "RepairStationCode": "630001",
+        "RecipName": [
+            "АО \"ВРК-1\""
+        ],
+        "RecipOKPO": [
+            "94174901"
+        ]
+    },
+    {
+        "RepairRailWay": "КБШ",
+        "RepairStationName": "Стерлитамак",
+        "RepairStationCode": "652706",
+        "RecipName": [
+            "ЗАО «Вагоноремонтный завод»"
+        ],
+        "RecipOKPO": [
+            "45314871"
+        ]
+    },
+    {
+        "RepairRailWay": "КЗХ",
+        "RepairStationName": "Жана-Есиль",
+        "RepairStationCode": "685707",
+        "RecipName": [
+            "ТОО ADT Partners"
+        ],
+        "RecipOKPO": [
+            "52270306"
+        ]
+    },
+    {
+        "RepairRailWay": "КЗХ",
+        "RepairStationName": "Костанай",
+        "RepairStationCode": "684001",
+        "RecipName": [
+            "AST Grain"
+        ],
+        "RecipOKPO": [
+            "2711011902"
+        ]
+    },
+    {
+        "RepairRailWay": "КРС",
+        "RepairStationName": "Аскиз",
+        "RepairStationCode": "887001",
+        "RecipName": [
+            "ООО \"Новая вагоноремонтная компания\""
+        ],
+        "RecipOKPO": [
+            "86491409"
+        ]
+    },
+    {
+        "RepairRailWay": "КРС",
+        "RepairStationName": "Ачинск 2",
+        "RepairStationCode": "883809",
+        "RecipName": [
+            "Общество с ограниченной ответственностью \"МАГИСТРАЛЬ\""
+        ],
+        "RecipOKPO": [
+            "41052641"
+        ]
+    },
+    {
+        "RepairRailWay": "КРС",
+        "RepairStationName": "Иланская",
+        "RepairStationCode": "893708",
+        "RecipName": [
+            "АО \"ВРК-1\""
+        ],
+        "RecipOKPO": [
+            "94174901"
+        ]
+    },
+    {
+        "RepairRailWay": "КРС",
+        "RepairStationName": "Ужур",
+        "RepairStationCode": "885100",
+        "RecipName": [
+            "Общество с ограниченной ответственностью \"МАГИСТРАЛЬ\""
+        ],
+        "RecipOKPO": [
+            "41052641"
+        ]
+    },
+    {
+        "RepairRailWay": "МСК",
+        "RepairStationName": "Брянск-Льговский",
+        "RepairStationCode": "200002",
+        "RecipName": [
+            "ООО \"Новая вагоноремонтная компания\""
+        ],
+        "RecipOKPO": [
+            "86491409"
+        ]
+    },
+    {
+        "RepairRailWay": "МСК",
+        "RepairStationName": "Курск",
+        "RepairStationCode": "208201",
+        "RecipName": [
+            "ООО \"Новая вагоноремонтная компания\""
+        ],
+        "RecipOKPO": [
+            "86491409"
+        ]
+    },
+    {
+        "RepairRailWay": "МСК",
+        "RepairStationName": "Михайловский Рудник",
+        "RepairStationCode": "205307",
+        "RecipName": [
+            "ЗАО \"Железногорский ВРЗ\""
+        ],
+        "RecipOKPO": [
+            "05803548"
+        ]
+    },
+    {
+        "RepairRailWay": "МСК",
+        "RepairStationName": "Ожерелье",
+        "RepairStationCode": "229706",
+        "RecipName": [
+            "ООО «КВРЗ «Новотранс»"
+        ],
+        "RecipOKPO": [
+            "80915699"
+        ]
+    },
+    {
+        "RepairRailWay": "МСК",
+        "RepairStationName": "Орел",
+        "RepairStationCode": "216000",
+        "RecipName": [
+            "Эксплуатационное вагонное депо Тула Тульского отделения Московской ж.д.- филиала ОАО \"РЖД\""
+        ],
+        "RecipOKPO": [
+            "01065510"
+        ]
+    },
+    {
+        "RepairRailWay": "МСК",
+        "RepairStationName": "Плеханово",
+        "RepairStationCode": "210004",
+        "RecipName": [
+            "Эксплуатационное вагонное депо Тула Тульского отделения Московской ж.д.- филиала ОАО \"РЖД\""
+        ],
+        "RecipOKPO": [
+            "01065510"
+        ]
+    },
+    {
+        "RepairRailWay": "МСК",
+        "RepairStationName": "Полпинская",
+        "RepairStationCode": "200801",
+        "RecipName": [
+            "Общество с ограниченной ответственностью \"СпецВагонСервис\""
+        ],
+        "RecipOKPO": [
+            "15438021"
+        ]
+    },
+    {
+        "RepairRailWay": "МСК",
+        "RepairStationName": "Стенькино 2",
+        "RepairStationCode": "223108",
+        "RecipName": [
+            "Эксплутационное вагонное депо Рязань Московской дирекции инфраструктуры Московской железной дороги -филиала ОАО \"РЖД\""
+        ],
+        "RecipOKPO": [
+            "04713027"
+        ]
+    },
+    {
+        "RepairRailWay": "МСК",
+        "RepairStationName": "Тула 1-Курская",
+        "RepairStationCode": "210201",
+        "RecipName": [
+            "АО \"ОМК Стальной путь\""
+        ],
+        "RecipOKPO": [
+            "78970426"
+        ]
+    },
+    {
+        "RepairRailWay": "МСК",
+        "RepairStationName": "Узловая 1",
+        "RepairStationCode": "224204",
+        "RecipName": [
+            "ООО \"Новая вагоноремонтная компания\""
+        ],
+        "RecipOKPO": [
+            "86491409"
+        ]
+    },
+    {
+        "RepairRailWay": "МСК",
+        "RepairStationName": "Унеча",
+        "RepairStationCode": "202008",
+        "RecipName": [
+            "ООО \"Новая вагоноремонтная компания\""
+        ],
+        "RecipOKPO": [
+            "86491409"
+        ]
+    },
+    {
+        "RepairRailWay": "ОКТ",
+        "RepairStationName": "Апатиты",
+        "RepairStationCode": "016009",
+        "RecipName": [
+            "ВЧДЭ-23 Апатиты ОАО \"РЖД\"\r\n"
+        ],
+        "RecipOKPO": [
+            "76975626"
+        ]
+    },
+    {
+        "RepairRailWay": "ОКТ",
+        "RepairStationName": "Березки",
+        "RepairStationCode": "070003",
+        "RecipName": [
+            "АО \"ВРК-1\""
+        ],
+        "RecipOKPO": [
+            "94174901"
+        ]
+    },
+    {
+        "RepairRailWay": "ОКТ",
+        "RepairStationName": "Бологое-Московское",
+        "RepairStationCode": "050009",
+        "RecipName": [
+            "АО \"ОМК Стальной путь\""
+        ],
+        "RecipOKPO": [
+            "78970426"
+        ]
+    },
+    {
+        "RepairRailWay": "ОКТ",
+        "RepairStationName": "Великие Луки",
+        "RepairStationCode": "066008",
+        "RecipName": [
+            "ООО\"ВЛВРЗ\""
+        ],
+        "RecipOKPO": [
+            "95864571"
+        ]
+    },
+    {
+        "RepairRailWay": "ОКТ",
+        "RepairStationName": "Волховстрой 1",
+        "RepairStationCode": "040008",
+        "RecipName": [
+            "ООО \"ВРС Центр\"",
+            "ООО \"Новая вагоноремонтная компания\""
+        ],
+        "RecipOKPO": [
+            "86491409",
+            "47282951"
+        ]
+    },
+    {
+        "RepairRailWay": "ОКТ",
+        "RepairStationName": "Ковдор",
+        "RepairStationCode": "015400",
+        "RecipName": [
+            "ООО \"ВРС Центр\""
+        ],
+        "RecipOKPO": [
+            "47282951"
+        ]
+    },
+    {
+        "RepairRailWay": "ОКТ",
+        "RepairStationName": "Мурманск",
+        "RepairStationCode": "018409",
+        "RecipName": [
+            "АО «ВРК-2»"
+        ],
+        "RecipOKPO": [
+            "78970343"
+        ]
+    },
+    {
+        "RepairRailWay": "ОКТ",
+        "RepairStationName": "Санкт-Петербург-Сортировочный-Московский",
+        "RepairStationCode": "030006",
+        "RecipName": [
+            "ООО \"ВРС Центр\""
+        ],
+        "RecipOKPO": [
+            "47282951"
+        ]
+    },
+    {
+        "RepairRailWay": "ОКТ",
+        "RepairStationName": "Тверь",
+        "RepairStationCode": "061502",
+        "RecipName": [
+            "(ВЧДР-14) Вагонное ремонтное депо 14, Тверь"
+        ],
+        "RecipOKPO": [
+            "69200965"
+        ]
+    },
+    {
+        "RepairRailWay": "ОКТ",
+        "RepairStationName": "Тихвин",
+        "RepairStationCode": "047505",
+        "RecipName": [
+            "ЗАО «ТСЗ «Титран-Экспресс»"
+        ],
+        "RecipOKPO": [
+            "56939166"
+        ]
+    },
+    {
+        "RepairRailWay": "ОКТ",
+        "RepairStationName": "Тосно",
+        "RepairStationCode": "031302",
+        "RecipName": [
+            "АО \"ВРК-1\""
+        ],
+        "RecipOKPO": [
+            "94174901"
+        ]
+    },
+    {
+        "RepairRailWay": "ПРВ",
+        "RepairStationName": "Анисовка",
+        "RepairStationCode": "625501",
+        "RecipName": [
+            "ВЧДЭ-10 Астрахань"
+        ],
+        "RecipOKPO": [
+            "69434404"
+        ]
+    },
+    {
+        "RepairRailWay": "ПРВ",
+        "RepairStationName": "Арчеда",
+        "RepairStationCode": "613805",
+        "RecipName": [
+            "ООО \"Новая вагоноремонтная компания\""
+        ],
+        "RecipOKPO": [
+            "86491409"
+        ]
+    },
+    {
+        "RepairRailWay": "ПРВ",
+        "RepairStationName": "Аткарск",
+        "RepairStationCode": "608807",
+        "RecipName": [
+            "ВЧДЭ-10 Астрахань"
+        ],
+        "RecipOKPO": [
+            "69434404"
+        ]
+    },
+    {
+        "RepairRailWay": "ПРВ",
+        "RepairStationName": "Балаково",
+        "RepairStationCode": "625107",
+        "RecipName": [
+            "ООО \"Промтех-С\""
+        ],
+        "RecipOKPO": [
+            "65832852"
+        ]
+    },
+    {
+        "RepairRailWay": "ПРВ",
+        "RepairStationName": "Волжский",
+        "RepairStationCode": "610402",
+        "RecipName": [
+            "ООО \"Промтех-С\""
+        ],
+        "RecipOKPO": [
+            "65832852"
+        ]
+    },
+    {
+        "RepairRailWay": "ПРВ",
+        "RepairStationName": "Ершов",
+        "RepairStationCode": "627206",
+        "RecipName": [
+            "ООО \"Новая вагоноремонтная компания\""
+        ],
+        "RecipOKPO": [
+            "86491409"
+        ]
+    },
+    {
+        "RepairRailWay": "ПРВ",
+        "RepairStationName": "Нефтяная",
+        "RepairStationCode": "621002",
+        "RecipName": [
+            "АО \"ОМК Стальной путь\""
+        ],
+        "RecipOKPO": [
+            "78970426"
+        ]
+    },
+    {
+        "RepairRailWay": "ПРВ",
+        "RepairStationName": "Саратов 2-Товарный",
+        "RepairStationCode": "620508",
+        "RecipName": [
+            "АО \"ВРК-1\""
+        ],
+        "RecipOKPO": [
+            "94174901"
+        ]
+    },
+    {
+        "RepairRailWay": "ПРВ",
+        "RepairStationName": "им. Максима Горького",
+        "RepairStationCode": "611000",
+        "RecipName": [
+            "ООО \"Промтех-С\""
+        ],
+        "RecipOKPO": [
+            "65832852"
+        ]
+    },
+    {
+        "RepairRailWay": "СВР",
+        "RepairStationName": "Березники-Сортировочная",
+        "RepairStationCode": "769002",
+        "RecipName": [
+            "ООО «Депо-ЕвроХим»"
+        ],
+        "RecipOKPO": [
+            "99759241"
+        ]
+    },
+    {
+        "RepairRailWay": "СВР",
+        "RepairStationName": "Екатеринбург-Сортировочный",
+        "RepairStationCode": "780001",
+        "RecipName": [
+            "АО \"ВРК-1\"",
+            "Общество с ограниченной отвественностью \"Транзит-Н\""
+        ],
+        "RecipOKPO": [
+            "94174901",
+            "21531977"
+        ]
+    },
+    {
+        "RepairRailWay": "СВР",
+        "RepairStationName": "Заячья Горка",
+        "RepairStationCode": "769407",
+        "RecipName": [
+            "ООО \"ВД Березники\"",
+            "ООО \"Вагонно-ремонтное предприятие \"Заячья Горка\""
+        ],
+        "RecipOKPO": [
+            "35060122",
+            "02231198"
+        ]
+    },
+    {
+        "RepairRailWay": "СВР",
+        "RepairStationName": "Серов-Сортировочный",
+        "RepairStationCode": "774706",
+        "RecipName": [
+            "ООО \"Новая вагоноремонтная компания\""
+        ],
+        "RecipOKPO": [
+            "86491409"
+        ]
+    },
+    {
+        "RepairRailWay": "СВР",
+        "RepairStationName": "Чусовская",
+        "RepairStationCode": "767308",
+        "RecipName": [
+            "АО \"ВРК-1\""
+        ],
+        "RecipOKPO": [
+            "94174901"
+        ]
+    },
+    {
+        "RepairRailWay": "СЕВ",
+        "RepairStationName": "Вологда 1",
+        "RepairStationCode": "300107",
+        "RecipName": [
+            "АО \"ВРК-1\""
+        ],
+        "RecipOKPO": [
+            "94174901"
+        ]
+    },
+    {
+        "RepairRailWay": "СЕВ",
+        "RepairStationName": "Вологда 2",
+        "RepairStationCode": "300304",
+        "RecipName": [
+            "АО \"ВРК-1\""
+        ],
+        "RecipOKPO": [
+            "94174901"
+        ]
+    },
+    {
+        "RepairRailWay": "СЕВ",
+        "RepairStationName": "Кошта",
+        "RepairStationCode": "302600",
+        "RecipName": [
+            "ВЧДЭ-7 Лоста"
+        ],
+        "RecipOKPO": [
+            "77592011"
+        ]
+    },
+    {
+        "RepairRailWay": "СЕВ",
+        "RepairStationName": "Ярославль-Главный",
+        "RepairStationCode": "310005",
+        "RecipName": [
+            "ООО \"Новая вагоноремонтная компания\"",
+            "ВЧДЭ-1 Ярославль-Главный"
+        ],
+        "RecipOKPO": [
+            "01068313",
+            "86491409"
+        ]
+    },
+    {
+        "RepairRailWay": "СКВ",
+        "RepairStationName": "Батайск",
+        "RepairStationCode": "510007",
+        "RecipName": [
+            "АО \"ВРК-1\""
+        ],
+        "RecipOKPO": [
+            "94174901"
+        ]
+    },
+    {
+        "RepairRailWay": "СКВ",
+        "RepairStationName": "Буденновск",
+        "RepairStationCode": "537007",
+        "RecipName": [
+            "ВЧДЭ-9 Минеральные Воды"
+        ],
+        "RecipOKPO": [
+            "48598372"
+        ]
+    },
+    {
+        "RepairRailWay": "СКВ",
+        "RepairStationName": "Кавказская",
+        "RepairStationCode": "520009",
+        "RecipName": [
+            "ООО \"Новая вагоноремонтная компания\""
+        ],
+        "RecipOKPO": [
+            "86491409"
+        ]
+    },
+    {
+        "RepairRailWay": "СКВ",
+        "RepairStationName": "Каменоломни",
+        "RepairStationCode": "513109",
+        "RecipName": [
+            "ООО \"Новая вагоноремонтная компания\""
+        ],
+        "RecipOKPO": [
+            "86491409"
+        ]
+    },
+    {
+        "RepairRailWay": "СКВ",
+        "RepairStationName": "Кизилюрт",
+        "RepairStationCode": "542807",
+        "RecipName": [
+            "ООО \"Корвет\""
+        ],
+        "RecipOKPO": [
+            "12000821"
+        ]
+    },
+    {
+        "RepairRailWay": "СКВ",
+        "RepairStationName": "Краснодар 1",
+        "RepairStationCode": "524404",
+        "RecipName": [
+            "АО \"ВРК-1\""
+        ],
+        "RecipOKPO": [
+            "94174901"
+        ]
+    },
+    {
+        "RepairRailWay": "СКВ",
+        "RepairStationName": "Крымская",
+        "RepairStationCode": "521603",
+        "RecipName": [
+            "ООО \"ВРС Центр\""
+        ],
+        "RecipOKPO": [
+            "47282951"
+        ]
+    },
+    {
+        "RepairRailWay": "СКВ",
+        "RepairStationName": "Невинномысская",
+        "RepairStationCode": "531304",
+        "RecipName": [
+            "ООО Армавирский ПЖТ",
+            "ООО «Депо-ЕвроХим»"
+        ],
+        "RecipOKPO": [
+            "35266177",
+            "99759241"
+        ]
+    },
+    {
+        "RepairRailWay": "СКВ",
+        "RepairStationName": "Новороссийск",
+        "RepairStationCode": "520901",
+        "RecipName": [
+            "ВЧДЭ-13 Краснодар"
+        ],
+        "RecipOKPO": [
+            "01077720"
+        ]
+    },
+    {
+        "RepairRailWay": "СКВ",
+        "RepairStationName": "Прохладная",
+        "RepairStationCode": "537601",
+        "RecipName": [
+            "ООО \"Новая вагоноремонтная компания\""
+        ],
+        "RecipOKPO": [
+            "86491409"
+        ]
+    },
+    {
+        "RepairRailWay": "СКВ",
+        "RepairStationName": "Сальск",
+        "RepairStationCode": "518403",
+        "RecipName": [
+            "АО \"ОМК Стальной путь\""
+        ],
+        "RecipOKPO": [
+            "78970426"
+        ]
+    },
+    {
+        "RepairRailWay": "ЮВС",
+        "RepairStationName": "Валуйки",
+        "RepairStationCode": "438302",
+        "RecipName": [
+            "ВЧДЭ-3 Стойленская"
+        ],
+        "RecipOKPO": [
+            "78163128"
+        ]
+    },
+    {
+        "RepairRailWay": "ЮВС",
+        "RepairStationName": "Елец",
+        "RepairStationCode": "593000",
+        "RecipName": [
+            "ВЧДЭ-5 Казинка"
+        ],
+        "RecipOKPO": [
+            "01080308"
+        ]
+    },
+    {
+        "RepairRailWay": "ЮВС",
+        "RepairStationName": "Котел",
+        "RepairStationCode": "438603",
+        "RecipName": [
+            "ООО \"ВКМ\""
+        ],
+        "RecipOKPO": [
+            "78155235"
+        ]
+    },
+    {
+        "RepairRailWay": "ЮВС",
+        "RepairStationName": "Кочетовка 1",
+        "RepairStationCode": "600006",
+        "RecipName": [
+            "ООО \"Новая вагоноремонтная компания\""
+        ],
+        "RecipOKPO": [
+            "86491409"
+        ]
+    },
+    {
+        "RepairRailWay": "ЮВС",
+        "RepairStationName": "Лиски",
+        "RepairStationCode": "582005",
+        "RecipName": [
+            "ООО \"Новая вагоноремонтная компания\""
+        ],
+        "RecipOKPO": [
+            "86491409"
+        ]
+    },
+    {
+        "RepairRailWay": "ЮВС",
+        "RepairStationName": "Поворино",
+        "RepairStationCode": "584405",
+        "RecipName": [
+            "ВЧДЭ-2 Лиски"
+        ],
+        "RecipOKPO": [
+            "01079481"
+        ]
+    },
+    {
+        "RepairRailWay": "ЮВС",
+        "RepairStationName": "Россошь",
+        "RepairStationCode": "585107",
+        "RecipName": [
+            "АО \"ОМК Стальной путь\""
+        ],
+        "RecipOKPO": [
+            "78970426"
+        ]
+    },
+    {
+        "RepairRailWay": "ЮВС",
+        "RepairStationName": "Ртищево 1",
+        "RepairStationCode": "607607",
+        "RecipName": [
+            "ВЧДЭ-6 Кочетовка"
+        ],
+        "RecipOKPO": [
+            "01080509"
+        ]
+    },
+    {
+        "RepairRailWay": "ЮВС",
+        "RepairStationName": "Старый Оскол",
+        "RepairStationCode": "438506",
+        "RecipName": [
+            "ООО \"Новая вагоноремонтная компания\""
+        ],
+        "RecipOKPO": [
+            "86491409"
+        ]
+    },
+    {
+        "RepairRailWay": "ЮВС",
+        "RepairStationName": "Стойленская",
+        "RepairStationCode": "438406",
+        "RecipName": [
+            "АО \"ВРК-1\""
+        ],
+        "RecipOKPO": [
+            "94174901"
+        ]
+    },
+    {
+        "RepairRailWay": "ЮУР",
+        "RepairStationName": "Златоуст",
+        "RepairStationCode": "806201",
+        "RecipName": [
+            "АО \"ОМК Стальной путь\""
+        ],
+        "RecipOKPO": [
+            "78970426"
+        ]
+    },
+    {
+        "RepairRailWay": "ЮУР",
+        "RepairStationName": "Курган",
+        "RepairStationCode": "828501",
+        "RecipName": [
+            "АО \"ОМК Стальной путь\""
+        ],
+        "RecipOKPO": [
+            "78970426"
+        ]
+    },
+    {
+        "RepairRailWay": "ЮУР",
+        "RepairStationName": "Никель",
+        "RepairStationCode": "814301",
+        "RecipName": [
+            "ООО \"Новая вагоноремонтная компания\""
+        ],
+        "RecipOKPO": [
+            "86491409"
+        ]
+    },
+    {
+        "RepairRailWay": "ЮУР",
+        "RepairStationName": "Орск",
+        "RepairStationCode": "810006",
+        "RecipName": [
+            "ООО \"Новая вагоноремонтная компания\""
+        ],
+        "RecipOKPO": [
+            "86491409"
+        ]
+    },
+    {
+        "RepairRailWay": "ЮУР",
+        "RepairStationName": "Челябинск-Главный",
+        "RepairStationCode": "800008",
+        "RecipName": [
+            "ВЧДЭ-1 Челябинск",
+            "ООО \"Новая вагоноремонтная компания\""
+        ],
+        "RecipOKPO": [
+            "68657898",
+            "86491409"
+        ]
+    }
+]

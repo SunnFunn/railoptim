@@ -1,7 +1,7 @@
 use chrono::{Duration, TimeZone, Utc};
 use serde::Deserialize;
 
-use crate::node::DemandNode;
+use crate::node::{DemandNode, DemandPurpose};
 use super::client::{ApiClient, ApiEndpoint, ApiError};
 
 /// Формат дат в параметрах запроса.
@@ -88,6 +88,7 @@ impl DemandApiItem {
 
         DemandNode {
             d_id: id,
+            purpose: DemandPurpose::Load,
             period,
             station_name:    self.station_from.unwrap_or_default(),
             station_code:    self.station_from_code.unwrap_or_default(),

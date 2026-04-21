@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::node::{DemandNode, SupplyNode};
+use crate::node::{DemandNode, DemandPurpose, SupplyNode};
 use super::model::{collect_mass_pair_violations, TaskArc};
 
 // ---------------------------------------------------------------------------
@@ -128,8 +128,12 @@ pub fn greedy_initial_solution(
             total_cost: arc_cost,
         });
 
-        // Ранний выход: весь спрос закрыт.
-        if remaining_demand.iter().all(|&d| d <= 0) {
+        // Ранний выход: закрыт спрос на **погрузку** (промывка — опциональная ёмкость).
+        if demand
+            .iter()
+            .zip(remaining_demand.iter())
+            .all(|(d, &r)| d.purpose != DemandPurpose::Load || r <= 0)
+        {
             break;
         }
     }
@@ -167,7 +171,12 @@ pub fn greedy_initial_solution(
     }
 
     // --- Итоговая статистика ---
-    let unmet_demand:  i32 = remaining_demand.iter().filter(|&&d| d > 0).sum();
+    let unmet_demand: i32 = remaining_demand
+        .iter()
+        .zip(demand.iter())
+        .filter(|(r, d)| d.purpose == DemandPurpose::Load && **r > 0)
+        .map(|(r, _)| *r)
+        .sum();
     let excess_supply: i32 = remaining_supply.iter().filter(|&&s| s > 0).sum();
 
     GreedyResult {
@@ -203,16 +212,26 @@ pub fn greedy_to_arc_vals(result: &GreedyResult, n_arcs: usize) -> Vec<f64> {
 /// Выводит сводку жадного решения в консоль.
 pub fn print_greedy_result(result: &GreedyResult, supply: &[SupplyNode], demand: &[DemandNode]) {
     let total_supply: i32 = supply.iter().map(|s| s.car_count).sum();
-    let total_demand: i32 = demand.iter().map(|d| d.car_count).sum();
+    let total_load_demand: i32 = demand
+        .iter()
+        .filter(|d| d.purpose == DemandPurpose::Load)
+        .map(|d| d.car_count)
+        .sum();
 
     println!("--- ЖАДНОЕ РЕШЕНИЕ ---");
     println!("Назначений:            {} шт.", result.assignments.len());
-    println!("Назначено вагонов:     {} / {} спрос, {} предложение",
-        result.assigned_cars, total_demand, total_supply);
+    println!(
+        "Назначено вагонов:     {} / {} спрос (погрузка), {} предложение",
+        result.assigned_cars, total_load_demand, total_supply
+    );
     println!("Суммарная стоимость:   {:.2} руб.", result.total_cost);
     println!("Неудовлетворён спрос:  {} ваг.", result.unmet_demand);
     println!("Избыток предложения:   {} ваг.", result.excess_supply);
-    println!("Покрытие спроса:       {:.1}%",
-        result.assigned_cars as f64 / total_demand as f64 * 100.0);
+    if total_load_demand > 0 {
+        println!(
+            "Покрытие спроса (погр.): {:.1}%",
+            result.assigned_cars as f64 / total_load_demand as f64 * 100.0
+        );
+    }
     println!("----------------------");
 }

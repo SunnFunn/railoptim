@@ -6,9 +6,12 @@ pub mod result;
 
 pub use model::{
     build_task_arcs, ArcStats, TaskArc,
+    EMPTY_RUN_AFTER_WASH_TO_LOAD_AVG_COST_RUB,
     PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_RUB,
     PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_PERIOD10_RUB,
     PERIOD10_COST_SURCHARGE_RUB,
+    WASH_PATH_SURCHARGE_RUB,
+    WASH_PROCEDURE_AVG_COST_RUB,
 };
 pub use lp::{solve, print_balance, OptimResult};
 pub use result::{

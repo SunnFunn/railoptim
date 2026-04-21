@@ -4,12 +4,12 @@ mod debug;
 mod node;
 mod solver;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use anyhow::Result;
 use config::Config;
 use data::{ApiClient, StationRef};
-use node::{CarKind, RepairStatus};
+use node::{CarKind, DemandNode, DemandPurpose, RepairStatus, TariffNode};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -23,7 +23,7 @@ async fn main() -> Result<()> {
     // 2. Получение данных спроса и предложения
     // -----------------------------------------------------------------------
     let demand_nodes = client.fetch_demand_nodes().await?;
-    println!("Получено узлов спроса:       {}", demand_nodes.len());
+    println!("Получено узлов спроса (погрузка): {}", demand_nodes.len());
 
     let mut supply_nodes = client.fetch_supply_nodes().await?;
     match data::dislocations::fetch_dislocation_supply_nodes() {
@@ -63,6 +63,46 @@ async fn main() -> Result<()> {
     println!("  требуют ремонта (В ремонт):{}", repair_nodes.len());
     println!("  по факту (Assigned):       {}", assigned_nodes.len());
 
+    let wash_codes = match data::load_wash_product_codes("data/references.json") {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("  WashProductCodes из references.json: не загружены ({e})");
+            HashSet::new()
+        }
+    };
+    let wash_stations = match data::wash::fetch_wash_stations() {
+        Ok(ws) => ws,
+        Err(e) => {
+            eprintln!("  станции промывки (wash.py json): не загружены ({e})");
+            vec![]
+        }
+    };
+    let wash_demand_nodes = if wash_stations.is_empty() {
+        Vec::new()
+    } else {
+        data::wash::wash_demand_nodes(&wash_stations, demand_nodes.len() + 1)
+    };
+    println!("Узлов спроса (промывка):     {}", wash_demand_nodes.len());
+
+    let mut demand_lp: Vec<DemandNode> = demand_nodes.clone();
+    demand_lp.extend(wash_demand_nodes.clone());
+
+    let n_supply_wash_list = opt_supply
+        .iter()
+        .filter(|s| data::wash::supply_matches_wash_product_list(s, &wash_codes))
+        .count();
+    let n_supply_wash_skip = opt_supply
+        .iter()
+        .filter(|s| {
+            data::wash::supply_matches_wash_product_list(s, &wash_codes)
+                && data::wash::load_demand_covers_same_etsng(s, &demand_nodes)
+        })
+        .count();
+    println!(
+        "  предложений с ЕТСНГ из списка промывки: {} (из них погрузка того же ЕТСНГ на станции — промывка не обязательна: {})",
+        n_supply_wash_list, n_supply_wash_skip
+    );
+
     // -----------------------------------------------------------------------
     // 3. Получение тарифов
     //    stations_from: станции образования порожних opt_supply +
@@ -89,6 +129,7 @@ async fn main() -> Result<()> {
 
     let stations_to: Vec<StationRef> = demand_nodes
         .iter()
+        .filter(|d| d.purpose == DemandPurpose::Load)
         .map(|d| (d.station_code.clone(), d.railway_name.clone()))
         .chain(
             // Добавляем станции фактического назначения Assigned-вагонов.
@@ -156,9 +197,68 @@ async fn main() -> Result<()> {
     };
 
     // -----------------------------------------------------------------------
+    // 3б. Тарифы до станций промывки + надбавки (промывка + порожний пробег до погрузки).
+    //     В LP используется только суммарная стоимость дуги «до промывки».
+    //     FrETSNGCode: груженый — текущий груз, порожний — PrevFrETSNG (доминирующий в группе).
+    // -----------------------------------------------------------------------
+    let wash_station_refs = data::wash::wash_station_refs(&wash_stations);
+    let wash_tariff_groups = data::wash::wash_tariff_groups(&opt_supply, &wash_codes);
+    let mut wash_tariff_map: HashMap<(String, String, String), TariffNode> = HashMap::new();
+    if !wash_station_refs.is_empty() && !wash_tariff_groups.is_empty() {
+        for (etsng_opt, from_list) in &wash_tariff_groups {
+            if from_list.is_empty() {
+                continue;
+            }
+            match client
+                .fetch_tariffs_with_etsng(from_list, &wash_station_refs, etsng_opt.as_deref())
+                .await
+            {
+                Ok(items) => {
+                    let ek = etsng_opt
+                        .as_ref()
+                        .map(|e| data::references::normalize_etsng_code(e))
+                        .unwrap_or_default();
+                    for mut t in items {
+                        t.cost += solver::WASH_PATH_SURCHARGE_RUB;
+                        wash_tariff_map.insert(
+                            (
+                                t.station_from_code.clone(),
+                                t.station_to_code.clone(),
+                                ek.clone(),
+                            ),
+                            t,
+                        );
+                    }
+                }
+                Err(e) => eprintln!(
+                    "  тарифы до промывки (ЕТСНГ {:?}): {}",
+                    etsng_opt.as_deref(),
+                    e
+                ),
+            }
+        }
+        println!(
+            "Тарифов до промывки (с надбавкой {}+{}={} руб.): {} (групп ЕТСНГ: {})",
+            solver::WASH_PROCEDURE_AVG_COST_RUB as i64,
+            solver::EMPTY_RUN_AFTER_WASH_TO_LOAD_AVG_COST_RUB as i64,
+            solver::WASH_PATH_SURCHARGE_RUB as i64,
+            wash_tariff_map.len(),
+            wash_tariff_groups.len()
+        );
+    } else if !wash_codes.is_empty() && wash_stations.is_empty() {
+        println!("Тарифы до промывки:         не запрошены (нет станций промывки)");
+    }
+
+    // -----------------------------------------------------------------------
     // 4. Построение дуг транспортной задачи
     // -----------------------------------------------------------------------
-    let (arcs, arc_stats) = solver::build_task_arcs(&opt_supply, &demand_nodes, &tariff_nodes);
+    let (arcs, arc_stats) = solver::build_task_arcs(
+        &opt_supply,
+        &demand_lp,
+        &tariff_nodes,
+        &wash_codes,
+        &wash_tariff_map,
+    );
 
     let total = arc_stats.total_pairs;
     println!("Всего пар supply×demand:     {}", total);
@@ -191,19 +291,19 @@ async fn main() -> Result<()> {
     // -----------------------------------------------------------------------
     // 5. Анализ баланса и начальное жадное решение
     // -----------------------------------------------------------------------
-    solver::print_balance(&opt_supply, &demand_nodes);
+    solver::print_balance(&opt_supply, &demand_lp);
 
-    let greedy_result = solver::greedy_initial_solution(&arcs, &opt_supply, &demand_nodes);
-    solver::print_greedy_result(&greedy_result, &opt_supply, &demand_nodes);
+    let greedy_result = solver::greedy_initial_solution(&arcs, &opt_supply, &demand_lp);
+    solver::print_greedy_result(&greedy_result, &opt_supply, &demand_lp);
 
     // -----------------------------------------------------------------------
     // 6. ALNS-оптимизация (Adaptive Large Neighbourhood Search)
     // -----------------------------------------------------------------------
     let alns_config = solver::AlnsConfig::default();
     let alns_result = solver::run_alns(
-        &greedy_result, &arcs, &opt_supply, &demand_nodes, &alns_config,
+        &greedy_result, &arcs, &opt_supply, &demand_lp, &alns_config,
     );
-    let optim_result  = alns_result.to_optim_result();
+    let optim_result  = alns_result.to_optim_result(&demand_lp);
     let solution      = alns_result.arc_vals;
     let mut remaining_supply_p1 = 0_i32;
     let mut remaining_supply_p10 = 0_i32;
@@ -230,7 +330,7 @@ async fn main() -> Result<()> {
     // -----------------------------------------------------------------------
     // Записи по оптимизированным назначениям (Free / NoNumber).
     let mut output_records = solver::build_output_records(
-        &solution, &arcs, &opt_supply, &demand_nodes,
+        &solution, &arcs, &opt_supply, &demand_lp, &wash_codes,
     );
     // Добавляем вагоны "По факту" (Assigned): ShipmentGoalId из DislocationPreview → тип назначения.
     let assigned_car_numbers: Vec<u64> = assigned_nodes
@@ -287,7 +387,9 @@ async fn main() -> Result<()> {
         println!("Записей в POST АПИ:          {}", n_api);
     }
 
-    let checkpoint = debug::save_checkpoint(&demand_nodes, &supply_nodes, Some(&output_records))?;
+    let demand_checkpoint = demand_lp.clone();
+    let checkpoint =
+        debug::save_checkpoint(&demand_checkpoint, &supply_nodes, Some(&output_records))?;
     println!("Чекпоинт сохранён:           {}", checkpoint.display());
 
     match client.send_assignments(&api_records).await {
@@ -327,7 +429,7 @@ async fn main() -> Result<()> {
         &solution,
         &arcs,
         &opt_supply,
-        &demand_nodes,
+        &demand_lp,
     );
 
     let result_path = solver::save_result(&report)?;

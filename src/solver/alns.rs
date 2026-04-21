@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::time::{Duration, Instant};
 use rand::prelude::*;
 
-use crate::node::{DemandNode, SupplyNode};
+use crate::node::{DemandNode, DemandPurpose, SupplyNode};
 use super::model::{collect_mass_pair_violations, TaskArc};
 use super::greedy::{Assignment, GreedyResult, greedy_to_arc_vals};
 use super::lp::{solve, OptimResult, PENALTY_COST};
@@ -87,21 +87,29 @@ impl AlnsState {
 
     /// Полная целевая функция, согласованная с LP:
     /// стоимость реальных дуг + штраф за незакрытый спрос + штраф за избыток предложения.
-    pub fn objective_cost(&self) -> f64 {
-        let (unmet_demand, excess_supply) = self.unmet_and_excess();
+    pub fn objective_cost(&self, demand: &[DemandNode]) -> f64 {
+        let (unmet_demand, excess_supply) = self.unmet_and_excess(demand);
         self.total_cost + PENALTY_COST * (unmet_demand + excess_supply) as f64
     }
 
     /// Текущие остатки по спросу и предложению.
-    pub fn unmet_and_excess(&self) -> (i32, i32) {
-        let unmet_demand: i32 = self.remaining_demand.iter().filter(|&&d| d > 0).sum();
+    ///
+    /// «Незакрытый спрос» — только узлы **погрузки**; ёмкость промывки не штрафуется.
+    pub fn unmet_and_excess(&self, demand: &[DemandNode]) -> (i32, i32) {
+        let unmet_demand: i32 = self
+            .remaining_demand
+            .iter()
+            .zip(demand.iter())
+            .filter(|(r, d)| d.purpose == DemandPurpose::Load && **r > 0)
+            .map(|(r, _)| *r)
+            .sum();
         let excess_supply: i32 = self.remaining_supply.iter().filter(|&&s| s > 0).sum();
         (unmet_demand, excess_supply)
     }
 
     /// Штрафная часть целевой функции (без реальной стоимости дуг).
-    pub fn penalty_component_cost(&self) -> f64 {
-        let (unmet_demand, excess_supply) = self.unmet_and_excess();
+    pub fn penalty_component_cost(&self, demand: &[DemandNode]) -> f64 {
+        let (unmet_demand, excess_supply) = self.unmet_and_excess(demand);
         PENALTY_COST * (unmet_demand + excess_supply) as f64
     }
 }
@@ -517,12 +525,12 @@ pub fn run_alns(
     };
 
     println!("--- ALNS СТАРТ ---");
-    let (start_unmet, start_excess) = best_state.unmet_and_excess();
+    let (start_unmet, start_excess) = best_state.unmet_and_excess(demand);
     println!("Начальная real_cost:      {:.2} руб.", best_state.total_cost);
     println!(
         "Начальная objective_cost: {:.2} руб. (penalty: {:.2}, unmet: {}, excess: {})",
-        best_state.objective_cost(),
-        best_state.penalty_component_cost(),
+        best_state.objective_cost(demand),
+        best_state.penalty_component_cost(demand),
         start_unmet,
         start_excess,
     );
@@ -554,8 +562,8 @@ pub fn run_alns(
         candidate.recalculate_cost();
 
         // --- ACCEPT (только если лучше) ---
-        let candidate_obj = candidate.objective_cost();
-        let best_obj = best_state.objective_cost();
+        let candidate_obj = candidate.objective_cost(demand);
+        let best_obj = best_state.objective_cost(demand);
 
         let candidate_assigned: i32 = candidate.assignments.iter().map(|a| a.quantity).sum();
         let best_assigned: i32 = best_state.assignments.iter().map(|a| a.quantity).sum();
@@ -587,9 +595,9 @@ pub fn run_alns(
                 stats.iterations,
                 improvement,
                 best_state.total_cost,
-                best_state.penalty_component_cost(),
-                best_state.unmet_and_excess().0,
-                best_state.unmet_and_excess().1,
+                best_state.penalty_component_cost(demand),
+                best_state.unmet_and_excess(demand).0,
+                best_state.unmet_and_excess(demand).1,
                 destroy_ratio * 100.0,
             );
         } else {
@@ -612,13 +620,26 @@ pub fn run_alns(
     stats.elapsed             = start.elapsed();
     stats.final_destroy_ratio = destroy_ratio;
 
+    let unmet_load_fin: i32 = best_state
+        .remaining_demand
+        .iter()
+        .zip(demand.iter())
+        .filter(|(r, d)| d.purpose == DemandPurpose::Load && **r > 0)
+        .map(|(r, _)| *r)
+        .sum();
+    let excess_fin: i32 = best_state
+        .remaining_supply
+        .iter()
+        .filter(|&&s| s > 0)
+        .sum();
+
     let arc_vals = greedy_to_arc_vals(
         &GreedyResult {
             assignments:   best_state.assignments.clone(),
             total_cost:    best_state.total_cost,
             assigned_cars: best_state.assignments.iter().map(|a| a.quantity).sum(),
-            unmet_demand:  best_state.remaining_demand.iter().filter(|&&d| d > 0).sum(),
-            excess_supply: best_state.remaining_supply.iter().filter(|&&s| s > 0).sum(),
+            unmet_demand:  unmet_load_fin,
+            excess_supply: excess_fin,
         },
         arcs.len(),
     );
@@ -626,12 +647,12 @@ pub fn run_alns(
     println!("--- ALNS ФИНИШ ---");
     println!("Итераций:            {}", stats.iterations);
     println!("Улучшений:           {}", stats.improvements);
-    let (final_unmet, final_excess) = best_state.unmet_and_excess();
+    let (final_unmet, final_excess) = best_state.unmet_and_excess(demand);
     println!("Лучшая real_cost:    {:.2} руб.", best_state.total_cost);
     println!(
         "Лучшая objective:    {:.2} руб. (penalty: {:.2}, unmet: {}, excess: {})",
-        best_state.objective_cost(),
-        best_state.penalty_component_cost(),
+        best_state.objective_cost(demand),
+        best_state.penalty_component_cost(demand),
         final_unmet,
         final_excess,
     );
@@ -652,11 +673,17 @@ pub fn run_alns(
 
 impl AlnsResult {
     /// Конвертирует лучшее состояние ALNS в `OptimResult` для отчёта и вывода.
-    pub fn to_optim_result(&self) -> OptimResult {
+    pub fn to_optim_result(&self, demand: &[DemandNode]) -> OptimResult {
         let assigned_cars: f64 = self.best_state.assignments.iter()
             .map(|a| a.quantity as f64).sum();
-        let penalty_cars: f64 = self.best_state.remaining_demand.iter()
-            .filter(|&&d| d > 0).sum::<i32>() as f64;
+        let penalty_cars: f64 = self
+            .best_state
+            .remaining_demand
+            .iter()
+            .zip(demand.iter())
+            .filter(|(r, d)| d.purpose == DemandPurpose::Load && **r > 0)
+            .map(|(r, _)| *r as f64)
+            .sum();
         let excess_supply: f64 = self.best_state.remaining_supply.iter()
             .filter(|&&s| s > 0).sum::<i32>() as f64;
 

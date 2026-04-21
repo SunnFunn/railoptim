@@ -1,6 +1,8 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
-use crate::node::{DemandNode, SupplyNode, TariffNode};
+use crate::data::references::normalize_etsng_code;
+use crate::data::wash::{effective_etsng_for_wash_tariff, supply_matches_wash_product_list};
+use crate::node::{DemandNode, DemandPurpose, SupplyNode, TariffNode};
 
 // ---------------------------------------------------------------------------
 // Константы ограничений
@@ -36,6 +38,17 @@ pub const PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_PERIOD10_RUB: f64 = 100_000.
 /// [`super::lp::PENALTY_COST`] — period=10 остаётся конкурентным там, где
 /// period=1 объективно недоступен (нет тарифа, нарушение срока).
 pub const PERIOD10_COST_SURCHARGE_RUB: f64 = 100_000.0;
+
+/// Средняя стоимость промывки вагона (руб.), добавляется к тарифу «до станции промывки»
+/// для честного сравнения с назначением под погрузку аналогичного груза.
+pub const WASH_PROCEDURE_AVG_COST_RUB: f64 = 10_000.0;
+
+/// Средняя стоимость порожнего пробега после промывки до погрузки (руб.), добавляется к тарифу до промывки.
+pub const EMPTY_RUN_AFTER_WASH_TO_LOAD_AVG_COST_RUB: f64 = 40_000.0;
+
+/// Полная надбавка к тарифу до станции промывки для оптимизации.
+pub const WASH_PATH_SURCHARGE_RUB: f64 =
+    WASH_PROCEDURE_AVG_COST_RUB + EMPTY_RUN_AFTER_WASH_TO_LOAD_AVG_COST_RUB;
 
 // ---------------------------------------------------------------------------
 // Дуга транспортной задачи
@@ -101,12 +114,18 @@ pub struct TaskArc {
 /// Неудовлетворённый спрос обрабатывается slack-переменными в [`super::lp::solve`].
 ///
 /// Возвращает `(arcs, stats)`, где `stats` — счётчики для диагностики.
+///
+/// `tariffs` — тарифы до станций **погрузки** (как из АПИ).
+/// `wash_tariffs` — тарифы до станций **промывки** с уже учтённой надбавкой
+/// [`WASH_PATH_SURCHARGE_RUB`] (промывка + порожний пробег до погрузки), ключ `(откуда, куда, ЕТСНГ_норм.)`.
 pub fn build_task_arcs(
     supply: &[SupplyNode],
     demand: &[DemandNode],
     tariffs: &[TariffNode],
+    wash_codes: &HashSet<String>,
+    wash_tariffs: &HashMap<(String, String, String), TariffNode>,
 ) -> (Vec<TaskArc>, ArcStats) {
-    // Индекс тарифов: (код_откуда, код_куда) → TariffNode
+    // Индекс тарифов погрузки: (код_откуда, код_куда) → TariffNode
     let tariff_index: HashMap<(&str, &str), &TariffNode> = tariffs
         .iter()
         .map(|t| ((t.station_from_code.as_str(), t.station_to_code.as_str()), t))
@@ -120,11 +139,36 @@ pub fn build_task_arcs(
 
     for (s_idx, s) in supply.iter().enumerate() {
         for (d_idx, d) in demand.iter().enumerate() {
-            let key = (s.station_to_code.as_str(), d.station_code.as_str());
-
-            let Some(tariff) = tariff_index.get(&key) else {
-                no_tariff += 1;
-                continue;
+            let tariff: &TariffNode = match d.purpose {
+                DemandPurpose::Wash => {
+                    if !supply_matches_wash_product_list(s, wash_codes) {
+                        no_tariff += 1;
+                        continue;
+                    }
+                    let Some(eff) = effective_etsng_for_wash_tariff(s) else {
+                        no_tariff += 1;
+                        continue;
+                    };
+                    let ek = normalize_etsng_code(&eff);
+                    let key = (
+                        s.station_to_code.clone(),
+                        d.station_code.clone(),
+                        ek,
+                    );
+                    let Some(t) = wash_tariffs.get(&key) else {
+                        no_tariff += 1;
+                        continue;
+                    };
+                    t
+                }
+                DemandPurpose::Load => {
+                    let key = (s.station_to_code.as_str(), d.station_code.as_str());
+                    let Some(t) = tariff_index.get(&key) else {
+                        no_tariff += 1;
+                        continue;
+                    };
+                    *t
+                }
             };
 
             let car_type_ok = car_type_compatible(s.car_type.as_deref(), d.car_type.as_deref());
@@ -173,7 +217,8 @@ pub fn build_task_arcs(
                 delivery_days:     tariff.period_of_delivery,
                 period_ok,
                 car_type_ok:       true,
-                is_mass_unloading: s.is_mass_unloading,
+                // Ограничение MIN_BATCH только для погрузки, не для промывки.
+                is_mass_unloading: s.is_mass_unloading && d.purpose == DemandPurpose::Load,
             });
         }
     }

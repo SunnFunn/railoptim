@@ -1,6 +1,16 @@
 use chrono::NaiveDateTime;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
+/// Назначение узла спроса: погрузка порожних или приём «грязных» на промывку.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DemandPurpose {
+    /// Спрос на погрузку (исходные данные АПИ).
+    #[default]
+    Load,
+    /// Спрос на промывку (ёмкость станций промывки).
+    Wash,
+}
 
 #[derive(Debug, PartialEq, Clone, Ord, PartialOrd, Eq)]
 pub struct Node {
@@ -116,6 +126,10 @@ pub struct DemandNode {
     /// Уникальный ID узла спроса, присваивается при конвертации из API-ответа.
     #[serde(default)]
     pub d_id: usize,
+
+    /// Погрузка или промывка (для узлов из АПИ всегда [`DemandPurpose::Load`]).
+    #[serde(default)]
+    pub purpose: DemandPurpose,
 
     /// Номер планового периода погрузки: 1 (сут. 1–5), 2 (6–8), 3 (9–10), 4 (11–15).
     pub period: u8,

@@ -4,9 +4,10 @@ use std::path::PathBuf;
 use chrono::Local;
 use serde::Serialize;
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
-use crate::node::{DemandNode, SupplyNode, CarKind, TariffNode};
+use crate::data::wash;
+use crate::node::{CarKind, DemandNode, DemandPurpose, SupplyNode, TariffNode};
 use crate::data::repairs::RepairStation;
 use super::lp::OptimResult;
 use super::model::TaskArc;
@@ -390,6 +391,7 @@ pub fn build_output_records(
     arcs:     &[TaskArc],
     supply:   &[SupplyNode],
     demand:   &[DemandNode],
+    wash_codes: &HashSet<String>,
 ) -> Vec<OutputRecord> {
     let now_str = Local::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
 
@@ -436,10 +438,20 @@ pub fn build_output_records(
                 .collect();
             cursor += take;
 
-            let period_label = if s.supply_period == 10 {
+            let period_label = if d.purpose == DemandPurpose::Wash {
+                "промывка".to_string()
+            } else if s.supply_period == 10 {
                 format!("{} (предл. 10, 2-10 сут.)", period_range_str(d.period))
             } else {
                 period_range_str(d.period).to_string()
+            };
+
+            let assignment_type = if d.purpose == DemandPurpose::Wash {
+                "в промывку".to_string()
+            } else if wash::is_same_cargo_load_assignment(s, d, wash_codes) {
+                "под аналогичный груз".to_string()
+            } else {
+                format!("Под погрузку в {period_label} сутки")
             };
 
             records.push(OutputRecord {
@@ -466,7 +478,7 @@ pub fn build_output_records(
                 distance:           arc.distance,
                 period_of_delivery: arc.delivery_days,
                 cost:               arc.cost,
-                assignment_type:    format!("Под погрузку в {period_label} сутки"),
+                assignment_type,
                 car_numbers_list:   slice,
                 supply_kind:        car_kind_str(&s.kind).to_string(),
                 period_label,

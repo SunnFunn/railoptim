@@ -33,6 +33,9 @@ struct TariffRequest<'a> {
     stations_from: &'a [StationRef],
     #[serde(rename = "StationsTo")]
     stations_to: &'a [StationRef],
+    /// Код ЕТСНГ для тарифа (груженый / порожний после выгрузки — см. промывку).
+    #[serde(rename = "FrETSNGCode", skip_serializing_if = "Option::is_none")]
+    fr_etsng_code: Option<&'a str>,
 }
 
 // ---------------------------------------------------------------------------
@@ -103,9 +106,32 @@ impl ApiClient {
         stations_from: &[StationRef],
         stations_to: &[StationRef],
     ) -> Result<Vec<TariffNode>, ApiError> {
+        self.fetch_tariffs_inner(stations_from, stations_to, None).await
+    }
+
+    /// То же, что [`Self::fetch_tariffs`], с передачей `FrETSNGCode` (если API поддерживает поле).
+    pub async fn fetch_tariffs_with_etsng(
+        &self,
+        stations_from: &[StationRef],
+        stations_to: &[StationRef],
+        fr_etsng_code: Option<&str>,
+    ) -> Result<Vec<TariffNode>, ApiError> {
+        self.fetch_tariffs_inner(stations_from, stations_to, fr_etsng_code).await
+    }
+
+    async fn fetch_tariffs_inner(
+        &self,
+        stations_from: &[StationRef],
+        stations_to: &[StationRef],
+        fr_etsng_code: Option<&str>,
+    ) -> Result<Vec<TariffNode>, ApiError> {
         let url = ApiEndpoint::Tariffs.url(&self.base_url);
 
-        let body = TariffRequest { stations_from, stations_to };
+        let body = TariffRequest {
+            stations_from,
+            stations_to,
+            fr_etsng_code,
+        };
 
         let response = self
             .client

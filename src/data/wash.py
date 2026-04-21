@@ -1,35 +1,33 @@
-import sys, os
-import pymssql
-import pickle
-import redis
-import pandas as pd
+#!/usr/bin/env python3
+"""
+Станции промывки (SLP, MSSQL) → JSON в stdout для Rust.
 
-# adding paths to python modules to enable import
-current = os.path.dirname(os.path.realpath(__file__))
-parent = os.path.dirname(current)
-sys.path.append(parent)
+  python3 wash.py json
 
-from utils import references
+Переменные окружения:
+  MSSQL_SERVER или MSSQL_HOST
+  MSSQL_USER
+  MSSQL_PASSWORD
+  MSSQL_DATABASE
+  MSSQL_DOMAIN   (опционально, префикс к логину)
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import sys
 
 
-# функция получения данных о станциях промывки и передача их в Redis временное хранилище
-# ------------------------------------------------------------------------------------------------------------------------------
-def fetch_wash_stations(token, url, conndict, host, port, db, password, extime):
-    # header = {'Authorization': 'Bearer {}'.format(token)}
-    # wash_response = requests.get(url + "GetWashStationsData", headers=header)
-    # wash_list = wash_response.json()
+def _env(key: str, default: str | None = None) -> str | None:
+    v = os.environ.get(key)
+    if v is None or v == "":
+        return default
+    return v
 
-    # wash_list = references.wash_data
 
-    # соединение и отправка запроса в БД SLP
-    conn = pymssql.connect(server=conndict['server'],
-                           user=(conndict['domain'] + conndict['user']),
-                           password=conndict['password'],
-                           database=conndict['database'])
-    cursor = conn.cursor()
-
-    stmt= \
-    f'''
+# Тело SQL-запроса не менять (согласовано с SLP / AgreementWashingStationView).
+_WASH_SQL = '''
     SELECT RANKED.Firm, RANKED.RailWayWashDivision, RANKED.RailWayWash, RANKED.RailWayWashCode,
         RANKED.StationWash, RANKED.StationWashCode, RANKED.WashCapacity
     FROM
@@ -49,32 +47,77 @@ def fetch_wash_stations(token, url, conndict, host, port, db, password, extime):
         ) RANKED
     WHERE RANKED.Rank = 1;
     '''
-        
-    cursor.execute(stmt)
-    wash_list = [{'RailWayWashDivision': row[1],
-                  'RailWayWash': row[2],
-                  'RailWayWashCode': row[3],
-                  'StationWash': row[4],
-                  'StationWashCode': row[5],
-                  'WashCapacity': row[6]} for row in cursor]
 
-    cursor.close()
-    conn.close()
 
-    cols = ['RailWayWashDivision', 'RailWayWash', 'RailWayWashCode', 'StationWash', 'StationWashCode', 'WashCapacity']
-    wash_list_df = pd.DataFrame(wash_list, columns=cols)
-    wash_list_df_sorted = wash_list_df.sort_values(by='RailWayWash', ascending=True)
+def _conndict_from_env() -> dict:
+    server = _env("MSSQL_SERVER") or _env("MSSQL_HOST")
+    user = _env("MSSQL_USER")
+    password = _env("MSSQL_PASSWORD")
+    database = _env("MSSQL_DATABASE")
+    domain = _env("MSSQL_DOMAIN", "") or ""
+    if not all([server, user, password, database]):
+        sys.stderr.write(
+            "Задайте MSSQL_SERVER|MSSQL_HOST, MSSQL_USER, MSSQL_PASSWORD, MSSQL_DATABASE\n"
+        )
+        raise SystemExit(2)
+    return {
+        "server": server,
+        "domain": domain,
+        "user": user,
+        "password": password,
+        "database": database,
+    }
 
-    r = redis.Redis(host=host, port=port, db=db, password=password)
-    r.setex("wash", extime, pickle.dumps(wash_list))
 
-    log_message = \
-    f'''
-    Washing stations data retrieved.
-    Total number of washing stations: {len(wash_list)}
-    Total washing capacity: {sum([w['WashCapacity'] for w in wash_list])}
-    '''
+def query_wash_stations() -> list[dict]:
+    """Читает станции промывки из MSSQL (переменные окружения)."""
+    import pymssql
 
-    # отображение данных в логах airflow
-    sys.stdout.write(wash_list_df_sorted.to_string())
-    sys.stdout.write(log_message)
+    c = _conndict_from_env()
+    conn = pymssql.connect(
+        server=c["server"],
+        user=(c["domain"] + c["user"]),
+        password=c["password"],
+        database=c["database"],
+    )
+    try:
+        cur = conn.cursor()
+        try:
+            cur.execute(_WASH_SQL)
+            rows = cur.fetchall()
+        finally:
+            cur.close()
+    finally:
+        conn.close()
+
+    out: list[dict] = []
+    for row in rows:
+        cap = row[6]
+        try:
+            cap_int = int(cap) if cap is not None else 0
+        except (TypeError, ValueError):
+            cap_int = 0
+        out.append(
+            {
+                "RailWayWashDivision": row[1],
+                "RailWayWash": row[2],
+                "RailWayWashCode": "" if row[3] is None else str(row[3]).strip(),
+                "StationWash": row[4],
+                "StationWashCode": "" if row[5] is None else str(row[5]).strip(),
+                "WashCapacity": cap_int,
+            }
+        )
+    out.sort(key=lambda x: (str(x.get("RailWayWash") or ""), str(x.get("StationWashCode") or "")))
+    return out
+
+
+def main() -> None:
+    if len(sys.argv) < 2 or sys.argv[1] != "json":
+        sys.stderr.write("Использование: wash.py json\n")
+        raise SystemExit(2)
+    data = query_wash_stations()
+    sys.stdout.write(json.dumps(data, ensure_ascii=False))
+
+
+if __name__ == "__main__":
+    main()

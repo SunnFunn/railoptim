@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use chrono::Local;
 use rust_xlsxwriter::{Format, FormatBorder, Workbook, XlsxError};
 
-use crate::node::{CarKind, DemandNode, RepairStatus, SupplyNode};
+use crate::node::{CarKind, DemandNode, DemandPurpose, RepairStatus, SupplyNode};
 use crate::solver::result::OutputRecord;
 use crate::solver::{
     PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_RUB,
@@ -99,6 +99,7 @@ fn write_demand_sheet(workbook: &mut Workbook, nodes: &[DemandNode]) -> Result<(
         ("Тип вагона",      12.0),
         ("Кол-во ваг.",     12.0),
         ("Ваг. на станции", 14.0),
+        ("Тип узла",        12.0),
     ];
 
     for (col, (title, width)) in headers.iter().enumerate() {
@@ -148,6 +149,11 @@ fn write_demand_sheet(workbook: &mut Workbook, nodes: &[DemandNode]) -> Result<(
         ws.write_with_format(row, 25, s!(&n.car_type),                   &cell)?;
         ws.write_with_format(row, 26, n.car_count,                       &num)?;
         ws.write_with_format(row, 27, n.cars_on_station,                 &num)?;
+        let purpose_lbl = match n.purpose {
+            DemandPurpose::Load => "погрузка",
+            DemandPurpose::Wash => "промывка",
+        };
+        ws.write_with_format(row, 28, purpose_lbl,                       &cell)?;
     }
 
     ws.autofilter(0, 0, nodes.len() as u32, headers.len() as u16 - 1)?;

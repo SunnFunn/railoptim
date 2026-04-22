@@ -228,49 +228,38 @@ async fn main() -> Result<()> {
     //     FrETSNGCode: груженый — текущий груз, порожний — PrevFrETSNG (доминирующий в группе).
     // -----------------------------------------------------------------------
     let wash_station_refs = data::wash::wash_station_refs(&wash_stations);
-    let wash_tariff_groups = data::wash::wash_tariff_groups(&opt_supply, &wash_codes);
-    let mut wash_tariff_map: HashMap<(String, String, String), TariffNode> = HashMap::new();
-    if !wash_station_refs.is_empty() && !wash_tariff_groups.is_empty() {
-        for (etsng_opt, from_list) in &wash_tariff_groups {
-            if from_list.is_empty() {
-                continue;
-            }
-            match client
-                .fetch_tariffs_with_etsng(from_list, &wash_station_refs, etsng_opt.as_deref())
-                .await
-            {
+    let mut wash_tariff_map: HashMap<(String, String), TariffNode> = HashMap::new();
+    if !wash_station_refs.is_empty() {
+        let wash_from: Vec<StationRef> = opt_supply
+            .iter()
+            .filter(|s| data::wash::supply_matches_wash_product_list(s, &wash_codes))
+            .map(|s| (s.station_to_code.clone(), s.railway_to.clone()))
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .map(|(code, rw)| StationRef::new(code, rw))
+            .collect();
+
+        if !wash_from.is_empty() {
+            match client.fetch_tariffs(&wash_from, &wash_station_refs).await {
                 Ok(items) => {
-                    let ek = etsng_opt
-                        .as_ref()
-                        .map(|e| data::references::normalize_etsng_code(e))
-                        .unwrap_or_default();
                     for mut t in items {
                         t.cost += solver::WASH_PATH_SURCHARGE_RUB;
                         wash_tariff_map.insert(
-                            (
-                                t.station_from_code.clone(),
-                                t.station_to_code.clone(),
-                                ek.clone(),
-                            ),
+                            (t.station_from_code.clone(), t.station_to_code.clone()),
                             t,
                         );
                     }
                 }
-                Err(e) => eprintln!(
-                    "  тарифы до промывки (ЕТСНГ {:?}): {}",
-                    etsng_opt.as_deref(),
-                    e
-                ),
+                Err(e) => eprintln!("  тарифы до промывки: {}", e),
             }
+            println!(
+                "Тарифов до промывки (с надбавкой {}+{}={} руб.): {}",
+                solver::WASH_PROCEDURE_AVG_COST_RUB as i64,
+                solver::EMPTY_RUN_AFTER_WASH_TO_LOAD_AVG_COST_RUB as i64,
+                solver::WASH_PATH_SURCHARGE_RUB as i64,
+                wash_tariff_map.len(),
+            );
         }
-        println!(
-            "Тарифов до промывки (с надбавкой {}+{}={} руб.): {} (групп ЕТСНГ: {})",
-            solver::WASH_PROCEDURE_AVG_COST_RUB as i64,
-            solver::EMPTY_RUN_AFTER_WASH_TO_LOAD_AVG_COST_RUB as i64,
-            solver::WASH_PATH_SURCHARGE_RUB as i64,
-            wash_tariff_map.len(),
-            wash_tariff_groups.len()
-        );
     } else if !wash_codes.is_empty() && wash_stations.is_empty() {
         println!("Тарифы до промывки:         не запрошены (нет станций промывки)");
     }

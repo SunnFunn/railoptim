@@ -236,44 +236,6 @@ pub fn load_demand_covers_same_etsng(s: &SupplyNode, load_demands: &[DemandNode]
     })
 }
 
-/// Станции отправления (уникальные) для запроса тарифов до промывки + опциональный `FrETSNGCode` на группу.
-pub fn wash_tariff_groups(
-    opt_supply: &[SupplyNode],
-    wash_codes: &HashSet<String>,
-) -> Vec<(Option<String>, Vec<StationRef>)> {
-    let mut by_etsng: HashMap<Option<String>, HashSet<(String, String)>> = HashMap::new();
-
-    for s in opt_supply {
-        if !supply_matches_wash_product_list(s, wash_codes) {
-            continue;
-        }
-        let eff = effective_etsng_for_wash_tariff(s);
-        let key = eff.clone();
-        by_etsng
-            .entry(key)
-            .or_default()
-            .insert((s.station_to_code.clone(), s.railway_to.clone()));
-    }
-
-    let mut v: Vec<_> = by_etsng
-        .into_iter()
-        .map(|(etsng, set)| {
-            let mut refs: Vec<StationRef> = set
-                .into_iter()
-                .map(|(code, rw)| StationRef::new(code, rw))
-                .collect();
-            refs.sort_by(|a, b| {
-                a.station_code
-                    .cmp(&b.station_code)
-                    .then_with(|| a.railway_short_name.cmp(&b.railway_short_name))
-            });
-            (etsng, refs)
-        })
-        .collect();
-    v.sort_by(|a, b| format!("{:?}", a.0).cmp(&format!("{:?}", b.0)));
-    v
-}
-
 /// Станции назначения — промывки (уникальные пары код+дорога).
 pub fn wash_station_refs(stations: &[WashStation]) -> Vec<StationRef> {
     let mut set: HashSet<(String, String)> = HashSet::new();

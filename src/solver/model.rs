@@ -1,7 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::data::references::normalize_etsng_code;
-use crate::data::wash::{effective_etsng_for_wash_tariff, supply_matches_wash_product_list};
+use crate::data::wash::supply_matches_wash_product_list;
 use crate::node::{DemandNode, DemandPurpose, SupplyNode, TariffNode};
 
 // ---------------------------------------------------------------------------
@@ -117,13 +116,13 @@ pub struct TaskArc {
 ///
 /// `tariffs` — тарифы до станций **погрузки** (как из АПИ).
 /// `wash_tariffs` — тарифы до станций **промывки** с уже учтённой надбавкой
-/// [`WASH_PATH_SURCHARGE_RUB`] (промывка + порожний пробег до погрузки), ключ `(откуда, куда, ЕТСНГ_норм.)`.
+/// [`WASH_PATH_SURCHARGE_RUB`] (промывка + порожний пробег до погрузки), ключ `(откуда, куда)`.
 pub fn build_task_arcs(
     supply: &[SupplyNode],
     demand: &[DemandNode],
     tariffs: &[TariffNode],
     wash_codes: &HashSet<String>,
-    wash_tariffs: &HashMap<(String, String, String), TariffNode>,
+    wash_tariffs: &HashMap<(String, String), TariffNode>,
 ) -> (Vec<TaskArc>, ArcStats) {
     // Индекс тарифов погрузки: (код_откуда, код_куда) → TariffNode
     let tariff_index: HashMap<(&str, &str), &TariffNode> = tariffs
@@ -145,16 +144,7 @@ pub fn build_task_arcs(
                         no_tariff += 1;
                         continue;
                     }
-                    let Some(eff) = effective_etsng_for_wash_tariff(s) else {
-                        no_tariff += 1;
-                        continue;
-                    };
-                    let ek = normalize_etsng_code(&eff);
-                    let key = (
-                        s.station_to_code.clone(),
-                        d.station_code.clone(),
-                        ek,
-                    );
+                    let key = (s.station_to_code.clone(), d.station_code.clone());
                     let Some(t) = wash_tariffs.get(&key) else {
                         no_tariff += 1;
                         continue;

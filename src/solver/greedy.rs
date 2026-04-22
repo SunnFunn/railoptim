@@ -1,7 +1,7 @@
-use std::collections::HashSet;
+use std::collections::HashMap;
 
 use crate::node::{DemandNode, DemandPurpose, SupplyNode};
-use super::model::{collect_mass_pair_violations, TaskArc};
+use super::model::{MIN_BATCH_FROM_MASS_STATION, TaskArc};
 
 // ---------------------------------------------------------------------------
 // Результат жадного решения
@@ -51,13 +51,19 @@ pub struct GreedyResult {
 ///    Внутри одинаковой стоимости — по `distance` (ближе лучше).
 /// 3. Проходим по отсортированным дугам. Для каждой дуги:
 ///    - Проверяем остатки предложения и спроса.
+///    - Для дуг с флагом `is_mass_unloading` применяем inline-проверку [`MIN_BATCH_FROM_MASS_STATION`]:
+///      если пара `(станция_отправления, станция_погрузки)` ещё не получала поток
+///      (`existing == 0`) и `qty < MIN_BATCH`, дуга **пропускается** — алгоритм ищет
+///      следующую дугу с бо́льшим доступным спросом. Это исключает необходимость
+///      в постобработке и гарантирует, что вагоны со станций массовой выгрузки
+///      всегда получат допустимый маршрут.
 ///    - Назначаем `min(remaining_supply[s], remaining_demand[d])` вагонов.
 ///    - Обновляем остатки.
-///    - Прекращаем, когда весь спрос закрыт или предложение исчерпано.
+///    - Прекращаем, когда весь спрос на погрузку закрыт или предложение исчерпано.
 ///
 /// # Почему это хорошая отправная точка для ALNS
 ///
-/// - Гарантированно допустимо по типу вагона (`car_type_ok`); стоимость дуги включает штраф за срок.
+/// - Гарантированно допустимо по типу вагона и по ограничению MIN_BATCH (без пост-обработки).
 /// - Жадная сортировка по стоимости даёт решение, близкое к LP-оптимуму,
 ///   но без дробных значений.
 /// - Быстро: O(|arcs| log |arcs|) — миллисекунды даже для 800K дуг.
@@ -100,6 +106,11 @@ pub fn greedy_initial_solution(
     let mut total_cost:    f64 = 0.0;
     let mut assigned_cars: i32 = 0;
 
+    // Суммарный поток по парам (supply_station_code, demand_station_code)
+    // для дуг is_mass_unloading. Инвариант после каждого назначения:
+    //   mass_pair_totals[pair] == 0  ИЛИ  >= MIN_BATCH_FROM_MASS_STATION.
+    let mut mass_pair_totals: HashMap<(String, String), i32> = HashMap::new();
+
     for arc_i in feasible_arc_indices {
         let arc = &arcs[arc_i];
 
@@ -112,6 +123,26 @@ pub fn greedy_initial_solution(
         }
 
         let qty = avail_supply.min(avail_demand);
+
+        // Inline-проверка ограничения MIN_BATCH для станций массовой выгрузки.
+        //
+        // Правило: поток по паре (mass_station → load_station) должен быть
+        // 0 или >= MIN_BATCH_FROM_MASS_STATION.
+        //
+        // Если пара ещё не получала поток (existing == 0) и qty < MIN_BATCH,
+        // значит назначение создаст недопустимо малую партию — пропускаем дугу.
+        // Алгоритм продолжит и найдёт дугу к узлу спроса с бо́льшим остатком.
+        //
+        // Если пара уже имеет поток (existing >= MIN_BATCH), любой положительный
+        // qty допустим: инвариант сохраняется.
+        if arc.is_mass_unloading {
+            let key = (arc.supply_station_code.clone(), arc.demand_station_code.clone());
+            let existing = mass_pair_totals.get(&key).copied().unwrap_or(0);
+            if existing == 0 && qty < MIN_BATCH_FROM_MASS_STATION {
+                continue;
+            }
+            *mass_pair_totals.entry(key).or_insert(0) += qty;
+        }
 
         remaining_supply[arc.s_idx] -= qty;
         remaining_demand[arc.d_idx] -= qty;
@@ -138,37 +169,8 @@ pub fn greedy_initial_solution(
         }
     }
 
-    // --- Post-processing: удаляем назначения по парам станций ниже порога ---
-    // Станция массовой выгрузки → станция погрузки: суммарный поток должен быть
-    // 0 или >= MIN_BATCH_FROM_MASS_STATION. Собираем нарушающие пары и удаляем
-    // все назначения для них, возвращая вагоны в остатки.
-    {
-        let violations: HashSet<(String, String)> = collect_mass_pair_violations(
-            assignments.iter().map(|a| (a.arc_id, a.quantity)),
-            arcs,
-        )
-        .into_iter()
-        .collect();
-
-        if !violations.is_empty() {
-            let mut i = assignments.len();
-            while i > 0 {
-                i -= 1;
-                let a = &assignments[i];
-                let arc = &arcs[a.arc_id];
-                if arc.is_mass_unloading {
-                    let pair = (arc.supply_station_code.clone(), arc.demand_station_code.clone());
-                    if violations.contains(&pair) {
-                        let removed = assignments.swap_remove(i);
-                        remaining_supply[removed.s_idx] += removed.quantity;
-                        remaining_demand[removed.d_idx] += removed.quantity;
-                        total_cost    -= removed.total_cost;
-                        assigned_cars -= removed.quantity;
-                    }
-                }
-            }
-        }
-    }
+    // Post-processing удалён: inline-проверка выше гарантирует, что все назначения
+    // на mass-unloading дуги уже соответствуют ограничению MIN_BATCH.
 
     // --- Итоговая статистика ---
     let unmet_demand: i32 = remaining_demand

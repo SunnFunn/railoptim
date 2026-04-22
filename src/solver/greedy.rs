@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::node::{DemandNode, DemandPurpose, SupplyNode};
 use super::model::{MIN_BATCH_FROM_MASS_STATION, TaskArc};
@@ -51,12 +51,11 @@ pub struct GreedyResult {
 ///    Внутри одинаковой стоимости — по `distance` (ближе лучше).
 /// 3. Проходим по отсортированным дугам. Для каждой дуги:
 ///    - Проверяем остатки предложения и спроса.
-///    - Для дуг с флагом `is_mass_unloading` применяем inline-проверку [`MIN_BATCH_FROM_MASS_STATION`]:
-///      если пара `(станция_отправления, станция_погрузки)` ещё не получала поток
-///      (`existing == 0`) и `qty < MIN_BATCH`, дуга **пропускается** — алгоритм ищет
-///      следующую дугу с бо́льшим доступным спросом. Это исключает необходимость
-///      в постобработке и гарантирует, что вагоны со станций массовой выгрузки
-///      всегда получат допустимый маршрут.
+///    - Для дуг с флагом `is_mass_unloading` применяем двухусловную станционную проверку
+///      [`MIN_BATCH_FROM_MASS_STATION`] (подробнее см. комментарии в теле функции):
+///      (A) `existing + station_remaining < MIN_BATCH` — пара неосуществима;
+///      (B) назначение `qty` оставит застрявший остаток `< MIN_BATCH` и других
+///          узлов на станции недостаточно для его дальнейшего распределения.
 ///    - Назначаем `min(remaining_supply[s], remaining_demand[d])` вагонов.
 ///    - Обновляем остатки.
 ///    - Прекращаем, когда весь спрос на погрузку закрыт или предложение исчерпано.
@@ -101,14 +100,28 @@ pub fn greedy_initial_solution(
             .then_with(|| arc_a.distance.cmp(&arc_b.distance))
     });
 
+    // --- Пред-вычисление: узлы предложения по парам (mass_station, demand_station) ---
+    //
+    // Для каждой пары (supply_station_code, demand_station_code) из mass_unloading дуг
+    // собираем множество s_idx. Это позволяет в O(|узлов на станции|) вычислять
+    // суммарный остаток по станции, а не по одному узлу.
+    // Дедупликация по s_idx важна: одна пара станций может давать несколько дуг,
+    // если demand-станция имеет несколько узлов (разные периоды).
+    let mut mass_pair_supply_idx: HashMap<(String, String), HashSet<usize>> = HashMap::new();
+    for arc in arcs.iter().filter(|a| a.is_mass_unloading) {
+        mass_pair_supply_idx
+            .entry((arc.supply_station_code.clone(), arc.demand_station_code.clone()))
+            .or_default()
+            .insert(arc.s_idx);
+    }
+
     // --- Жадное назначение ---
     let mut assignments: Vec<Assignment> = Vec::new();
     let mut total_cost:    f64 = 0.0;
     let mut assigned_cars: i32 = 0;
 
-    // Суммарный поток по парам (supply_station_code, demand_station_code)
-    // для дуг is_mass_unloading. Инвариант после каждого назначения:
-    //   mass_pair_totals[pair] == 0  ИЛИ  >= MIN_BATCH_FROM_MASS_STATION.
+    // Суммарный назначенный поток по парам (supply_station_code, demand_station_code)
+    // для дуг is_mass_unloading. Используется для проверки MIN_BATCH.
     let mut mass_pair_totals: HashMap<(String, String), i32> = HashMap::new();
 
     for arc_i in feasible_arc_indices {
@@ -124,23 +137,53 @@ pub fn greedy_initial_solution(
 
         let qty = avail_supply.min(avail_demand);
 
-        // Inline-проверка ограничения MIN_BATCH для станций массовой выгрузки.
+        // Станционная inline-проверка ограничения MIN_BATCH.
         //
-        // Правило: поток по паре (mass_station → load_station) должен быть
+        // Правило: поток по паре (mass_station A → load_station B) должен быть
         // 0 или >= MIN_BATCH_FROM_MASS_STATION.
         //
-        // Если пара ещё не получала поток (existing == 0) и qty < MIN_BATCH,
-        // значит назначение создаст недопустимо малую партию — пропускаем дугу.
-        // Алгоритм продолжит и найдёт дугу к узлу спроса с бо́льшим остатком.
+        // Два условия пропуска дуги:
         //
-        // Если пара уже имеет поток (existing >= MIN_BATCH), любой положительный
-        // qty допустим: инвариант сохраняется.
+        // (A) existing + station_remaining < MIN_BATCH
+        //     Суммарный остаток по ВСЕМ узлам станции A с дугами до B плюс уже
+        //     назначенный поток — меньше порога. Пара никогда не наберёт допустимую
+        //     партию; дугу пропускаем.
+        //     Это также позволяет объединять мелкие узлы одной станции: если у
+        //     двух узлов по 2 вагона, station_remaining = 4 ≥ 3 → оба разрешены.
+        //
+        // (B) avail_supply > avail_demand
+        //     AND residual (= avail_supply − qty) < MIN_BATCH
+        //     AND (station_remaining − avail_supply) < MIN_BATCH
+        //     После назначения qty вагонов спрос у узла D будет исчерпан (avail_demand
+        //     вагонов ушли, больше места нет), у нас остаётся residual < MIN_BATCH,
+        //     а других узлов на станции A тоже недостаточно чтобы открыть для
+        //     остатка новую валидную пару. Лучше пропустить эту дугу и найти
+        //     destination с avail_demand ≥ avail_supply, куда вагоны уйдут целиком.
+        //
+        // Если ни одно из условий не выполнено — назначение разрешается.
         if arc.is_mass_unloading {
             let key = (arc.supply_station_code.clone(), arc.demand_station_code.clone());
             let existing = mass_pair_totals.get(&key).copied().unwrap_or(0);
-            if existing == 0 && qty < MIN_BATCH_FROM_MASS_STATION {
+            let station_remaining: i32 = mass_pair_supply_idx
+                .get(&key)
+                .map(|nodes| nodes.iter().map(|&si| remaining_supply[si]).sum())
+                .unwrap_or(0);
+
+            // (A) пара неосуществима
+            if existing + station_remaining < MIN_BATCH_FROM_MASS_STATION {
                 continue;
             }
+
+            // (B) назначение оставит застрявший остаток < MIN_BATCH
+            let residual = avail_supply - qty; // > 0 только когда avail_supply > avail_demand
+            let other_station_remaining = station_remaining - avail_supply; // ≥ 0
+            if residual > 0
+                && residual < MIN_BATCH_FROM_MASS_STATION
+                && other_station_remaining < MIN_BATCH_FROM_MASS_STATION
+            {
+                continue;
+            }
+
             *mass_pair_totals.entry(key).or_insert(0) += qty;
         }
 

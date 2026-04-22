@@ -103,7 +103,8 @@ pub fn fetch_wash_stations() -> Result<Vec<WashStation>> {
 }
 
 /// Верхняя граница суток планирования по периодам спроса (как в `demand::DEMAND_PERIODS`): 0..14 → 15 суток.
-const PLANNING_HORIZON_DAYS: i32 = 15;
+// const PLANNING_HORIZON_DAYS: i32 = 15;
+pub const PLANNING_HORIZON_DAYS: i32 = 5;
 
 /// Узлы спроса на промывку: «станция промывки» — пункт назначения грязных порожних.
 ///

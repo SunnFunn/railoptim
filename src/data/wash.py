@@ -50,10 +50,10 @@ _WASH_SQL = '''
 
 
 def _conndict_from_env() -> dict:
-    server = _env("MSSQL_SERVER") or _env("MSSQL_HOST")
-    user = _env("MSSQL_USER")
-    password = _env("MSSQL_PASSWORD")
-    database = _env("MSSQL_DATABASE")
+    server = _env("MSSQL_SERVER_MSKASUVPL")
+    user = _env("DOMAIN_USER")
+    password = _env("PASSWORD")
+    database = _env("MSSQL_DB_ASUVP")
     domain = _env("MSSQL_DOMAIN", "") or ""
     if not all([server, user, password, database]):
         sys.stderr.write(

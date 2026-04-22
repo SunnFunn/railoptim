@@ -23,14 +23,26 @@ async fn main() -> Result<()> {
     // 2. Получение данных спроса и предложения
     // -----------------------------------------------------------------------
     let demand_nodes = client.fetch_demand_nodes().await?;
-    println!("Получено узлов спроса (погрузка): {}", demand_nodes.len());
+    let demand_total_cars: i32 = demand_nodes.iter()
+                .map(|d| d.car_count)
+                .sum();
+    println!("Получено узлов спроса (погрузка): {} или {} вагонов", demand_nodes.len(), demand_total_cars);
 
     let mut supply_nodes = client.fetch_supply_nodes().await?;
+    let supply1_total_cars: i32 = supply_nodes.iter()
+                .map(|s| s.car_count)
+                .sum();
+    println!("Получено узлов предложения 1 сут.:  {} или {} вагонов", supply_nodes.len(), supply1_total_cars);
+
     match data::dislocations::fetch_dislocation_supply_nodes() {
         Ok(extra) if !extra.is_empty() => {
+            let extra_total_cars: i32 = extra.iter()
+                .map(|e| e.car_count)
+                .sum();
             println!(
-                "  узлов дислокации (2-10 сут., период 10): {}",
-                extra.len()
+                "  узлов дислокации (2-10 сут., период 10): {} или {} вагонов",
+                extra.len(),
+                extra_total_cars
             );
             supply_nodes.extend(extra);
         }
@@ -44,7 +56,10 @@ async fn main() -> Result<()> {
         n.s_id = i + 1;
     }
     data::supply::apply_mass_unloading_flags(&mut supply_nodes);
-    println!("Получено узлов предложения:  {}", supply_nodes.len());
+    let supply_total_cars: i32 = supply_nodes.iter()
+                .map(|s| s.car_count)
+                .sum();
+    println!("Получено узлов предложения всего:  {} или {} вагонов", supply_nodes.len(), supply_total_cars);
 
     // Разделяем по трём группам:
     //  1. Assigned  — уже назначены по факту, не участвуют в оптимизации.
@@ -58,10 +73,13 @@ async fn main() -> Result<()> {
     let (repair_nodes, opt_supply): (Vec<_>, Vec<_>) = non_assigned
         .into_iter()
         .partition(|s| s.repair_status == RepairStatus::NeedsRepair);
+    
+    let [cars_free, cars_repair, cars_assigned] = [&opt_supply, &repair_nodes, &assigned_nodes]
+    .map(|v| v.iter().map(|d| d.car_count).sum::<i32>());
 
-    println!("  свободных для назначения:  {}", opt_supply.len());
-    println!("  требуют ремонта (В ремонт):{}", repair_nodes.len());
-    println!("  по факту (Assigned):       {}", assigned_nodes.len());
+    println!("  свободных для назначения:  {} или {} вагонов", opt_supply.len(), cars_free);
+    println!("  требуют ремонта (В ремонт):{} или {} вагонов", repair_nodes.len(), cars_repair);
+    println!("  по факту (Assigned):       {} или {} вагонов", assigned_nodes.len(), cars_assigned);
 
     let wash_codes = match data::load_wash_product_codes("data/references.json") {
         Ok(c) => c,
@@ -82,7 +100,13 @@ async fn main() -> Result<()> {
     } else {
         data::wash::wash_demand_nodes(&wash_stations, demand_nodes.len() + 1)
     };
-    println!("Узлов спроса (промывка):     {}", wash_demand_nodes.len());
+    let wash_total_cap: i32 = wash_demand_nodes.iter()
+                .map(|w| w.car_count)
+                .sum();
+    println!("Узлов спроса (промывка):     {} или мощность в период {} суток {} вагонов",
+            wash_demand_nodes.len(),
+            data::wash::PLANNING_HORIZON_DAYS,
+            wash_total_cap);
 
     let mut demand_lp: Vec<DemandNode> = demand_nodes.clone();
     demand_lp.extend(wash_demand_nodes.clone());
@@ -90,16 +114,18 @@ async fn main() -> Result<()> {
     let n_supply_wash_list = opt_supply
         .iter()
         .filter(|s| data::wash::supply_matches_wash_product_list(s, &wash_codes))
-        .count();
+        .map(|s| s.car_count)
+        .sum::<i32>();
     let n_supply_wash_skip = opt_supply
         .iter()
         .filter(|s| {
             data::wash::supply_matches_wash_product_list(s, &wash_codes)
                 && data::wash::load_demand_covers_same_etsng(s, &demand_nodes)
         })
-        .count();
+        .map(|s| s.car_count)
+        .sum::<i32>();
     println!(
-        "  предложений с ЕТСНГ из списка промывки: {} (из них погрузка того же ЕТСНГ на станции — промывка не обязательна: {})",
+        "  предложений с ЕТСНГ из списка промывки: {} вагонов (из них погрузка того же ЕТСНГ на станции — промывка не обязательна: {} вагонов)",
         n_supply_wash_list, n_supply_wash_skip
     );
 
@@ -249,191 +275,191 @@ async fn main() -> Result<()> {
         println!("Тарифы до промывки:         не запрошены (нет станций промывки)");
     }
 
-    // -----------------------------------------------------------------------
-    // 4. Построение дуг транспортной задачи
-    // -----------------------------------------------------------------------
-    let (arcs, arc_stats) = solver::build_task_arcs(
-        &opt_supply,
-        &demand_lp,
-        &tariff_nodes,
-        &wash_codes,
-        &wash_tariff_map,
-    );
+    // // -----------------------------------------------------------------------
+    // // 4. Построение дуг транспортной задачи
+    // // -----------------------------------------------------------------------
+    // let (arcs, arc_stats) = solver::build_task_arcs(
+    //     &opt_supply,
+    //     &demand_lp,
+    //     &tariff_nodes,
+    //     &wash_codes,
+    //     &wash_tariff_map,
+    // );
 
-    let total = arc_stats.total_pairs;
-    println!("Всего пар supply×demand:     {}", total);
-    println!(
-        "  без тарифа:                {} ({:.1}%)",
-        arc_stats.no_tariff,
-        100.0 * arc_stats.no_tariff as f64 / total.max(1) as f64,
-    );
-    println!(
-        "  нарушение срока (жёстко):  {} ({:.1}%)",
-        arc_stats.bad_period,
-        100.0 * arc_stats.bad_period as f64 / total.max(1) as f64,
-    );
-    println!(
-        "  дуг со штрафом за срок:    {} ({:.1}%)",
-        arc_stats.arcs_period_penalized,
-        100.0 * arc_stats.arcs_period_penalized as f64 / total.max(1) as f64,
-    );
-    println!(
-        "  несовм. тип вагона:        {} ({:.1}%)",
-        arc_stats.bad_type,
-        100.0 * arc_stats.bad_type as f64 / total.max(1) as f64,
-    );
-    println!(
-        "Допустимых дуг в LP:         {} ({:.1}%)",
-        arc_stats.feasible,
-        100.0 * arc_stats.feasible as f64 / total.max(1) as f64,
-    );
+    // let total = arc_stats.total_pairs;
+    // println!("Всего пар supply×demand:     {}", total);
+    // println!(
+    //     "  без тарифа:                {} ({:.1}%)",
+    //     arc_stats.no_tariff,
+    //     100.0 * arc_stats.no_tariff as f64 / total.max(1) as f64,
+    // );
+    // println!(
+    //     "  нарушение срока (жёстко):  {} ({:.1}%)",
+    //     arc_stats.bad_period,
+    //     100.0 * arc_stats.bad_period as f64 / total.max(1) as f64,
+    // );
+    // println!(
+    //     "  дуг со штрафом за срок:    {} ({:.1}%)",
+    //     arc_stats.arcs_period_penalized,
+    //     100.0 * arc_stats.arcs_period_penalized as f64 / total.max(1) as f64,
+    // );
+    // println!(
+    //     "  несовм. тип вагона:        {} ({:.1}%)",
+    //     arc_stats.bad_type,
+    //     100.0 * arc_stats.bad_type as f64 / total.max(1) as f64,
+    // );
+    // println!(
+    //     "Допустимых дуг в LP:         {} ({:.1}%)",
+    //     arc_stats.feasible,
+    //     100.0 * arc_stats.feasible as f64 / total.max(1) as f64,
+    // );
 
-    // -----------------------------------------------------------------------
-    // 5. Анализ баланса и начальное жадное решение
-    // -----------------------------------------------------------------------
-    solver::print_balance(&opt_supply, &demand_lp);
+    // // -----------------------------------------------------------------------
+    // // 5. Анализ баланса и начальное жадное решение
+    // // -----------------------------------------------------------------------
+    // solver::print_balance(&opt_supply, &demand_lp);
 
-    let greedy_result = solver::greedy_initial_solution(&arcs, &opt_supply, &demand_lp);
-    solver::print_greedy_result(&greedy_result, &opt_supply, &demand_lp);
+    // let greedy_result = solver::greedy_initial_solution(&arcs, &opt_supply, &demand_lp);
+    // solver::print_greedy_result(&greedy_result, &opt_supply, &demand_lp);
 
-    // -----------------------------------------------------------------------
-    // 6. ALNS-оптимизация (Adaptive Large Neighbourhood Search)
-    // -----------------------------------------------------------------------
-    let alns_config = solver::AlnsConfig::default();
-    let alns_result = solver::run_alns(
-        &greedy_result, &arcs, &opt_supply, &demand_lp, &alns_config,
-    );
-    let optim_result  = alns_result.to_optim_result(&demand_lp);
-    let solution      = alns_result.arc_vals;
-    let mut remaining_supply_p1 = 0_i32;
-    let mut remaining_supply_p10 = 0_i32;
-    for (s, &rem) in opt_supply
-        .iter()
-        .zip(alns_result.best_state.remaining_supply.iter())
-    {
-        if rem <= 0 {
-            continue;
-        }
-        match s.supply_period {
-            1 => remaining_supply_p1 += rem,
-            10 => remaining_supply_p10 += rem,
-            _ => {}
-        }
-    }
-    let remaining_supply_other = (optim_result.excess_supply as i32
-        - remaining_supply_p1
-        - remaining_supply_p10)
-        .max(0);
+    // // -----------------------------------------------------------------------
+    // // 6. ALNS-оптимизация (Adaptive Large Neighbourhood Search)
+    // // -----------------------------------------------------------------------
+    // let alns_config = solver::AlnsConfig::default();
+    // let alns_result = solver::run_alns(
+    //     &greedy_result, &arcs, &opt_supply, &demand_lp, &alns_config,
+    // );
+    // let optim_result  = alns_result.to_optim_result(&demand_lp);
+    // let solution      = alns_result.arc_vals;
+    // let mut remaining_supply_p1 = 0_i32;
+    // let mut remaining_supply_p10 = 0_i32;
+    // for (s, &rem) in opt_supply
+    //     .iter()
+    //     .zip(alns_result.best_state.remaining_supply.iter())
+    // {
+    //     if rem <= 0 {
+    //         continue;
+    //     }
+    //     match s.supply_period {
+    //         1 => remaining_supply_p1 += rem,
+    //         10 => remaining_supply_p10 += rem,
+    //         _ => {}
+    //     }
+    // }
+    // let remaining_supply_other = (optim_result.excess_supply as i32
+    //     - remaining_supply_p1
+    //     - remaining_supply_p10)
+    //     .max(0);
 
-    // -----------------------------------------------------------------------
-    // 7. Построение выходных записей + сохранение чекпоинта и отправка в АПИ
-    // -----------------------------------------------------------------------
-    // Записи по оптимизированным назначениям (Free / NoNumber).
-    let mut output_records = solver::build_output_records(
-        &solution, &arcs, &opt_supply, &demand_lp, &wash_codes,
-    );
-    // Добавляем вагоны "По факту" (Assigned): ShipmentGoalId из DislocationPreview → тип назначения.
-    let assigned_car_numbers: Vec<u64> = assigned_nodes
-        .iter()
-        .flat_map(|s| s.car_numbers.iter().copied())
-        .collect();
-    let shipment_goals = match data::dislocations::fetch_shipment_goals_for_car_numbers(
-        &assigned_car_numbers,
-    ) {
-        Ok(m) => m,
-        Err(e) => {
-            eprintln!(
-                "  ShipmentGoalId для Assigned: не загружен ({e}); для всех — «По факту»"
-            );
-            std::collections::HashMap::new()
-        }
-    };
-    // Assigned-вагоны сохраняют исходные назначения без изменений.
-    let assigned_records = solver::build_assigned_output_records(
-        &assigned_nodes,
-        &tariff_nodes,
-        &shipment_goals,
-    );
+    // // -----------------------------------------------------------------------
+    // // 7. Построение выходных записей + сохранение чекпоинта и отправка в АПИ
+    // // -----------------------------------------------------------------------
+    // // Записи по оптимизированным назначениям (Free / NoNumber).
+    // let mut output_records = solver::build_output_records(
+    //     &solution, &arcs, &opt_supply, &demand_lp, &wash_codes,
+    // );
+    // // Добавляем вагоны "По факту" (Assigned): ShipmentGoalId из DislocationPreview → тип назначения.
+    // let assigned_car_numbers: Vec<u64> = assigned_nodes
+    //     .iter()
+    //     .flat_map(|s| s.car_numbers.iter().copied())
+    //     .collect();
+    // let shipment_goals = match data::dislocations::fetch_shipment_goals_for_car_numbers(
+    //     &assigned_car_numbers,
+    // ) {
+    //     Ok(m) => m,
+    //     Err(e) => {
+    //         eprintln!(
+    //             "  ShipmentGoalId для Assigned: не загружен ({e}); для всех — «По факту»"
+    //         );
+    //         std::collections::HashMap::new()
+    //     }
+    // };
+    // // Assigned-вагоны сохраняют исходные назначения без изменений.
+    // let assigned_records = solver::build_assigned_output_records(
+    //     &assigned_nodes,
+    //     &tariff_nodes,
+    //     &shipment_goals,
+    // );
 
-    // Вагоны «В ремонт» (NeedsRepair): выбираем ремонтную станцию с min тарифом,
-    // грузополучатель берётся из словаря repairs.json.
-    let repair_records = solver::build_repair_output_records(
-        &repair_nodes, &repair_tariffs, &repair_stations,
-    );
+    // // Вагоны «В ремонт» (NeedsRepair): выбираем ремонтную станцию с min тарифом,
+    // // грузополучатель берётся из словаря repairs.json.
+    // let repair_records = solver::build_repair_output_records(
+    //     &repair_nodes, &repair_tariffs, &repair_stations,
+    // );
 
-    let n_optim    = output_records.len();
-    let n_assigned = assigned_records.len();
-    let n_repair   = repair_records.len();
-    output_records.extend(assigned_records);
-    output_records.extend(repair_records);
+    // let n_optim    = output_records.len();
+    // let n_assigned = assigned_records.len();
+    // let n_repair   = repair_records.len();
+    // output_records.extend(assigned_records);
+    // output_records.extend(repair_records);
 
-    let api_records = solver::output_records_for_api(&output_records);
-    let n_api       = api_records.len();
-    let n_skip_10   = output_records.len() - n_api;
-    println!(
-        "Записей в отчёте (Excel):    {} ({} оптим. + {} по факту + {} в ремонт)",
-        output_records.len(),
-        n_optim,
-        n_assigned,
-        n_repair,
-    );
-    if n_skip_10 > 0 {
-        println!(
-            "  в POST АПИ (только 1 сут.): {} (без периода предл. 10: {})",
-            n_api,
-            n_skip_10,
-        );
-    } else {
-        println!("Записей в POST АПИ:          {}", n_api);
-    }
+    // let api_records = solver::output_records_for_api(&output_records);
+    // let n_api       = api_records.len();
+    // let n_skip_10   = output_records.len() - n_api;
+    // println!(
+    //     "Записей в отчёте (Excel):    {} ({} оптим. + {} по факту + {} в ремонт)",
+    //     output_records.len(),
+    //     n_optim,
+    //     n_assigned,
+    //     n_repair,
+    // );
+    // if n_skip_10 > 0 {
+    //     println!(
+    //         "  в POST АПИ (только 1 сут.): {} (без периода предл. 10: {})",
+    //         n_api,
+    //         n_skip_10,
+    //     );
+    // } else {
+    //     println!("Записей в POST АПИ:          {}", n_api);
+    // }
 
-    let demand_checkpoint = demand_lp.clone();
-    let checkpoint =
-        debug::save_checkpoint(&demand_checkpoint, &supply_nodes, Some(&output_records))?;
-    println!("Чекпоинт сохранён:           {}", checkpoint.display());
+    // let demand_checkpoint = demand_lp.clone();
+    // let checkpoint =
+    //     debug::save_checkpoint(&demand_checkpoint, &supply_nodes, Some(&output_records))?;
+    // println!("Чекпоинт сохранён:           {}", checkpoint.display());
 
-    match client.send_assignments(&api_records).await {
-        Ok(())   => println!("Назначения отправлены в АПИ: OK"),
-        Err(e)   => eprintln!("Ошибка отправки в АПИ:       {e}"),
-    }
+    // // match client.send_assignments(&api_records).await {
+    // //     Ok(())   => println!("Назначения отправлены в АПИ: OK"),
+    // //     Err(e)   => eprintln!("Ошибка отправки в АПИ:       {e}"),
+    // // }
 
-    // -----------------------------------------------------------------------
-    // 8. Вывод результатов в терминал
-    // -----------------------------------------------------------------------
-    println!();
-    println!("======= РЕЗУЛЬТАТЫ ОПТИМИЗАЦИИ =======");
-    println!("Статус решателя:      {}", optim_result.status);
-    println!("Назначено вагонов:    {:.0}", optim_result.assigned_cars);
-    if optim_result.excess_supply > 1e-4 {
-        println!("Избыток предложения:  {:.0} ваг. (dummy-спрос)", optim_result.excess_supply);
-        println!(
-            "  остаток по периодам предложения: p1={} p10={} прочие={}",
-            remaining_supply_p1, remaining_supply_p10, remaining_supply_other
-        );
-    }
-    if optim_result.penalty_cars > 1e-4 {
-        println!("Неудовл. спрос:       {:.0} ваг. (dummy-предложение)", optim_result.penalty_cars);
-    }
-    println!(
-        "Суммарная стоимость:  {:.0} руб.",
-        optim_result.total_cost
-    );
-    println!("======================================");
-    println!();
+    // // -----------------------------------------------------------------------
+    // // 8. Вывод результатов в терминал
+    // // -----------------------------------------------------------------------
+    // println!();
+    // println!("======= РЕЗУЛЬТАТЫ ОПТИМИЗАЦИИ =======");
+    // println!("Статус решателя:      {}", optim_result.status);
+    // println!("Назначено вагонов:    {:.0}", optim_result.assigned_cars);
+    // if optim_result.excess_supply > 1e-4 {
+    //     println!("Избыток предложения:  {:.0} ваг. (dummy-спрос)", optim_result.excess_supply);
+    //     println!(
+    //         "  остаток по периодам предложения: p1={} p10={} прочие={}",
+    //         remaining_supply_p1, remaining_supply_p10, remaining_supply_other
+    //     );
+    // }
+    // if optim_result.penalty_cars > 1e-4 {
+    //     println!("Неудовл. спрос:       {:.0} ваг. (dummy-предложение)", optim_result.penalty_cars);
+    // }
+    // println!(
+    //     "Суммарная стоимость:  {:.0} руб.",
+    //     optim_result.total_cost
+    // );
+    // println!("======================================");
+    // println!();
 
-    // -----------------------------------------------------------------------
-    // 9. Сохранение результатов в tmp/result_*.json
-    // -----------------------------------------------------------------------
-    let report = solver::build_report(
-        &optim_result,
-        &solution,
-        &arcs,
-        &opt_supply,
-        &demand_lp,
-    );
+    // // -----------------------------------------------------------------------
+    // // 9. Сохранение результатов в tmp/result_*.json
+    // // -----------------------------------------------------------------------
+    // let report = solver::build_report(
+    //     &optim_result,
+    //     &solution,
+    //     &arcs,
+    //     &opt_supply,
+    //     &demand_lp,
+    // );
 
-    let result_path = solver::save_result(&report)?;
-    println!("Результат сохранён:          {}", result_path.display());
+    // let result_path = solver::save_result(&report)?;
+    // println!("Результат сохранён:          {}", result_path.display());
 
     Ok(())
 }

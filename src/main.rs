@@ -264,52 +264,52 @@ async fn main() -> Result<()> {
         println!("Тарифы до промывки:         не запрошены (нет станций промывки)");
     }
 
-    // // -----------------------------------------------------------------------
-    // // 4. Построение дуг транспортной задачи
-    // // -----------------------------------------------------------------------
-    // let (arcs, arc_stats) = solver::build_task_arcs(
-    //     &opt_supply,
-    //     &demand_lp,
-    //     &tariff_nodes,
-    //     &wash_codes,
-    //     &wash_tariff_map,
-    // );
+    // -----------------------------------------------------------------------
+    // 4. Построение дуг транспортной задачи
+    // -----------------------------------------------------------------------
+    let (arcs, arc_stats) = solver::build_task_arcs(
+        &opt_supply,
+        &demand_lp,
+        &tariff_nodes,
+        &wash_codes,
+        &wash_tariff_map,
+    );
 
-    // let total = arc_stats.total_pairs;
-    // println!("Всего пар supply×demand:     {}", total);
-    // println!(
-    //     "  без тарифа:                {} ({:.1}%)",
-    //     arc_stats.no_tariff,
-    //     100.0 * arc_stats.no_tariff as f64 / total.max(1) as f64,
-    // );
-    // println!(
-    //     "  нарушение срока (жёстко):  {} ({:.1}%)",
-    //     arc_stats.bad_period,
-    //     100.0 * arc_stats.bad_period as f64 / total.max(1) as f64,
-    // );
-    // println!(
-    //     "  дуг со штрафом за срок:    {} ({:.1}%)",
-    //     arc_stats.arcs_period_penalized,
-    //     100.0 * arc_stats.arcs_period_penalized as f64 / total.max(1) as f64,
-    // );
-    // println!(
-    //     "  несовм. тип вагона:        {} ({:.1}%)",
-    //     arc_stats.bad_type,
-    //     100.0 * arc_stats.bad_type as f64 / total.max(1) as f64,
-    // );
-    // println!(
-    //     "Допустимых дуг в LP:         {} ({:.1}%)",
-    //     arc_stats.feasible,
-    //     100.0 * arc_stats.feasible as f64 / total.max(1) as f64,
-    // );
+    let total = arc_stats.total_pairs;
+    println!("Всего пар supply×demand:     {}", total);
+    println!(
+        "  без тарифа:                        {} ({:.1}%)",
+        arc_stats.no_tariff,
+        100.0 * arc_stats.no_tariff as f64 / total.max(1) as f64,
+    );
+    println!(
+        "  нарушение срока (жёстко):          {} ({:.1}%)",
+        arc_stats.bad_period,
+        100.0 * arc_stats.bad_period as f64 / total.max(1) as f64,
+    );
+    println!(
+        "  несовм. тип вагона:                {} ({:.1}%)",
+        arc_stats.bad_type,
+        100.0 * arc_stats.bad_type as f64 / total.max(1) as f64,
+    );
+    println!(
+        "  допустимых дуг со штрафом за срок:   {} ({:.1}%)",
+        arc_stats.arcs_period_penalized,
+        100.0 * arc_stats.arcs_period_penalized as f64 / total.max(1) as f64,
+    );
+    println!(
+        "  допустимых дуг всего в LP:      {} ({:.1}%)",
+        arc_stats.feasible,
+        100.0 * arc_stats.feasible as f64 / total.max(1) as f64,
+    );
 
-    // // -----------------------------------------------------------------------
-    // // 5. Анализ баланса и начальное жадное решение
-    // // -----------------------------------------------------------------------
-    // solver::print_balance(&opt_supply, &demand_lp);
+    // -----------------------------------------------------------------------
+    // 5. Анализ баланса и начальное жадное решение
+    // -----------------------------------------------------------------------
+    solver::print_balance(&opt_supply, &demand_lp);
 
-    // let greedy_result = solver::greedy_initial_solution(&arcs, &opt_supply, &demand_lp);
-    // solver::print_greedy_result(&greedy_result, &opt_supply, &demand_lp);
+    let greedy_result = solver::greedy_initial_solution(&arcs, &opt_supply, &demand_lp);
+    solver::print_greedy_result(&greedy_result, &opt_supply, &demand_lp);
 
     // // -----------------------------------------------------------------------
     // // 6. ALNS-оптимизация (Adaptive Large Neighbourhood Search)

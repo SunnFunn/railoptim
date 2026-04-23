@@ -20,6 +20,35 @@ pub fn normalize_etsng_code(raw: &str) -> String {
     t.to_string()
 }
 
+/// Короткие названия дорог, для которых промывка оплачивается клиентом на иностранной территории
+/// (`NoCleaningRoads` в первом подходящем блоке JSON).
+///
+/// Вагоны, образовавшиеся на одной из этих дорог (`SupplyNode::railway_to`),
+/// считаются «чистыми» с точки зрения российского планирования — промывка уже учтена клиентом.
+pub fn load_no_cleaning_roads(path: impl AsRef<Path>) -> anyhow::Result<HashSet<String>> {
+    let path = path.as_ref();
+    let text = std::fs::read_to_string(path)
+        .with_context(|| format!("чтение {}", path.display()))?;
+    let blocks: Vec<Value> = serde_json::from_str(&text).context("разбор references.json")?;
+    let mut out = HashSet::new();
+    for b in blocks {
+        let Some(obj) = b.as_object() else { continue };
+        let Some(arr) = obj.get("NoCleaningRoads").and_then(|v| v.as_array()) else { continue };
+        for v in arr {
+            if let Some(s) = v.as_str() {
+                let t = s.trim().to_string();
+                if !t.is_empty() {
+                    out.insert(t);
+                }
+            }
+        }
+        if !out.is_empty() {
+            break;
+        }
+    }
+    Ok(out)
+}
+
 /// Коды ЕТСНГ грузов, для которых требуется промывка (`WashProductCodes` в первом подходящем блоке JSON).
 pub fn load_wash_product_codes(path: impl AsRef<Path>) -> anyhow::Result<HashSet<String>> {
     let path = path.as_ref();

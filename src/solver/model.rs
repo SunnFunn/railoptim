@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::data::references::normalize_etsng_code;
-use crate::data::wash::{effective_etsng_for_wash_tariff, supply_matches_wash_product_list};
+use crate::data::wash::{effective_etsng_for_wash_tariff, supply_matches_wash_product_list, supply_needs_wash};
 use crate::node::{DemandNode, DemandPurpose, SupplyNode, TariffNode};
 
 // ---------------------------------------------------------------------------
@@ -120,6 +120,7 @@ pub fn build_task_arcs(
     demand: &[DemandNode],
     tariffs: &[TariffNode],
     wash_codes: &HashSet<String>,
+    no_cleaning_roads: &HashSet<String>,
     wash_tariffs: &HashMap<(String, String), TariffNode>,
 ) -> (Vec<TaskArc>, ArcStats) {
     // Индекс тарифов погрузки: (код_откуда, код_куда) → TariffNode
@@ -139,7 +140,9 @@ pub fn build_task_arcs(
         for (d_idx, d) in demand.iter().enumerate() {
             let tariff: &TariffNode = match d.purpose {
                 DemandPurpose::Wash => {
-                    if !supply_matches_wash_product_list(s, wash_codes) {
+                    // Вагоны с дорогой образования из NoCleaningRoads — не грязные
+                    // (промывка уже оплачена клиентом на иностранной территории).
+                    if !supply_needs_wash(s, wash_codes, no_cleaning_roads) {
                         no_tariff += 1;
                         continue;
                     }
@@ -152,10 +155,11 @@ pub fn build_task_arcs(
                 }
                 DemandPurpose::Load => {
                     // Ограничение «грязного» вагона:
-                    // если вагон из-под груза, требующего промывки, он может быть
-                    // назначен под погрузку ТОЛЬКО под тот же ЕТСНГ.
+                    // если вагон из-под груза, требующего промывки (и не освобождён
+                    // по NoCleaningRoads), он может быть назначен под погрузку
+                    // ТОЛЬКО под тот же ЕТСНГ.
                     // Альтернативный маршрут — через узел промывки (DemandPurpose::Wash).
-                    if supply_matches_wash_product_list(s, wash_codes) {
+                    if supply_needs_wash(s, wash_codes, no_cleaning_roads) {
                         let supply_etsng = effective_etsng_for_wash_tariff(s);
                         let demand_etsng = d.etsng.as_deref().map(normalize_etsng_code);
                         match (supply_etsng, demand_etsng) {

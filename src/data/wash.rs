@@ -198,10 +198,30 @@ pub fn code_requires_wash(code: &str, wash_codes: &HashSet<String>) -> bool {
 }
 
 /// Узел предложения относится к грузам из списка промывки (по правилу груженый/порожний).
+///
+/// Не учитывает исключения по дороге образования — для полной проверки используй
+/// [`supply_needs_wash`].
 pub fn supply_matches_wash_product_list(s: &SupplyNode, wash_codes: &HashSet<String>) -> bool {
     effective_etsng_for_wash_tariff(s)
         .map(|c| code_requires_wash(&c, wash_codes))
         .unwrap_or(false)
+}
+
+/// Вагон является «грязным» и требует промывки с точки зрения российского планирования.
+///
+/// Возвращает `false` если выполнено **любое** из условий:
+/// - груз вагона не входит в список `WashProductCodes`, или
+/// - дорога образования вагона (`railway_to`) входит в `NoCleaningRoads`
+///   (промывка на иностранной территории уже оплачена клиентом).
+pub fn supply_needs_wash(
+    s: &SupplyNode,
+    wash_codes: &HashSet<String>,
+    no_cleaning_roads: &HashSet<String>,
+) -> bool {
+    if no_cleaning_roads.contains(s.railway_to.trim()) {
+        return false;
+    }
+    supply_matches_wash_product_list(s, wash_codes)
 }
 
 /// На станции текущего положения вагона (`station_to_code`) есть спрос на погрузку того же ЕТСНГ —

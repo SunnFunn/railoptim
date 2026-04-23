@@ -88,6 +88,16 @@ async fn main() -> Result<()> {
             HashSet::new()
         }
     };
+    let no_cleaning_roads = match data::load_no_cleaning_roads("data/references.json") {
+        Ok(r) => {
+            println!("Дороги без промывки (NoCleaningRoads): {}", r.len());
+            r
+        }
+        Err(e) => {
+            eprintln!("  NoCleaningRoads из references.json: не загружены ({e})");
+            HashSet::new()
+        }
+    };
     let wash_stations = match data::wash::fetch_wash_stations() {
         Ok(ws) => ws,
         Err(e) => {
@@ -111,22 +121,34 @@ async fn main() -> Result<()> {
     let mut demand_lp: Vec<DemandNode> = demand_nodes.clone();
     demand_lp.extend(wash_demand_nodes.clone());
 
-    let n_supply_wash_list = opt_supply
+    // Все вагоны с «грязным» ETSNG (без учёта NoCleaningRoads).
+    let n_supply_wash_raw = opt_supply
         .iter()
         .filter(|s| data::wash::supply_matches_wash_product_list(s, &wash_codes))
         .map(|s| s.car_count)
         .sum::<i32>();
-    let n_supply_wash_skip = opt_supply
+    // Из них освобождены от промывки по дороге образования (NoCleaningRoads).
+    let n_supply_wash_exempt = opt_supply
         .iter()
         .filter(|s| {
             data::wash::supply_matches_wash_product_list(s, &wash_codes)
+                && no_cleaning_roads.contains(s.railway_to.trim())
+        })
+        .map(|s| s.car_count)
+        .sum::<i32>();
+    // Итого «грязных», требующих промывки.
+    let n_supply_wash_list = n_supply_wash_raw - n_supply_wash_exempt;
+    let n_supply_wash_skip = opt_supply
+        .iter()
+        .filter(|s| {
+            data::wash::supply_needs_wash(s, &wash_codes, &no_cleaning_roads)
                 && data::wash::load_demand_covers_same_etsng(s, &demand_nodes)
         })
         .map(|s| s.car_count)
         .sum::<i32>();
     println!(
-        "  предложений с ЕТСНГ из списка промывки: {} вагонов (из них погрузка того же ЕТСНГ на станции — промывка не обязательна: {} вагонов)",
-        n_supply_wash_list, n_supply_wash_skip
+        "  предложений с ЕТСНГ из списка промывки: {} вагонов (освобождены по NoCleaningRoads: {}; из них погрузка того же ЕТСНГ — промывка не обязательна: {} вагонов)",
+        n_supply_wash_list, n_supply_wash_exempt, n_supply_wash_skip
     );
 
     // -----------------------------------------------------------------------
@@ -232,7 +254,7 @@ async fn main() -> Result<()> {
     if !wash_station_refs.is_empty() {
         let wash_from: Vec<StationRef> = opt_supply
             .iter()
-            .filter(|s| data::wash::supply_matches_wash_product_list(s, &wash_codes))
+            .filter(|s| data::wash::supply_needs_wash(s, &wash_codes, &no_cleaning_roads))
             .map(|s| (s.station_to_code.clone(), s.railway_to.clone()))
             .collect::<HashSet<_>>()
             .into_iter()
@@ -272,6 +294,7 @@ async fn main() -> Result<()> {
         &demand_lp,
         &tariff_nodes,
         &wash_codes,
+        &no_cleaning_roads,
         &wash_tariff_map,
     );
 
@@ -350,7 +373,7 @@ async fn main() -> Result<()> {
     // -----------------------------------------------------------------------
     // Записи по оптимизированным назначениям (Free / NoNumber).
     let mut output_records = solver::build_output_records(
-        &solution, &arcs, &opt_supply, &demand_lp, &wash_codes,
+        &solution, &arcs, &opt_supply, &demand_lp, &wash_codes, &no_cleaning_roads,
     );
     // Добавляем вагоны "По факту" (Assigned): ShipmentGoalId из DislocationPreview → тип назначения.
     let assigned_car_numbers: Vec<u64> = assigned_nodes
@@ -387,24 +410,39 @@ async fn main() -> Result<()> {
     output_records.extend(assigned_records);
     output_records.extend(repair_records);
 
+    // Количество вагонов (сумма assigned_cars) и записей для Excel.
+    let cars_excel: i32 = output_records.iter().map(|r| r.assigned_cars).sum();
+
     let api_records = solver::output_records_for_api(&output_records);
     let n_api       = api_records.len();
-    let n_skip_10   = output_records.len() - n_api;
+    let cars_api: i32 = api_records.iter().map(|r| r.assigned_cars).sum();
+
+    // Вагоны дислокации (supply_period == 10): исключены из POST АПИ.
+    let (n_skip_p10, cars_skip_p10) = output_records
+        .iter()
+        .filter(|r| r.supply_period == 10)
+        .fold((0usize, 0i32), |(recs, cars), r| (recs + 1, cars + r.assigned_cars));
+
     println!(
-        "Записей в отчёте (Excel):    {} ({} оптим. + {} по факту + {} в ремонт)",
-        output_records.len(),
-        n_optim,
-        n_assigned,
-        n_repair,
+        "Записей в отчёте (Excel):    {} ({} оптим. + {} по факту + {} в ремонт) / {} вагонов",
+        output_records.len(), n_optim, n_assigned, n_repair, cars_excel,
     );
-    if n_skip_10 > 0 {
+    println!(
+        "  → в POST АПИ (период 1):   {} записей / {} вагонов",
+        n_api, cars_api,
+    );
+    if n_skip_p10 > 0 {
         println!(
-            "  в POST АПИ (только 1 сут.): {} (без периода предл. 10: {})",
-            n_api,
-            n_skip_10,
+            "  → исключено (предл. 10, дислокация): {} записей / {} вагонов",
+            n_skip_p10, cars_skip_p10,
         );
-    } else {
-        println!("Записей в POST АПИ:          {}", n_api);
+    }
+    // Контрольная сумма: если API + p10 != Excel — есть иная причина.
+    if cars_api + cars_skip_p10 != cars_excel {
+        eprintln!(
+            "  [!] Нераскрытая разница: Excel {} вагонов ≠ API {} + p10 {} = {} вагонов",
+            cars_excel, cars_api, cars_skip_p10, cars_api + cars_skip_p10,
+        );
     }
 
     let demand_checkpoint = demand_lp.clone();

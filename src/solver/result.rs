@@ -392,6 +392,7 @@ pub fn build_output_records(
     supply:   &[SupplyNode],
     demand:   &[DemandNode],
     wash_codes: &HashSet<String>,
+    no_cleaning_roads: &HashSet<String>,
 ) -> Vec<OutputRecord> {
     let now_str = Local::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
 
@@ -453,7 +454,7 @@ pub fn build_output_records(
             // - Load-дуга, чистый вагон → «Под погрузку в N сутки»
             let assignment_type = if d.purpose == DemandPurpose::Wash {
                 "в промывку".to_string()
-            } else if wash::supply_matches_wash_product_list(s, wash_codes) {
+            } else if wash::supply_needs_wash(s, wash_codes, no_cleaning_roads) {
                 "под погрузку аналогичного груза".to_string()
             } else {
                 format!("Под погрузку в {period_label} сутки")
@@ -579,12 +580,16 @@ pub fn build_output_records(
     records
 }
 
-/// Записи для тела POST в АПИ: только назначения по предложению 1-х суток (`supply_period == 1`),
-/// без записей «Затягивание грузовой операции» (они только для Excel).
+/// Записи для тела POST в АПИ: все назначения по предложению 1-х суток (`supply_period == 1`).
+///
+/// Вагоны дислокации (`supply_period == 10`) в АПИ не передаются — они появятся
+/// через 2–10 суток и не могут быть диспетчированы немедленно.
+/// «Затягивание грузовой операции» включается: вагон физически находится на станции
+/// и АПИ должен отразить это состояние.
 pub fn output_records_for_api(records: &[OutputRecord]) -> Vec<OutputRecord> {
     records
         .iter()
-        .filter(|r| r.supply_period == 1 && r.assignment_type != "Затягивание грузовой операции")
+        .filter(|r| r.supply_period == 1)
         .cloned()
         .collect()
 }

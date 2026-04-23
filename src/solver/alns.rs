@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 use rand::prelude::*;
 
 use crate::node::{DemandNode, DemandPurpose, SupplyNode};
-use super::model::{collect_mass_pair_violations, TaskArc};
+use super::model::{collect_mass_pair_violations, MIN_BATCH_FROM_MASS_STATION, TaskArc};
 use super::greedy::{Assignment, GreedyResult, greedy_to_arc_vals};
 use super::lp::{solve, OptimResult, PENALTY_COST};
 
@@ -206,16 +206,19 @@ fn destroy_random(
 }
 
 // ---------------------------------------------------------------------------
-// Общий post-processing: удаление нарушений MIN_BATCH на уровне пары станций
+// Cleanup после destroy: удаление нарушений MIN_BATCH с возвратом назначений
 // ---------------------------------------------------------------------------
 
 /// Проверяет все назначения в `state` на соответствие ограничению MIN_BATCH
-/// для пар станций массовой выгрузки и удаляет нарушающие назначения,
-/// возвращая вагоны в остатки предложения и спроса.
+/// для пар станций массовой выгрузки.
 ///
-/// Проверяются ВСЕ назначения (не только новые), т.к. операция destroy могла
-/// нарушить ранее корректные пары.
-fn remove_mass_pair_violations(state: &mut AlnsState, arcs: &[TaskArc]) {
+/// Удаляет нарушающие назначения, возвращает вагоны в остатки предложения/спроса
+/// и **возвращает список освобождённых назначений**, чтобы оператор ремонта
+/// мог повторно покрыть высвободившийся спрос.
+///
+/// Вызывается **после `destroy`** (не после repair): к моменту ремонта
+/// состояние уже валидно, и ремонт строит новые назначения с inline-проверкой.
+fn drain_violated_mass_pairs(state: &mut AlnsState, arcs: &[TaskArc]) -> Vec<Assignment> {
     let violations: HashSet<(String, String)> = collect_mass_pair_violations(
         state.assignments.iter().map(|a| (a.arc_id, a.quantity)),
         arcs,
@@ -224,9 +227,10 @@ fn remove_mass_pair_violations(state: &mut AlnsState, arcs: &[TaskArc]) {
     .collect();
 
     if violations.is_empty() {
-        return;
+        return vec![];
     }
 
+    let mut freed: Vec<Assignment> = Vec::new();
     let mut i = state.assignments.len();
     while i > 0 {
         i -= 1;
@@ -239,9 +243,11 @@ fn remove_mass_pair_violations(state: &mut AlnsState, arcs: &[TaskArc]) {
                 state.remaining_supply[removed.s_idx] += removed.quantity;
                 state.remaining_demand[removed.d_idx] += removed.quantity;
                 state.total_cost -= removed.total_cost;
+                freed.push(removed);
             }
         }
     }
+    freed
 }
 
 // ---------------------------------------------------------------------------
@@ -253,13 +259,39 @@ fn remove_mass_pair_violations(state: &mut AlnsState, arcs: &[TaskArc]) {
 /// Для каждого разрушенного назначения ищет лучшую допустимую дугу
 /// с учётом текущих остатков предложения и спроса.
 ///
+/// Ограничение MIN_BATCH проверяется **inline** (по тем же условиям A и B,
+/// что и в `greedy_initial_solution`) — пост-удаление не нужно.
+///
 /// Используется как быстрый оператор ремонта когда LP-ремонт избыточен.
 fn repair_greedy(
     state:   &mut AlnsState,
     removed: &[Assignment],
     arcs:    &[TaskArc],
 ) {
-    // Собираем уникальные d_idx из разрушенных назначений.
+    use std::collections::HashMap;
+
+    // Индекс узлов предложения по парам (supply_station, demand_station)
+    // для дуг is_mass_unloading. Позволяет быстро считать station_remaining.
+    let mut mass_pair_supply_idx: HashMap<(String, String), HashSet<usize>> = HashMap::new();
+    for arc in arcs.iter().filter(|a| a.is_mass_unloading) {
+        mass_pair_supply_idx
+            .entry((arc.supply_station_code.clone(), arc.demand_station_code.clone()))
+            .or_default()
+            .insert(arc.s_idx);
+    }
+
+    // Текущий суммарный поток по парам (из уже активных назначений в state).
+    let mut mass_pair_totals: HashMap<(String, String), i32> = HashMap::new();
+    for a in &state.assignments {
+        let arc = &arcs[a.arc_id];
+        if arc.is_mass_unloading {
+            *mass_pair_totals
+                .entry((arc.supply_station_code.clone(), arc.demand_station_code.clone()))
+                .or_insert(0) += a.quantity;
+        }
+    }
+
+    // Уникальные d_idx из разрушенных назначений.
     let mut demand_indices: Vec<usize> = removed.iter().map(|a| a.d_idx).collect();
     demand_indices.sort_unstable();
     demand_indices.dedup();
@@ -267,15 +299,41 @@ fn repair_greedy(
     for d_idx in demand_indices {
         if state.remaining_demand[d_idx] <= 0 { continue; }
 
-        // Находим лучшую допустимую дугу для этого узла спроса.
-        // Ограничение MIN_BATCH для mass-unloading проверяется на уровне
-        // пары станций в post-processing ниже — не на отдельной дуге.
         let rem_demand = state.remaining_demand[d_idx];
+
+        // Ищем лучшую дугу с inline MIN_BATCH-проверкой.
         let best_arc = arcs.iter()
             .filter(|arc| {
                 if arc.d_idx != d_idx || !arc.car_type_ok { return false; }
                 let avail = state.remaining_supply[arc.s_idx];
-                avail > 0
+                if avail <= 0 { return false; }
+
+                if arc.is_mass_unloading {
+                    let key = (arc.supply_station_code.clone(), arc.demand_station_code.clone());
+                    let existing = mass_pair_totals.get(&key).copied().unwrap_or(0);
+                    let station_remaining: i32 = mass_pair_supply_idx
+                        .get(&key)
+                        .map(|nodes| nodes.iter().map(|&si| state.remaining_supply[si]).sum())
+                        .unwrap_or(0);
+
+                    // (A) пара не наберёт MIN_BATCH даже суммарно
+                    if existing + station_remaining < MIN_BATCH_FROM_MASS_STATION {
+                        return false;
+                    }
+
+                    // (B) назначение оставит застрявший остаток < MIN_BATCH
+                    let qty = avail.min(rem_demand);
+                    let residual = avail - qty;
+                    let other_station_remaining = station_remaining - avail;
+                    if residual > 0
+                        && residual < MIN_BATCH_FROM_MASS_STATION
+                        && other_station_remaining < MIN_BATCH_FROM_MASS_STATION
+                    {
+                        return false;
+                    }
+                }
+
+                true
             })
             .min_by(|a, b| {
                 a.cost.partial_cmp(&b.cost)
@@ -291,6 +349,11 @@ fn repair_greedy(
             state.remaining_demand[arc.d_idx] -= qty;
             state.total_cost += arc_cost;
 
+            if arc.is_mass_unloading {
+                let key = (arc.supply_station_code.clone(), arc.demand_station_code.clone());
+                *mass_pair_totals.entry(key).or_insert(0) += qty;
+            }
+
             state.assignments.push(Assignment {
                 arc_id:     arc.arc_id,
                 s_idx:      arc.s_idx,
@@ -300,9 +363,7 @@ fn repair_greedy(
             });
         }
     }
-
-    // Post-processing: удаляем назначения по парам станций ниже порога.
-    remove_mass_pair_violations(state, arcs);
+    // Нет пост-удаления: inline-проверка гарантирует допустимость назначений.
 }
 
 // ---------------------------------------------------------------------------
@@ -420,6 +481,11 @@ fn build_subproblem(
 
 /// LP-ремонт: решает подзадачу HiGHS и применяет результат к состоянию.
 ///
+/// Ограничение MIN_BATCH проверяется **inline** при применении LP-результата
+/// (условия A и B). LP не знает про MIN_BATCH, поэтому проверка идёт на стороне
+/// применения: если пара не может набрать MIN_BATCH — назначение пропускается,
+/// вагоны остаются в `remaining_supply` для последующих итераций.
+///
 /// Возвращает `true` если ремонт выполнен успешно.
 fn repair_lp(
     state:   &mut AlnsState,
@@ -428,53 +494,120 @@ fn repair_lp(
     supply:  &[SupplyNode],
     demand:  &[DemandNode],
 ) -> bool {
+    use std::collections::HashMap;
+
     let (sub_arcs, sub_supply, sub_demand, s_map, d_map) =
         build_subproblem(removed, arcs, state, supply, demand);
 
     if sub_arcs.is_empty() { return false; }
 
-    // Индекс оригинальных дуг по (s_idx, d_idx) для поиска флагов.
-    let orig_arc_idx: std::collections::HashMap<(usize, usize), &TaskArc> = arcs.iter()
+    // Индекс оригинальных дуг по (s_idx, d_idx) для поиска флагов и кодов.
+    let orig_arc_idx: HashMap<(usize, usize), &TaskArc> = arcs.iter()
         .map(|a| ((a.s_idx, a.d_idx), a))
         .collect();
 
     let (_, arc_vals) = solve(&sub_arcs, &sub_supply, &sub_demand);
 
-    // Запоминаем позицию до добавления новых назначений.
-    let before = state.assignments.len();
+    // Пред-вычисление для inline MIN_BATCH-проверки.
+    //
+    // mass_pair_supply_idx: (supply_station, demand_station) → множество s_idx.
+    let mut mass_pair_supply_idx: HashMap<(String, String), HashSet<usize>> = HashMap::new();
+    for arc in arcs.iter().filter(|a| a.is_mass_unloading) {
+        mass_pair_supply_idx
+            .entry((arc.supply_station_code.clone(), arc.demand_station_code.clone()))
+            .or_default()
+            .insert(arc.s_idx);
+    }
 
-    // Применяем результат LP к состоянию.
+    // mass_pair_totals: суммарный поток по парам из уже активных назначений.
+    // Обновляется по мере применения LP-результата.
+    let mut mass_pair_totals: HashMap<(String, String), i32> = HashMap::new();
+    for a in &state.assignments {
+        let arc = &arcs[a.arc_id];
+        if arc.is_mass_unloading {
+            *mass_pair_totals
+                .entry((arc.supply_station_code.clone(), arc.demand_station_code.clone()))
+                .or_insert(0) += a.quantity;
+        }
+    }
+
+    // Применяем результат LP с inline MIN_BATCH-проверкой.
     for (arc, &qty_f) in sub_arcs.iter().zip(arc_vals.iter()) {
-        let qty = qty_f.round() as i32;
-        if qty <= 0 { continue; }
+        let qty_lp = qty_f.round() as i32;
+        if qty_lp <= 0 { continue; }
 
         let orig_s = s_map[arc.s_idx];
         let orig_d = d_map[arc.d_idx];
 
-        // Ищем оригинальную дугу для arc_id и флага is_mass_unloading.
         let orig_arc = orig_arc_idx.get(&(orig_s, orig_d)).copied();
         let orig_arc_id = orig_arc.map(|a| a.arc_id).unwrap_or(arc.arc_id);
+        let is_mass = orig_arc.map(|a| a.is_mass_unloading).unwrap_or(arc.is_mass_unloading);
 
-        let arc_cost = qty as f64 * arc.cost;
-        state.remaining_supply[orig_s] -= qty;
-        state.remaining_demand[orig_d] -= qty;
-        state.total_cost += arc_cost;
+        // Фактически доступные остатки (LP мог не знать об изменениях в ходе цикла).
+        let avail_supply = state.remaining_supply[orig_s];
+        let avail_demand = state.remaining_demand[orig_d];
+        let qty = qty_lp.min(avail_supply).min(avail_demand);
+        if qty <= 0 { continue; }
 
-        state.assignments.push(Assignment {
-            arc_id:     orig_arc_id,
-            s_idx:      orig_s,
-            d_idx:      orig_d,
-            quantity:   qty,
-            total_cost: arc_cost,
-        });
+        if is_mass {
+            let supply_code = orig_arc
+                .map(|a| a.supply_station_code.clone())
+                .unwrap_or_else(|| arc.supply_station_code.clone());
+            let demand_code = orig_arc
+                .map(|a| a.demand_station_code.clone())
+                .unwrap_or_else(|| arc.demand_station_code.clone());
+            let key = (supply_code, demand_code);
+
+            let existing = mass_pair_totals.get(&key).copied().unwrap_or(0);
+            let station_remaining: i32 = mass_pair_supply_idx
+                .get(&key)
+                .map(|nodes| nodes.iter().map(|&si| state.remaining_supply[si]).sum())
+                .unwrap_or(0);
+
+            // (A) пара не наберёт MIN_BATCH даже суммарно — пропускаем.
+            if existing + station_remaining < MIN_BATCH_FROM_MASS_STATION {
+                continue;
+            }
+
+            // (B) назначение оставит застрявший остаток < MIN_BATCH — пропускаем.
+            let residual = avail_supply - qty;
+            let other_station_remaining = station_remaining - avail_supply;
+            if residual > 0
+                && residual < MIN_BATCH_FROM_MASS_STATION
+                && other_station_remaining < MIN_BATCH_FROM_MASS_STATION
+            {
+                continue;
+            }
+
+            let arc_cost = qty as f64 * arc.cost;
+            state.remaining_supply[orig_s] -= qty;
+            state.remaining_demand[orig_d] -= qty;
+            state.total_cost += arc_cost;
+            *mass_pair_totals.entry(key).or_insert(0) += qty;
+
+            state.assignments.push(Assignment {
+                arc_id:     orig_arc_id,
+                s_idx:      orig_s,
+                d_idx:      orig_d,
+                quantity:   qty,
+                total_cost: arc_cost,
+            });
+        } else {
+            let arc_cost = qty as f64 * arc.cost;
+            state.remaining_supply[orig_s] -= qty;
+            state.remaining_demand[orig_d] -= qty;
+            state.total_cost += arc_cost;
+
+            state.assignments.push(Assignment {
+                arc_id:     orig_arc_id,
+                s_idx:      orig_s,
+                d_idx:      orig_d,
+                quantity:   qty,
+                total_cost: arc_cost,
+            });
+        }
     }
-
-    // Пост-обработка: проверяем суммарный поток по парам станций массовой выгрузки.
-    // Удаляем все назначения для пар, у которых total > 0 && total < MIN_BATCH.
-    // Проверяем ВСЕ назначения: destroy мог нарушить ранее корректные пары.
-    let _ = before; // поле использовано выше при добавлении новых назначений
-    remove_mass_pair_violations(state, arcs);
-
+    // Нет пост-удаления: inline-проверка гарантирует допустимость назначений.
     true
 }
 
@@ -549,8 +682,14 @@ pub fn run_alns(
         let mut candidate = current_state.clone();
 
         // --- DESTROY ---
-        let removed = destroy_random(&mut candidate, k, &mut rng);
+        let mut removed = destroy_random(&mut candidate, k, &mut rng);
         if removed.is_empty() { continue; }
+
+        // Разрушение могло опустить суммарный поток по парам массовой выгрузки
+        // ниже MIN_BATCH. Освобождаем такие пары и добавляем их d_idx в список
+        // разрушенных, чтобы оператор ремонта повторно покрыл высвободившийся спрос.
+        let freed_by_cleanup = drain_violated_mass_pairs(&mut candidate, arcs);
+        removed.extend(freed_by_cleanup);
 
         // --- REPAIR ---
         // Пробуем LP-ремонт; если не удался — откатываемся к жадному.

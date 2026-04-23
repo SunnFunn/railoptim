@@ -446,10 +446,15 @@ pub fn build_output_records(
                 period_range_str(d.period).to_string()
             };
 
+            // Тип назначения:
+            // - Wash-дуга        → «в промывку»
+            // - Load-дуга, грязный вагон → «под погрузку аналогичного груза»
+            //   (model.rs гарантирует: такая дуга существует только при совпадении ETSNG)
+            // - Load-дуга, чистый вагон → «Под погрузку в N сутки»
             let assignment_type = if d.purpose == DemandPurpose::Wash {
                 "в промывку".to_string()
-            } else if wash::is_same_cargo_load_assignment(s, d, wash_codes) {
-                "под аналогичный груз".to_string()
+            } else if wash::supply_matches_wash_product_list(s, wash_codes) {
+                "под погрузку аналогичного груза".to_string()
             } else {
                 format!("Под погрузку в {period_label} сутки")
             };

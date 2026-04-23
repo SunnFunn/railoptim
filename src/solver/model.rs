@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::data::wash::supply_matches_wash_product_list;
+use crate::data::references::normalize_etsng_code;
+use crate::data::wash::{effective_etsng_for_wash_tariff, supply_matches_wash_product_list};
 use crate::node::{DemandNode, DemandPurpose, SupplyNode, TariffNode};
 
 // ---------------------------------------------------------------------------
@@ -131,6 +132,7 @@ pub fn build_task_arcs(
     let mut no_tariff  = 0usize;
     let mut bad_period = 0usize;
     let mut bad_type   = 0usize;
+    let mut dirty_etsng_mismatch = 0usize;
     let mut arcs_period_penalized = 0usize;
 
     for (s_idx, s) in supply.iter().enumerate() {
@@ -149,6 +151,22 @@ pub fn build_task_arcs(
                     t
                 }
                 DemandPurpose::Load => {
+                    // Ограничение «грязного» вагона:
+                    // если вагон из-под груза, требующего промывки, он может быть
+                    // назначен под погрузку ТОЛЬКО под тот же ЕТСНГ.
+                    // Альтернативный маршрут — через узел промывки (DemandPurpose::Wash).
+                    if supply_matches_wash_product_list(s, wash_codes) {
+                        let supply_etsng = effective_etsng_for_wash_tariff(s);
+                        let demand_etsng = d.etsng.as_deref().map(normalize_etsng_code);
+                        match (supply_etsng, demand_etsng) {
+                            (Some(se), Some(de)) if se == de => {} // ETSNG совпадает → дуга разрешена
+                            _ => {
+                                dirty_etsng_mismatch += 1;
+                                continue;
+                            }
+                        }
+                    }
+
                     let key = (s.station_to_code.as_str(), d.station_code.as_str());
                     let Some(t) = tariff_index.get(&key) else {
                         no_tariff += 1;
@@ -215,6 +233,7 @@ pub fn build_task_arcs(
         no_tariff,
         bad_period,
         bad_type,
+        dirty_etsng_mismatch,
         feasible: arcs.len(),
         arcs_period_penalized,
     };
@@ -233,6 +252,8 @@ pub struct ArcStats {
     pub bad_period: usize,
     /// Пар с несовместимым типом вагона.
     pub bad_type:   usize,
+    /// Пар «грязный» вагон → погрузка с несовпадающим ЕТСНГ (запрещено без промывки).
+    pub dirty_etsng_mismatch: usize,
     /// Допустимых дуг (вошли в LP).
     pub feasible:   usize,
     /// Дуг с ненулевым штрафом за срок подсыла (`supply_period != 10`, вне `[L−3, U+3]`).

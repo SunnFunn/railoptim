@@ -204,21 +204,6 @@ pub fn supply_matches_wash_product_list(s: &SupplyNode, wash_codes: &HashSet<Str
         .unwrap_or(false)
 }
 
-/// Назначение на **погрузку** с тем же ЕТСНГ, что и для правил промывки (конкурент пути «в промывку»).
-pub fn is_same_cargo_load_assignment(
-    s: &SupplyNode,
-    d: &DemandNode,
-    wash_codes: &HashSet<String>,
-) -> bool {
-    d.purpose == DemandPurpose::Load
-        && supply_matches_wash_product_list(s, wash_codes)
-        && d.station_code.trim() == s.station_to_code.trim()
-        && match (effective_etsng_for_wash_tariff(s), d.etsng.as_deref()) {
-            (Some(ref ec), Some(ed)) => normalize_etsng_code(ed) == *ec,
-            _ => false,
-        }
-}
-
 /// На станции текущего положения вагона (`station_to_code`) есть спрос на погрузку того же ЕТСНГ —
 /// можно обойтись без промывки под тот же груз.
 pub fn load_demand_covers_same_etsng(s: &SupplyNode, load_demands: &[DemandNode]) -> bool {

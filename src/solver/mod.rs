@@ -1,4 +1,5 @@
 pub mod alns;
+pub mod diagnose;
 pub mod greedy;
 pub mod lp;
 pub mod mip;
@@ -6,6 +7,7 @@ pub mod model;
 pub mod result;
 
 pub use alns::{AlnsConfig, run_alns};
+pub use diagnose::diagnose_excess_supply;
 pub use greedy::{greedy_initial_solution, greedy_to_arc_vals, print_greedy_result};
 pub use lp::print_balance;
 pub use mip::{

@@ -353,8 +353,10 @@ pub fn build_assigned_output_records(
                     assigned_cars:     cars.len().max(1) as i32,
                     load_status:       s.status.clone(),
                     car_type:          s.car_type.clone(),
-                    prev_etsng_name:   s.prev_etsng_names.first().cloned(),
-                    etsng_name:        s.etsng_name.clone(),
+                    // prev_etsng — имя груза, который вагон везёт сейчас (SupplyNode.etsng_name).
+                    // etsng в факт-записях оставляем пустым: нет целевого спроса.
+                    prev_etsng_name:   s.etsng_name.clone(),
+                    etsng_name:        None,
                     gu12_number:       None,
                     claim_number:      None,
                     claim_date:        None,
@@ -473,8 +475,15 @@ pub fn build_output_records(
                 assigned_cars:      qty,
                 load_status:        s.status.clone(),
                 car_type:           s.car_type.clone(),
-                prev_etsng_name:    s.prev_etsng_names.first().cloned(),
-                etsng_name:         s.etsng_name.clone(),
+                // Груз в записи назначения:
+                //   prev_etsng — имя груза, который вагон везёт сейчас (SupplyNode.etsng_name).
+                //   etsng     — имя груза, под который вагон назначен (DemandNode.gng_cargo —
+                //               в API спроса приходит как NameGNG и является аналогом
+                //               etsng_name у предложения).
+                // Для Wash-спроса gng_cargo обычно пуст — поле станет None, что корректно
+                // отражает смысл «назначение в промывку без конкретного груза».
+                prev_etsng_name:    s.etsng_name.clone(),
+                etsng_name:         d.gng_cargo.clone(),
                 gu12_number:        d.gu12_number.as_ref().and_then(|v| v.first().cloned()),
                 claim_number:       d.request_numbers.as_ref().and_then(|v| v.first().cloned()),
                 claim_date:         d.request_dates.as_ref().and_then(|v| v.first().cloned()),
@@ -513,7 +522,8 @@ pub fn build_output_records(
                 assigned_cars:      leftover_count,
                 load_status:        s.status.clone(),
                 car_type:           s.car_type.clone(),
-                prev_etsng_name:    None,
+                // Затягивание грузовой операции: вагон остаётся на станции с текущим грузом.
+                prev_etsng_name:    s.etsng_name.clone(),
                 etsng_name:         None,
                 gu12_number:        None,
                 claim_number:       None,
@@ -557,7 +567,8 @@ pub fn build_output_records(
             assigned_cars:      s.car_count,
             load_status:        s.status.clone(),
             car_type:           s.car_type.clone(),
-            prev_etsng_name:    None,
+            // Узел без активных дуг — вагон остаётся с текущим грузом.
+            prev_etsng_name:    s.etsng_name.clone(),
             etsng_name:         None,
             gu12_number:        None,
             claim_number:       None,
@@ -646,8 +657,10 @@ pub fn build_repair_output_records(
                 assigned_cars:      s.car_count,
                 load_status:        s.status.clone(),
                 car_type:           s.car_type.clone(),
-                prev_etsng_name:    s.prev_etsng_names.first().cloned(),
-                etsng_name:         s.etsng_name.clone(),
+                // В ремонт: нет целевого груза (demand отсутствует). Пишем текущий груз
+                // вагона как prev_etsng; etsng остаётся None.
+                prev_etsng_name:    s.etsng_name.clone(),
+                etsng_name:         None,
                 gu12_number:        None,
                 claim_number:       None,
                 claim_date:         None,

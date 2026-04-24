@@ -804,16 +804,22 @@ pub fn run_alns(
 
     println!("--- ALNS СТАРТ ---");
     let (start_unmet, start_excess) = best_state.unmet_and_excess(demand);
-    println!("Начальная real_cost:      {:.2} руб.", best_state.total_cost);
+    let start_total = start_unmet + start_excess;
+    println!("Начальная real_cost:       {:.2} руб.", best_state.total_cost);
     println!(
-        "Начальная objective_cost: {:.2} руб. (penalty: {:.2}, unmet: {}, excess: {})",
+        "Начальная objective_cost:  {:.2} руб. (penalty: {:.2}, unmet: {}, excess: {})",
         best_state.objective_cost(demand),
         best_state.penalty_component_cost(demand),
         start_unmet,
         start_excess,
     );
-    println!("Назначений:          {}", best_state.assignments.len());
-    println!("Бюджет времени:      {} сек.", config.time_budget.as_secs());
+    println!("Нераспределено (итого):    {} ваг. (= unmet + excess)", start_total);
+    println!("Назначений:                {}", best_state.assignments.len());
+    println!(
+        "Ремонтный оператор:        {}",
+        if config.use_mip_repair { "repair_mip (жёсткий MIN_BATCH)" } else { "repair_lp (inline-проверки)" }
+    );
+    println!("Бюджет времени:            {} сек.", config.time_budget.as_secs());
     println!("------------------");
 
     // --- Главный цикл ---
@@ -855,24 +861,37 @@ pub fn run_alns(
 
         // --- ACCEPT ---
         // Трёхуровневый лексикографический критерий:
-        //   1) unmet  — неудовлетворённый спрос на погрузку (Load). Высший приоритет:
-        //               «распределить вагоны под погрузку» — главная цель сервиса.
-        //   2) excess — незадействованное предложение. Вторичный приоритет: использовать
-        //               больше вагонов (через промывку и т.п.) при равном Load-покрытии.
-        //   3) real_cost — минимизируем стоимость плеч только на шаге «всё остальное равно».
+        //   1) total = unmet + excess — «нераспределённые вагоны» в понимании бизнеса:
+        //      и незакрытый Load-спрос, и неиспользованное предложение. Главный
+        //      приоритет: итерация НЕ должна увеличивать суммарное количество
+        //      нераспределённых вагонов. Совпадает со штрафным компонентом модели
+        //      (PENALTY_COST * (unmet + excess)).
+        //   2) unmet — при равной сумме предпочитаем меньший незакрытый Load-спрос
+        //      (Load-покрытие важнее excess: «куда-то отправить» всегда можно в
+        //      Wash или в следующую итерацию, а недовоз — прямая потеря клиента).
+        //   3) real_cost — минимизируем стоимость плеч только при полной ничьей выше.
         //
-        // ВАЖНО: использовать `unmet + excess` как единый показатель НЕЛЬЗЯ. При наличии
-        // Wash-узлов спроса solver может снизить unmet+excess, жертвуя Load-покрытием в
-        // обмен на больший sent_to_Wash (один Load-вагон засчитывается в «unmet» один раз,
-        // а каждый сэкономленный wagon в Wash снижает excess — получается бартер не в нашу
-        // пользу). Разделение на два уровня гарантирует монотонную защиту Load-покрытия.
+        // Почему не `(unmet, excess, cost)`:
+        //   при приоритете unmet первого уровня итерация может принять обмен
+        //   `unmet 5→4, excess 20→21` (total 25 остаётся, Load чуть лучше, excess
+        //   вырос). Пользователь видит в логах рост excess и интерпретирует это
+        //   как «вагоны не распределяются». Принятый вариант жёстко запрещает
+        //   рост суммарного числа нераспределённых вагонов.
+        //
+        // Почему не `obj_cost` напрямую:
+        //   объединённая целевая функция подвержена Wash-tradeoff (при равной
+        //   цене штраф можно «перераспределить» между unmet и excess, поменяв
+        //   Load-покрытие на отправки в Wash). Лекс с `unmet` на 2-м уровне
+        //   это исключает.
         let (cand_unmet, cand_excess) = candidate.unmet_and_excess(demand);
         let (best_unmet, best_excess) = best_state.unmet_and_excess(demand);
+        let cand_total = cand_unmet + cand_excess;
+        let best_total = best_unmet + best_excess;
 
-        let accept = match cand_unmet.cmp(&best_unmet) {
+        let accept = match cand_total.cmp(&best_total) {
             std::cmp::Ordering::Less    => true,
             std::cmp::Ordering::Greater => false,
-            std::cmp::Ordering::Equal   => match cand_excess.cmp(&best_excess) {
+            std::cmp::Ordering::Equal   => match cand_unmet.cmp(&best_unmet) {
                 std::cmp::Ordering::Less    => true,
                 std::cmp::Ordering::Greater => false,
                 std::cmp::Ordering::Equal   => candidate.total_cost + 1e-6 < best_state.total_cost,
@@ -895,14 +914,16 @@ pub fn run_alns(
             destroy_ratio = (destroy_ratio - DESTROY_RATIO_STEP_DOWN)
                 .max(DESTROY_RATIO_MIN);
 
+            let (bu, be) = best_state.unmet_and_excess(demand);
             println!(
-                "[iter {:>5}] ✓ objective -{:.2} | real {:.2} | penalty {:.2} | unmet {} | excess {} | K={:.0}%",
+                "[iter {:>5}] ✓ Δobj -{:.2} | real {:.2} | penalty {:.2} | undist {} (unmet {} + excess {}) | K={:.0}%",
                 stats.iterations,
                 improvement,
                 best_state.total_cost,
                 best_state.penalty_component_cost(demand),
-                best_state.unmet_and_excess(demand).0,
-                best_state.unmet_and_excess(demand).1,
+                bu + be,
+                bu,
+                be,
                 destroy_ratio * 100.0,
             );
         } else {
@@ -919,6 +940,24 @@ pub fn run_alns(
         // Журнал каждые 10 итераций.
         if stats.iterations % 10 == 0 {
             stats.cost_history.push(best_state.total_cost);
+        }
+
+        // Периодический «heartbeat» — даже если давно не было accept,
+        // пользователь видит, что цикл работает и куда движутся метрики
+        // best_state (а не отдельного кандидата — они всегда монотонны).
+        if stats.iterations % 100 == 0 {
+            let (bu, be) = best_state.unmet_and_excess(demand);
+            let elapsed_s = start.elapsed().as_secs_f64();
+            let budget_s  = config.time_budget.as_secs_f64();
+            println!(
+                "[iter {:>5}] · {:>5.1}/{:.0}s | best real {:.2} | undist {} (unmet {} + excess {}) | accept {} | K={:.0}%",
+                stats.iterations,
+                elapsed_s, budget_s,
+                best_state.total_cost,
+                bu + be, bu, be,
+                stats.improvements,
+                destroy_ratio * 100.0,
+            );
         }
     }
 

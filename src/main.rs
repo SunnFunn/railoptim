@@ -358,6 +358,40 @@ async fn main() -> Result<()> {
     );
     solver::print_mip_result(&mip_outcome.optim, &opt_supply, &demand_lp);
 
+    // --- Диагностика MIP: сырой статус HiGHS, gap и покрытие ---
+    // Помогает понять, почему MIP оставляет вагоны нераспределёнными: сразу видно,
+    //   а) остановился ли HiGHS по gap / по time_limit / доказал оптимум,
+    //   б) сколько неиспользованного предложения и неудовлетворённого Load-спроса
+    //      в итоговом инкумбенте,
+    //   в) как это соотносится с greedy — иначе приходится гадать по логам ALNS.
+    {
+        let mip_undist = mip_outcome.optim.penalty_cars as i32 + mip_outcome.optim.excess_supply as i32;
+        let greedy_undist = greedy_result.unmet_demand + greedy_result.excess_supply;
+        println!(
+            "MIP диагностика: status={:?}, gap={:.4}%, undist={} (unmet={}, excess={}), real_cost={:.2}",
+            mip_outcome.status,
+            mip_outcome.mip_gap * 100.0,
+            mip_undist,
+            mip_outcome.optim.penalty_cars as i32,
+            mip_outcome.optim.excess_supply as i32,
+            mip_outcome.optim.total_cost,
+        );
+        println!(
+            "MIP vs greedy:   greedy undist={} (unmet={}, excess={}), real_cost={:.2}  →  Δundist={:+}, Δcost={:+.2}",
+            greedy_undist,
+            greedy_result.unmet_demand,
+            greedy_result.excess_supply,
+            greedy_result.total_cost,
+            mip_undist - greedy_undist,
+            mip_outcome.optim.total_cost - greedy_result.total_cost,
+        );
+        if !mip_outcome.is_globally_optimal() && mip_undist > greedy_undist {
+            println!(
+                "  ВНИМАНИЕ: MIP хуже greedy по числу нераспределённых вагонов. Возможные причины:\n           (а) санитизация warm-start сняла вагоны с пар (0 < sum < MIN_BATCH),\n           (б) PENALTY_COST ниже стоимости единственно допустимых плеч,\n           (в) HiGHS остановился по rel_gap до полного перераспределения."
+            );
+        }
+    }
+
     // -----------------------------------------------------------------------
     // 7. ALNS-оптимизация — только если MIP не нашёл глобальный оптимум.
     //    При `is_globally_optimal() == true` HiGHS гарантирует оптимальность
@@ -377,17 +411,42 @@ async fn main() -> Result<()> {
         }
         (mip_outcome.optim.clone(), mip_outcome.arc_vals.clone(), rem)
     } else {
-        // Берём лучший из (greedy, MIP) по покрытию + стоимости как старт ALNS.
+        // Берём лучший из (greedy, MIP) как старт ALNS. Определение «лучше»
+        // должно совпадать с accept-критерием ALNS — иначе ALNS сразу же
+        // может «откатить» seed обратно:
+        //   1) меньше нераспределённых вагонов (unmet + excess);
+        //   2) при равенстве — меньше unmet (Load-покрытие важнее excess);
+        //   3) при полной ничье — ниже real_cost.
         let mip_as_greedy = solver::arc_vals_to_greedy_result(
             &mip_outcome.arc_vals, &arcs, &opt_supply, &demand_lp,
         );
-        let alns_seed = if (mip_as_greedy.assigned_cars, -mip_as_greedy.total_cost as i64)
-            > (greedy_result.assigned_cars, -greedy_result.total_cost as i64)
-        {
-            &mip_as_greedy
-        } else {
-            &greedy_result
-        };
+        let greedy_undist = greedy_result.unmet_demand + greedy_result.excess_supply;
+        let mip_undist    = mip_as_greedy.unmet_demand + mip_as_greedy.excess_supply;
+
+        // Кортежи для лексикографического сравнения.
+        // Для real_cost используем i64 (округляем до рубля) — для lex ок.
+        let greedy_key = (greedy_undist, greedy_result.unmet_demand, greedy_result.total_cost as i64);
+        let mip_key    = (mip_undist,    mip_as_greedy.unmet_demand, mip_as_greedy.total_cost as i64);
+
+        let alns_seed = if mip_key < greedy_key { &mip_as_greedy } else { &greedy_result };
+        let seed_name = if mip_key < greedy_key { "MIP" } else { "greedy" };
+
+        println!("--- SEED ДЛЯ ALNS ---");
+        println!(
+            "  greedy : undist {:>4} (unmet {:>3} + excess {:>3}), assigned {:>4}, real_cost {:>12.2} руб.",
+            greedy_undist, greedy_result.unmet_demand, greedy_result.excess_supply,
+            greedy_result.assigned_cars, greedy_result.total_cost,
+        );
+        println!(
+            "  MIP    : undist {:>4} (unmet {:>3} + excess {:>3}), assigned {:>4}, real_cost {:>12.2} руб.",
+            mip_undist, mip_as_greedy.unmet_demand, mip_as_greedy.excess_supply,
+            mip_as_greedy.assigned_cars, mip_as_greedy.total_cost,
+        );
+        println!(
+            "  выбран : {} (критерий: min(undist), затем min(unmet), затем min(real_cost))",
+            seed_name,
+        );
+        println!("---------------------");
 
         let alns_config = solver::AlnsConfig::default();
         let alns_result = solver::run_alns(

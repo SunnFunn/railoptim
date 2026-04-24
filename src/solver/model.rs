@@ -36,7 +36,7 @@ pub const PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_PERIOD10_RUB: f64 = 100_000.
 ///
 /// [`super::lp::PENALTY_COST`] — period=10 остаётся конкурентным там, где
 /// period=1 объективно недоступен (нет тарифа, нарушение срока).
-pub const PERIOD10_COST_SURCHARGE_RUB: f64 = 100_000.0;
+pub const PERIOD10_COST_SURCHARGE_RUB: f64 = 500_000.0;
 
 /// Средняя стоимость промывки вагона (руб.), добавляется к тарифу «до станции промывки»
 /// для честного сравнения с назначением под погрузку аналогичного груза.

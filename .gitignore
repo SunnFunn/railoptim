@@ -1,6 +1,6 @@
 /target
 /tmp
 /app
-# /logs
+/logs
 .cursorrules
-# *.log
+*.log

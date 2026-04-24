@@ -12,7 +12,7 @@ use super::lp::{solve, OptimResult, PENALTY_COST};
 // ---------------------------------------------------------------------------
 
 /// Бюджет времени ALNS по умолчанию.
-const DEFAULT_TIME_BUDGET: Duration = Duration::from_secs(300); // 5 минут
+const DEFAULT_TIME_BUDGET: Duration = Duration::from_secs(180); // 3 минуты
 
 /// Начальная доля разрушения (K): 20% назначений.
 const DESTROY_RATIO_INIT: f64 = 0.20;
@@ -845,22 +845,22 @@ impl AlnsResult {
 // Точка входа: запуск полного пайплайна
 // ---------------------------------------------------------------------------
 
-/// Запускает полный пайплайн: жадное решение → ALNS.
-///
-/// Используй эту функцию вместо прямого вызова `solve()` для крупных задач.
-pub fn solve_with_alns(
-    arcs:   &[TaskArc],
-    supply: &[SupplyNode],
-    demand: &[DemandNode],
-    config: &AlnsConfig,
-) -> AlnsResult {
-    use super::greedy::{greedy_initial_solution, print_greedy_result};
-    use super::lp::print_balance;
+// Запускает полный пайплайн: жадное решение → ALNS.
+//
+// Используй эту функцию вместо прямого вызова `solve()` для крупных задач.
+// pub fn solve_with_alns(
+//     arcs:   &[TaskArc],
+//     supply: &[SupplyNode],
+//     demand: &[DemandNode],
+//     config: &AlnsConfig,
+// ) -> AlnsResult {
+//     use super::greedy::{greedy_initial_solution, print_greedy_result};
+//     use super::lp::print_balance;
 
-    print_balance(supply, demand);
+//     print_balance(supply, demand);
 
-    let greedy = greedy_initial_solution(arcs, supply, demand);
-    print_greedy_result(&greedy, supply, demand);
+//     let greedy = greedy_initial_solution(arcs, supply, demand);
+//     print_greedy_result(&greedy, supply, demand);
 
-    run_alns(&greedy, arcs, supply, demand, config)
-}
+//     run_alns(&greedy, arcs, supply, demand, config)
+// }

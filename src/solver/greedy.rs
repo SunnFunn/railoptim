@@ -106,7 +106,7 @@ pub fn greedy_initial_solution(
     // собираем множество s_idx. Это позволяет в O(|узлов на станции|) вычислять
     // суммарный остаток по станции, а не по одному узлу.
     // Дедупликация по s_idx важна: одна пара станций может давать несколько дуг,
-    // если demand-станция имеет несколько узлов (разные периоды).
+    // если demand-станция имеет несколько узлов (разные периоды, разные типы отправок и др.).
     let mut mass_pair_supply_idx: HashMap<(String, String), HashSet<usize>> = HashMap::new();
     for arc in arcs.iter().filter(|a| a.is_mass_unloading) {
         mass_pair_supply_idx

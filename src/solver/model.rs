@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::data::references::normalize_etsng_code;
-use crate::data::wash::{effective_etsng_for_wash_tariff, supply_matches_wash_product_list, supply_needs_wash};
+use crate::data::wash::{effective_etsng_for_wash_tariff, supply_needs_wash};
 use crate::node::{DemandNode, DemandPurpose, SupplyNode, TariffNode};
 
 // ---------------------------------------------------------------------------
@@ -208,7 +208,7 @@ pub fn build_task_arcs(
                 (period_ok, tariff.cost + penalty)
             };
 
-            // Вариант B: надбавка к стоимости дуг period=10 для приоритизации period=1.
+            // надбавка к стоимости дуг period=10 для приоритизации period=1.
             let cost = if s.supply_period == 10 {
                 cost + PERIOD10_COST_SURCHARGE_RUB
             } else {
@@ -296,22 +296,22 @@ fn demand_period_day_bounds(period: u8) -> Option<(i32, i32)> {
 /// Для предложения с [`SupplyNode::supply_period`] == 10 (дислокация 2–10 суток) порожние
 /// образуются на **5 суток позже**, чем у периода 1; то же окно для срока подсыла сдвигается
 /// на −5 суток: проверяется `[L - 3 - 5, U + 3 - 5]`.
-pub(crate) fn delivery_period_ok(
-    delivery_days: i32,
-    demand_period: u8,
-    supply_period: u8,
-) -> bool {
-    let Some((l, u)) = demand_period_day_bounds(demand_period) else {
-        return false;
-    };
-    let mut min_days = l - 3;
-    let mut max_days = u + 3;
-    if supply_period == 10 {
-        min_days -= 5;
-        max_days -= 5;
-    }
-    delivery_days >= min_days && delivery_days <= max_days
-}
+// pub(crate) fn delivery_period_ok(
+//     delivery_days: i32,
+//     demand_period: u8,
+//     supply_period: u8,
+// ) -> bool {
+//     let Some((l, u)) = demand_period_day_bounds(demand_period) else {
+//         return false;
+//     };
+//     let mut min_days = l - 3;
+//     let mut max_days = u + 3;
+//     if supply_period == 10 {
+//         min_days -= 5;
+//         max_days -= 5;
+//     }
+//     delivery_days >= min_days && delivery_days <= max_days
+// }
 
 /// Число полных суток, на которое `delivery_days` выходит за допустимое окно по периоду спроса.
 ///

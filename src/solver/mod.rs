@@ -9,8 +9,7 @@ pub use alns::{AlnsConfig, run_alns};
 pub use greedy::{greedy_initial_solution, greedy_to_arc_vals, print_greedy_result};
 pub use lp::print_balance;
 pub use mip::{
-    DEFAULT_MIP_REL_GAP, DEFAULT_MIP_TIME_LIMIT, MipOutcome, arc_vals_to_greedy_result,
-    print_mip_result, solve_mip,
+    DEFAULT_MIP_TIME_LIMIT, arc_vals_to_greedy_result, print_mip_result, solve_mip,
 };
 pub use model::{
     EMPTY_RUN_AFTER_WASH_TO_LOAD_AVG_COST_RUB, PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_PERIOD10_RUB,

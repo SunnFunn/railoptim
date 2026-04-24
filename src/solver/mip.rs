@@ -98,12 +98,23 @@ impl MipOutcome {
 
 /// Решает задачу как MIP с жёстким ограничением MIN_BATCH на парах станций массовой выгрузки.
 ///
-/// `warm_start` — начальные значения для дуговых переменных (`Vec<f64>` длины `arcs.len()`,
-/// обычно результат [`super::greedy::greedy_to_arc_vals`]). Значения для dummy- и бинарных
-/// переменных достраиваются автоматически.
-///
-/// `rel_gap` — целевой относительный разрыв остановки; при `None` используется
-/// [`DEFAULT_MIP_REL_GAP`].
+/// # Параметры
+/// - `warm_start` — начальные значения дуговых переменных (`Vec<f64>` длины `arcs.len()`,
+///   обычно результат [`super::greedy::greedy_to_arc_vals`]). Значения для dummy- и
+///   бинарных переменных достраиваются автоматически. Warm-start **санируется** перед
+///   передачей в HiGHS: пары с суммарным потоком `0 < sum < B_pair` обнуляются, чтобы
+///   гарантировать совместимость с big-M моделью (иначе HiGHS отвергает warm-start
+///   целиком, и решатель стартует с нуля — это ровно тот случай, когда главный MIP
+///   заметно теряет покрытие на больших задачах).
+/// - `rel_gap` — целевой относительный разрыв остановки; при `None` используется
+///   [`DEFAULT_MIP_REL_GAP`].
+/// - `pair_min_batch_override` — карта `(supply_station, demand_station) → B_pair`,
+///   переопределяющая порог MIN_BATCH для отдельных пар. Используется в MIP-LNS
+///   ([`super::alns::repair_mip`]): если во внешнем state уже есть поток `≥ MIN_BATCH`
+///   по паре, подзадача вправе добавить **любое** количество (в т.ч. `1..MIN_BATCH-1`)
+///   — для таких пар в карту кладётся `B_pair = 0`. Для пар вне карты используется
+///   глобальный [`MIN_BATCH_FROM_MASS_STATION`]. `None` = нет переопределений
+///   (главный MIP запускается именно так).
 ///
 /// Возвращает [`MipOutcome`] со статусом HiGHS, MIP-gap и значениями дуговых переменных
 /// в порядке `arcs`.
@@ -114,6 +125,7 @@ pub fn solve_mip(
     time_limit: Duration,
     warm_start: Option<&[f64]>,
     rel_gap: Option<f64>,
+    pair_min_batch_override: Option<&HashMap<(String, String), i32>>,
 ) -> MipOutcome {
     // -----------------------------------------------------------------------
     // 1. Сбор пар станций массовой выгрузки и суммарного предложения по ним.
@@ -243,10 +255,20 @@ pub fn solve_mip(
         }
     }
 
+    // Вычисление эффективного B_pair для пары: override, если задан; иначе глобальный
+    // MIN_BATCH. Также клиппится station_supply — нет смысла требовать больше, чем вообще
+    // может уйти со станции.
+    let b_pair_effective = |key: &(String, String), station_sup: i32| -> i32 {
+        let base = pair_min_batch_override
+            .and_then(|m| m.get(key).copied())
+            .unwrap_or(MIN_BATCH_FROM_MASS_STATION);
+        base.min(station_sup).max(0)
+    };
+
     // Бинарные y_pair ∈ {0,1} с двумя ограничениями: B*y ≤ Σx, Σx ≤ M*y.
-    for (p_idx, ((ss, _ds), _)) in pair_list.iter().enumerate() {
+    for (p_idx, ((ss, ds), _)) in pair_list.iter().enumerate() {
         let station_sup = *station_supply.get(ss).unwrap_or(&0);
-        let b = MIN_BATCH_FROM_MASS_STATION.min(station_sup) as f64;
+        let b = b_pair_effective(&(ss.clone(), ds.clone()), station_sup) as f64;
         let m = station_sup as f64;
         model.add_integer_column(
             0.0,
@@ -270,16 +292,54 @@ pub fn solve_mip(
 
     if let Some(warm) = warm_start {
         if warm.len() == n_arcs {
+            // --- Санация warm-start ---
+            //
+            // Greedy гарантирует MIN_BATCH на уровне пары ТОЛЬКО если inline-условия
+            // (A) и (B) успевают сработать до исчерпания спроса. На реальных данных
+            // встречаются пары с финальным потоком `0 < sum < MIN_BATCH` (например,
+            // спрос = 2 ваг. удовлетворяется одной дугой из 2 ваг., остальные узлы
+            // той же станции уже не могут ничего добавить). Такие пары инфибельны
+            // в big-M модели — HiGHS отвергает warm-start целиком.
+            //
+            // Обнуляем все дуги проблемной пары в копии warm_start: теряем `sum`
+            // вагонов покрытия на старте, но сохраняем работающий warm-start для
+            // остальной задачи. Это кардинально лучше, чем решение от нуля.
+            let mut warm_clean: Vec<f64> = warm.to_vec();
+            let mut sanitized_pairs = 0_usize;
+            let mut sanitized_cars = 0.0_f64;
+            for ((ss, ds), ids) in &pair_list {
+                let station_sup = *station_supply.get(ss).unwrap_or(&0);
+                let b = b_pair_effective(&(ss.clone(), ds.clone()), station_sup);
+                if b <= 0 {
+                    continue;
+                }
+                let sum: f64 = ids.iter().map(|&i| warm_clean[i]).sum();
+                if sum > 0.5 && sum + 0.5 < b as f64 {
+                    for &i in ids {
+                        warm_clean[i] = 0.0;
+                    }
+                    sanitized_pairs += 1;
+                    sanitized_cars += sum;
+                }
+            }
+            if sanitized_pairs > 0 {
+                eprintln!(
+                    "  MIP warm-start санирован: обнулено {} пар(ы) с нарушением MIN_BATCH \
+                     ({:.0} ваг. потеряно на старте, будут переназначены HiGHS)",
+                    sanitized_pairs, sanitized_cars
+                );
+            }
+
             let total_cols = n_arcs + n_supply + n_load_demand + n_pairs;
             let mut cols_init: Vec<f64> = Vec::with_capacity(total_cols);
 
-            // Arcs: greedy-values как есть.
-            cols_init.extend_from_slice(warm);
+            // Arcs: санированные greedy-values.
+            cols_init.extend_from_slice(&warm_clean);
 
             // Dummy-demand: избыток на каждом узле предложения после greedy.
             let mut supply_sent = vec![0.0_f64; n_supply];
             let mut demand_recv = vec![0.0_f64; demand.len()];
-            for (arc, &q) in arcs.iter().zip(warm.iter()) {
+            for (arc, &q) in arcs.iter().zip(warm_clean.iter()) {
                 supply_sent[arc.s_idx] += q;
                 demand_recv[arc.d_idx] += q;
             }
@@ -296,7 +356,7 @@ pub fn solve_mip(
 
             // y_pair: 1 если greedy сделал хотя бы одно назначение по паре.
             for (_, ids) in &pair_list {
-                let flow: f64 = ids.iter().map(|&i| warm[i]).sum();
+                let flow: f64 = ids.iter().map(|&i| warm_clean[i]).sum();
                 cols_init.push(if flow > 1e-6 { 1.0 } else { 0.0 });
             }
 

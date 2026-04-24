@@ -645,15 +645,19 @@ fn repair_lp(
 ///
 /// # Корректность относительно внешнего state
 /// Подзадача видит `sub_supply.car_count = remaining_supply` (уже учтены назначения
-/// state **вне** подзадачи), поэтому MIN_BATCH в подзадаче применяется к её
-/// локальному потоку. Это безопасно:
-/// - пары без внешнего потока (`state_flow == 0`): MIP в подзадаче корректно
-///   запрещает поток `[1, MIN_BATCH)` — так и нужно;
-/// - пары с внешним потоком `≥ MIN_BATCH` (остаток после destroy/drain):
-///   MIP не знает про внешний поток и может отказаться добавить `1..MIN_BATCH-1`
-///   вагонов в пару, хотя это было бы валидно. Это **эвристическое сужение**,
-///   а не потеря корректности — вагоны остаются в `remaining_supply` и могут
-///   быть назначены на следующей итерации ALNS.
+/// state **вне** подзадачи). Применяется правило:
+///
+/// - **Пары без внешнего потока** (`state_flow == 0`): подзадача использует
+///   стандартный `B_pair = MIN_BATCH` и корректно запрещает поток `[1, MIN_BATCH)`.
+/// - **Пары с внешним потоком `≥ MIN_BATCH`** (остаток после destroy/drain):
+///   в [`solve_mip`] передаётся override `B_pair = 0`. Это означает: подзадача
+///   вправе добавить к паре **любое** количество вагонов (в т.ч. `1..MIN_BATCH-1`),
+///   потому что суммарный поток пары уже `≥ MIN_BATCH` за счёт внешних
+///   назначений в state. Без этого override MIP-LNS систематически «теряет»
+///   вагоны на парах, где внешний поток уже покрыл MIN_BATCH.
+/// - **Пары с внешним потоком `0 < flow < MIN_BATCH`** невозможны: такое состояние
+///   `drain_violated_mass_pairs` эвакуирует сразу после `destroy`, поэтому к моменту
+///   вызова `repair_mip` все пары state — либо пустые, либо `≥ MIN_BATCH`.
 ///
 /// Возвращает `true`, если MIP нашёл хотя бы допустимое решение; `false` —
 /// если решатель завершился без пригодного incumbent (сигнал для fallback
@@ -669,6 +673,26 @@ fn repair_mip(
 ) -> bool {
     use std::collections::HashMap;
 
+    // Суммарный поток по каждой паре массовой выгрузки во внешнем state
+    // (до подзадачи). Нужен, чтобы не навязывать подзадаче MIN_BATCH на парах,
+    // где state уже обеспечил его внешними назначениями.
+    let mut state_flow: HashMap<(String, String), i32> = HashMap::new();
+    for a in &state.assignments {
+        let arc = &arcs[a.arc_id];
+        if arc.is_mass_unloading {
+            *state_flow
+                .entry((arc.supply_station_code.clone(), arc.demand_station_code.clone()))
+                .or_insert(0) += a.quantity;
+        }
+    }
+
+    // Override для solve_mip: B_pair = 0 для пар, где state_flow ≥ MIN_BATCH.
+    let pair_override: HashMap<(String, String), i32> = state_flow
+        .iter()
+        .filter(|&(_, &flow)| flow >= MIN_BATCH_FROM_MASS_STATION)
+        .map(|(pair, _)| (pair.clone(), 0))
+        .collect();
+
     let (sub_arcs, sub_supply, sub_demand, s_map, d_map) =
         build_subproblem(removed, arcs, state, supply, demand);
 
@@ -682,7 +706,11 @@ fn repair_mip(
         .map(|a| ((a.s_idx, a.d_idx), a))
         .collect();
 
-    let outcome = solve_mip(&sub_arcs, &sub_supply, &sub_demand, time_limit, None, Some(rel_gap));
+    let outcome = solve_mip(
+        &sub_arcs, &sub_supply, &sub_demand,
+        time_limit, None, Some(rel_gap),
+        Some(&pair_override),
+    );
 
     if !outcome.has_feasible_solution() {
         return false;
@@ -826,22 +854,32 @@ pub fn run_alns(
         candidate.recalculate_cost();
 
         // --- ACCEPT ---
-        // Лексикографический критерий: сначала покрытие (минимизируем unmet+excess),
-        // при равенстве — реальная стоимость без штрафа. Это честнее, чем агрегированная
-        // objective_cost: при PENALTY_COST=400_000 один «потерянный» вагон перекрывает
-        // экономию в сотни тысяч, но сравнение дробных величин f64 ненадёжно на границе.
+        // Трёхуровневый лексикографический критерий:
+        //   1) unmet  — неудовлетворённый спрос на погрузку (Load). Высший приоритет:
+        //               «распределить вагоны под погрузку» — главная цель сервиса.
+        //   2) excess — незадействованное предложение. Вторичный приоритет: использовать
+        //               больше вагонов (через промывку и т.п.) при равном Load-покрытии.
+        //   3) real_cost — минимизируем стоимость плеч только на шаге «всё остальное равно».
+        //
+        // ВАЖНО: использовать `unmet + excess` как единый показатель НЕЛЬЗЯ. При наличии
+        // Wash-узлов спроса solver может снизить unmet+excess, жертвуя Load-покрытием в
+        // обмен на больший sent_to_Wash (один Load-вагон засчитывается в «unmet» один раз,
+        // а каждый сэкономленный wagon в Wash снижает excess — получается бартер не в нашу
+        // пользу). Разделение на два уровня гарантирует монотонную защиту Load-покрытия.
         let (cand_unmet, cand_excess) = candidate.unmet_and_excess(demand);
         let (best_unmet, best_excess) = best_state.unmet_and_excess(demand);
-        let cand_uncovered = cand_unmet + cand_excess;
-        let best_uncovered = best_unmet + best_excess;
 
-        let accept = match cand_uncovered.cmp(&best_uncovered) {
+        let accept = match cand_unmet.cmp(&best_unmet) {
             std::cmp::Ordering::Less    => true,
             std::cmp::Ordering::Greater => false,
-            std::cmp::Ordering::Equal   => candidate.total_cost + 1e-6 < best_state.total_cost,
+            std::cmp::Ordering::Equal   => match cand_excess.cmp(&best_excess) {
+                std::cmp::Ordering::Less    => true,
+                std::cmp::Ordering::Greater => false,
+                std::cmp::Ordering::Equal   => candidate.total_cost + 1e-6 < best_state.total_cost,
+            },
         };
 
-        // Для логов — агрегированная цель.
+        // Для логов — агрегированная цель (штраф + real_cost).
         let candidate_obj = candidate.objective_cost(demand);
         let best_obj      = best_state.objective_cost(demand);
 

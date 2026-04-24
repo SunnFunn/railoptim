@@ -353,7 +353,8 @@ async fn main() -> Result<()> {
         &demand_lp,
         solver::DEFAULT_MIP_TIME_LIMIT,
         Some(&warm_start),
-        None,
+        None, // rel_gap — берём DEFAULT_MIP_REL_GAP
+        None, // pair_min_batch_override — для главного MIP не нужен
     );
     solver::print_mip_result(&mip_outcome.optim, &opt_supply, &demand_lp);
 

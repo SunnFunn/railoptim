@@ -34,9 +34,13 @@ fi
 
 # --- ПАРАМЕТРЫ ЗАПУСКА ---
 ENV=${1:-"dev"} # По умолчанию dev (для ручного запуска)
+# Второй аргумент: warm-start для MIP (on|off). По умолчанию on (greedy как incumbent).
+# Пример: ./run.sh prod off — запустить без warm-start, чтобы сравнить время.
+MIP_WS_ARG=${2:-"on"}
 PROJECT_ID="a28f09d6-1840-4ac3-ad90-f8c9464facef"
 
 export APP_ENV="$ENV"
+export MIP_WARM_START="$MIP_WS_ARG"
 
 # --- ВЫБОР БИНАРНИКА ---
 if [ "$ENV" == "prod" ]; then
@@ -70,7 +74,7 @@ mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/railoptim_$(date +%F).log"
 
 # --- ЗАПУСК СЕРВИСА (RUST) ---
-echo "[$(date)] Запуск: ${BINARY[*]} (env=$ENV)" | tee -a "$LOG_FILE"
+echo "[$(date)] Запуск: ${BINARY[*]} (env=$ENV, MIP_WARM_START=$MIP_WARM_START)" | tee -a "$LOG_FILE"
 
 if "${BINARY[@]}" &>> "$LOG_FILE"; then
     echo "[SUCCESS] railoptim завершил работу успешно." | tee -a "$LOG_FILE"

@@ -340,23 +340,46 @@ async fn main() -> Result<()> {
     solver::print_greedy_result(&greedy_result, &opt_supply, &demand_lp);
 
     // -----------------------------------------------------------------------
-    // 6. MIP-решение (HiGHS branch-and-cut) с warm-start из жадного решения
-    //    Формулировка big-M: ограничение MIN_BATCH на парах станций массовой
-    //    выгрузки — жёсткое (через бинарные переменные), см. src/solver/mip.rs.
-    //    По истечении лимита HiGHS возвращает лучшее найденное допустимое
-    //    решение (warm-start гарантирует, что оно не хуже greedy).
+    // 6. MIP-решение (HiGHS branch-and-cut).
+    //    По умолчанию используется warm-start из greedy (с санацией пар, где
+    //    нарушен MIN_BATCH). Отключить можно переменной окружения
+    //    `MIP_WARM_START=off` — тогда HiGHS строит решение «с нуля» через
+    //    LP-relaxation. Это режим для бенчмарка: сравнить время и качество.
+    //    Формулировка big-M (бинарные y_pair) — см. src/solver/mip.rs.
     // -----------------------------------------------------------------------
-    let warm_start = solver::greedy_to_arc_vals(&greedy_result, arcs.len());
+    let warm_start_enabled = std::env::var("MIP_WARM_START")
+        .map(|v| {
+            let v = v.trim().to_lowercase();
+            !matches!(v.as_str(), "off" | "0" | "false" | "no" | "none")
+        })
+        .unwrap_or(true);
+    let warm_start_vec = if warm_start_enabled {
+        Some(solver::greedy_to_arc_vals(&greedy_result, arcs.len()))
+    } else {
+        None
+    };
+    println!(
+        "MIP warm-start: {} (управляется env MIP_WARM_START={{on|off}}, по умолч. on)",
+        if warm_start_enabled { "ON (greedy)" } else { "OFF (HiGHS с нуля)" }
+    );
+
+    let mip_t0 = std::time::Instant::now();
     let mip_outcome = solver::solve_mip(
         &arcs,
         &opt_supply,
         &demand_lp,
         solver::DEFAULT_MIP_TIME_LIMIT,
-        Some(&warm_start),
+        warm_start_vec.as_deref(),
         None, // rel_gap — берём DEFAULT_MIP_REL_GAP
         None, // pair_min_batch_override — для главного MIP не нужен
     );
+    let mip_elapsed = mip_t0.elapsed();
     solver::print_mip_result(&mip_outcome.optim, &opt_supply, &demand_lp);
+    println!(
+        "MIP время: {:.2} сек (warm-start: {})",
+        mip_elapsed.as_secs_f64(),
+        if warm_start_enabled { "ON" } else { "OFF" },
+    );
 
     // --- Диагностика MIP: сырой статус HiGHS, gap и покрытие ---
     // Помогает понять, почему MIP оставляет вагоны нераспределёнными: сразу видно,

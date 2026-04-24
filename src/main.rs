@@ -340,20 +340,67 @@ async fn main() -> Result<()> {
     solver::print_greedy_result(&greedy_result, &opt_supply, &demand_lp);
 
     // -----------------------------------------------------------------------
-    // 6. ALNS-оптимизация (Adaptive Large Neighbourhood Search)
+    // 6. MIP-решение (HiGHS branch-and-cut) с warm-start из жадного решения
+    //    Формулировка big-M: ограничение MIN_BATCH на парах станций массовой
+    //    выгрузки — жёсткое (через бинарные переменные), см. src/solver/mip.rs.
+    //    По истечении лимита HiGHS возвращает лучшее найденное допустимое
+    //    решение (warm-start гарантирует, что оно не хуже greedy).
     // -----------------------------------------------------------------------
-    let alns_config = solver::AlnsConfig::default();
-    let alns_result = solver::run_alns(
-        &greedy_result, &arcs, &opt_supply, &demand_lp, &alns_config,
+    let warm_start = solver::greedy_to_arc_vals(&greedy_result, arcs.len());
+    let mip_outcome = solver::solve_mip(
+        &arcs,
+        &opt_supply,
+        &demand_lp,
+        solver::DEFAULT_MIP_TIME_LIMIT,
+        Some(&warm_start),
+        None,
     );
-    let optim_result  = alns_result.to_optim_result(&demand_lp);
-    let solution      = alns_result.arc_vals;
+    solver::print_mip_result(&mip_outcome.optim, &opt_supply, &demand_lp);
+
+    // -----------------------------------------------------------------------
+    // 7. ALNS-оптимизация — только если MIP не нашёл глобальный оптимум.
+    //    При `is_globally_optimal() == true` HiGHS гарантирует оптимальность
+    //    в рамках допустимого разрыва, и запускать ALNS — пустая потеря времени.
+    // -----------------------------------------------------------------------
+    let (optim_result, solution, remaining_supply_vec) = if mip_outcome.is_globally_optimal() {
+        println!(
+            "MIP нашёл глобальный оптимум (gap={:.4}%) — фаза ALNS пропущена.",
+            mip_outcome.mip_gap * 100.0
+        );
+
+        // Восстанавливаем остатки предложения напрямую из MIP-решения:
+        // остатки нужны для post-processing разбивки по периодам поставки.
+        let mut rem: Vec<i32> = opt_supply.iter().map(|s| s.car_count).collect();
+        for (arc, &q) in arcs.iter().zip(mip_outcome.arc_vals.iter()) {
+            rem[arc.s_idx] -= q.round() as i32;
+        }
+        (mip_outcome.optim.clone(), mip_outcome.arc_vals.clone(), rem)
+    } else {
+        // Берём лучший из (greedy, MIP) по покрытию + стоимости как старт ALNS.
+        let mip_as_greedy = solver::arc_vals_to_greedy_result(
+            &mip_outcome.arc_vals, &arcs, &opt_supply, &demand_lp,
+        );
+        let alns_seed = if (mip_as_greedy.assigned_cars, -mip_as_greedy.total_cost as i64)
+            > (greedy_result.assigned_cars, -greedy_result.total_cost as i64)
+        {
+            &mip_as_greedy
+        } else {
+            &greedy_result
+        };
+
+        let alns_config = solver::AlnsConfig::default();
+        let alns_result = solver::run_alns(
+            alns_seed, &arcs, &opt_supply, &demand_lp, &alns_config,
+        );
+        let optim_result = alns_result.to_optim_result(&demand_lp);
+        let solution     = alns_result.arc_vals.clone();
+        let rem          = alns_result.best_state.remaining_supply.clone();
+        (optim_result, solution, rem)
+    };
+
     let mut remaining_supply_p1 = 0_i32;
     let mut remaining_supply_p10 = 0_i32;
-    for (s, &rem) in opt_supply
-        .iter()
-        .zip(alns_result.best_state.remaining_supply.iter())
-    {
+    for (s, &rem) in opt_supply.iter().zip(remaining_supply_vec.iter()) {
         if rem <= 0 {
             continue;
         }

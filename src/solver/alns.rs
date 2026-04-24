@@ -6,6 +6,7 @@ use crate::node::{DemandNode, DemandPurpose, SupplyNode};
 use super::model::{collect_mass_pair_violations, MIN_BATCH_FROM_MASS_STATION, TaskArc};
 use super::greedy::{Assignment, GreedyResult, greedy_to_arc_vals};
 use super::lp::{solve, OptimResult, PENALTY_COST};
+use super::mip::solve_mip;
 
 // ---------------------------------------------------------------------------
 // Константы
@@ -35,6 +36,19 @@ const STAGNATION_THRESHOLD: usize = 50;
 /// Количество соседей при расширении контекста LP-ремонта.
 /// Для каждого разрушенного узла берём N ближайших по стоимости дуг.
 const NEIGHBOUR_ARCS_PER_NODE: usize = 5;
+
+/// Бюджет времени MIP-подзадачи в операторе `repair_mip`.
+///
+/// Должен быть значительно меньше лимита главного MIP-решателя: подзадача
+/// локальна и обычно решается за доли секунды. Значение 3 с — с запасом
+/// на случай большой окрестности разрушения.
+const ALNS_MIP_TIME_LIMIT: Duration = Duration::from_secs(3);
+
+/// Целевой относительный разрыв MIP-подзадачи в `repair_mip`.
+///
+/// 2% — компромисс между скоростью одной итерации ALNS и качеством ремонта.
+/// Главный MIP использует 0.5%, но там мы готовы потратить больше времени.
+const ALNS_MIP_REL_GAP: f64 = 0.02;
 
 // ---------------------------------------------------------------------------
 // Состояние решения
@@ -126,14 +140,22 @@ pub struct AlnsConfig {
     pub destroy_ratio: f64,
     /// Seed для воспроизводимости (None = случайный).
     pub seed: Option<u64>,
+    /// Использовать MIP-ремонт (жёсткий MIN_BATCH) вместо LP-ремонта.
+    ///
+    /// При `true` подзадача решается полноценным MIP — MIN_BATCH учитывается
+    /// в модели, дуги не отбрасываются на этапе применения решения. Рекомендуется
+    /// при наличии пар массовой выгрузки. При `false` используется быстрый LP-ремонт
+    /// с inline-проверками (может терять назначения на парах MIN_BATCH).
+    pub use_mip_repair: bool,
 }
 
 impl Default for AlnsConfig {
     fn default() -> Self {
         AlnsConfig {
-            time_budget:   DEFAULT_TIME_BUDGET,
-            destroy_ratio: DESTROY_RATIO_INIT,
-            seed:          None,
+            time_budget:    DEFAULT_TIME_BUDGET,
+            destroy_ratio:  DESTROY_RATIO_INIT,
+            seed:           None,
+            use_mip_repair: true,
         }
     }
 }
@@ -612,6 +634,101 @@ fn repair_lp(
 }
 
 // ---------------------------------------------------------------------------
+// Оператор ремонта: MIP-подзадача через HiGHS (жёсткий MIN_BATCH)
+// ---------------------------------------------------------------------------
+
+/// MIP-ремонт: решает подзадачу как MIP с big-M формулировкой MIN_BATCH.
+///
+/// В отличие от [`repair_lp`], MIN_BATCH встроен прямо в модель подзадачи через
+/// бинарные переменные — HiGHS не возвращает дробные/невалидные назначения,
+/// поэтому inline-пост-проверки не нужны, а дуги не «теряются» на этапе применения.
+///
+/// # Корректность относительно внешнего state
+/// Подзадача видит `sub_supply.car_count = remaining_supply` (уже учтены назначения
+/// state **вне** подзадачи), поэтому MIN_BATCH в подзадаче применяется к её
+/// локальному потоку. Это безопасно:
+/// - пары без внешнего потока (`state_flow == 0`): MIP в подзадаче корректно
+///   запрещает поток `[1, MIN_BATCH)` — так и нужно;
+/// - пары с внешним потоком `≥ MIN_BATCH` (остаток после destroy/drain):
+///   MIP не знает про внешний поток и может отказаться добавить `1..MIN_BATCH-1`
+///   вагонов в пару, хотя это было бы валидно. Это **эвристическое сужение**,
+///   а не потеря корректности — вагоны остаются в `remaining_supply` и могут
+///   быть назначены на следующей итерации ALNS.
+///
+/// Возвращает `true`, если MIP нашёл хотя бы допустимое решение; `false` —
+/// если решатель завершился без пригодного incumbent (сигнал для fallback
+/// на `repair_greedy`).
+fn repair_mip(
+    state:      &mut AlnsState,
+    removed:    &[Assignment],
+    arcs:       &[TaskArc],
+    supply:     &[SupplyNode],
+    demand:     &[DemandNode],
+    time_limit: Duration,
+    rel_gap:    f64,
+) -> bool {
+    use std::collections::HashMap;
+
+    let (sub_arcs, sub_supply, sub_demand, s_map, d_map) =
+        build_subproblem(removed, arcs, state, supply, demand);
+
+    if sub_arcs.is_empty() {
+        return false;
+    }
+
+    // Индекс оригинальных дуг по (s_idx, d_idx) — чтобы восстановить исходные
+    // arc_id и флаги при применении решения.
+    let orig_arc_idx: HashMap<(usize, usize), &TaskArc> = arcs.iter()
+        .map(|a| ((a.s_idx, a.d_idx), a))
+        .collect();
+
+    let outcome = solve_mip(&sub_arcs, &sub_supply, &sub_demand, time_limit, None, Some(rel_gap));
+
+    if !outcome.has_feasible_solution() {
+        return false;
+    }
+
+    // MIP уже обеспечил MIN_BATCH на уровне модели — применяем результат «как есть»
+    // без inline-проверок. Клиппинг по остаткам нужен только на случай округления
+    // дробных значений (для целочисленных переменных он в норме никогда не срабатывает,
+    // но сохраняем как защиту от погрешностей решателя).
+    for (arc, &qty_f) in sub_arcs.iter().zip(outcome.arc_vals.iter()) {
+        let qty_mip = qty_f.round() as i32;
+        if qty_mip <= 0 {
+            continue;
+        }
+
+        let orig_s = s_map[arc.s_idx];
+        let orig_d = d_map[arc.d_idx];
+
+        let orig_arc = orig_arc_idx.get(&(orig_s, orig_d)).copied();
+        let orig_arc_id = orig_arc.map(|a| a.arc_id).unwrap_or(arc.arc_id);
+
+        let avail_supply = state.remaining_supply[orig_s];
+        let avail_demand = state.remaining_demand[orig_d];
+        let qty = qty_mip.min(avail_supply).min(avail_demand);
+        if qty <= 0 {
+            continue;
+        }
+
+        let arc_cost = qty as f64 * arc.cost;
+        state.remaining_supply[orig_s] -= qty;
+        state.remaining_demand[orig_d] -= qty;
+        state.total_cost += arc_cost;
+
+        state.assignments.push(Assignment {
+            arc_id:     orig_arc_id,
+            s_idx:      orig_s,
+            d_idx:      orig_d,
+            quantity:   qty,
+            total_cost: arc_cost,
+        });
+    }
+
+    true
+}
+
+// ---------------------------------------------------------------------------
 // Главный цикл ALNS
 // ---------------------------------------------------------------------------
 
@@ -692,30 +809,41 @@ pub fn run_alns(
         removed.extend(freed_by_cleanup);
 
         // --- REPAIR ---
-        // Пробуем LP-ремонт; если не удался — откатываемся к жадному.
-        let repaired = repair_lp(&mut candidate, &removed, arcs, supply, demand);
+        // MIP-ремонт (жёсткий MIN_BATCH) если включён; иначе LP-ремонт с inline-проверками.
+        // При неудаче любого из них — жадный fallback.
+        let repaired = if config.use_mip_repair {
+            repair_mip(
+                &mut candidate, &removed, arcs, supply, demand,
+                ALNS_MIP_TIME_LIMIT, ALNS_MIP_REL_GAP,
+            )
+        } else {
+            repair_lp(&mut candidate, &removed, arcs, supply, demand)
+        };
         if !repaired {
             repair_greedy(&mut candidate, &removed, arcs);
         }
 
         candidate.recalculate_cost();
 
-        // --- ACCEPT (только если лучше) ---
-        let candidate_obj = candidate.objective_cost(demand);
-        let best_obj = best_state.objective_cost(demand);
+        // --- ACCEPT ---
+        // Лексикографический критерий: сначала покрытие (минимизируем unmet+excess),
+        // при равенстве — реальная стоимость без штрафа. Это честнее, чем агрегированная
+        // objective_cost: при PENALTY_COST=400_000 один «потерянный» вагон перекрывает
+        // экономию в сотни тысяч, но сравнение дробных величин f64 ненадёжно на границе.
+        let (cand_unmet, cand_excess) = candidate.unmet_and_excess(demand);
+        let (best_unmet, best_excess) = best_state.unmet_and_excess(demand);
+        let cand_uncovered = cand_unmet + cand_excess;
+        let best_uncovered = best_unmet + best_excess;
 
-        let candidate_assigned: i32 = candidate.assignments.iter().map(|a| a.quantity).sum();
-        let best_assigned: i32 = best_state.assignments.iter().map(|a| a.quantity).sum();
-
-        let accept = if candidate_obj + 1e-6 < best_obj {
-            true
-        } else if (candidate_obj - best_obj).abs() <= 1e-6 {
-            // Tie-break: при равной цели предпочитаем большее покрытие, затем меньшую реальную стоимость.
-            (candidate_assigned > best_assigned)
-                || (candidate_assigned == best_assigned && candidate.total_cost < best_state.total_cost)
-        } else {
-            false
+        let accept = match cand_uncovered.cmp(&best_uncovered) {
+            std::cmp::Ordering::Less    => true,
+            std::cmp::Ordering::Greater => false,
+            std::cmp::Ordering::Equal   => candidate.total_cost + 1e-6 < best_state.total_cost,
         };
+
+        // Для логов — агрегированная цель.
+        let candidate_obj = candidate.objective_cost(demand);
+        let best_obj      = best_state.objective_cost(demand);
 
         if accept {
             let improvement = best_obj - candidate_obj;

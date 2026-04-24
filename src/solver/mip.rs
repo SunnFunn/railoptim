@@ -246,9 +246,12 @@ pub fn solve_mip(
         model.add_integer_column(arc.cost, 0.0..=upper, factors);
     }
 
-    // Dummy-demand (поглощает избыток предложения, стоимость 0).
+    // Dummy-demand (поглощает избыток предложения). Штрафуем PENALTY_COST за
+    // каждый вагон в остатке: это симметрично штрафу unmet и заставляет MIP
+    // агрессивно распределять вагоны, даже если единственно доступные дуги —
+    // Wash (ёмкостные, без встречного штрафа за незаполнение).
     for s_row in &supply_rows {
-        model.add_column(0.0, 0.0.., [(*s_row, 1.0), (dummy_demand_row, 1.0)]);
+        model.add_column(PENALTY_COST, 0.0.., [(*s_row, 1.0), (dummy_demand_row, 1.0)]);
     }
 
     // Dummy-supply (штрафное покрытие только для Load-спроса).

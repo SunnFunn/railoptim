@@ -108,12 +108,12 @@ pub fn solve(
     }
 
     // --- Dummy-узел СПРОСА (поглощает незадействованное предложение) ---
-    // Верхняя граница ≤ total_supply: может поглотить до всего предложения, но не обязан.
-    // Стоимость дуг = 0: незадействованные вагоны не штрафуются.
+    // Штрафуем excess_supply симметрично unmet (PENALTY_COST/ваг): модель получит
+    // мотивацию распределять максимум предложения, даже если остались только
+    // Wash-маршруты (которые сами по себе не снижают unmet).
     let dummy_demand_row = model.add_row(..total_supply);
     for s_row in &supply_rows {
-        model.add_column(0.0, 0.0.., [(*s_row, 1.0), (dummy_demand_row, 1.0)]);
-        // model.add_column(PENALTY_COST, 0.0.., [(*s_row, 1.0), (dummy_demand_row, 1.0)]);
+        model.add_column(PENALTY_COST, 0.0.., [(*s_row, 1.0), (dummy_demand_row, 1.0)]);
     }
 
     // --- Dummy-узел ПРЕДЛОЖЕНИЯ (покрывает незакрытый спрос **погрузки**) ---

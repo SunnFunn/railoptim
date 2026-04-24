@@ -10,44 +10,62 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use crate::node::SupplyNode;
+use crate::node::{DemandNode, DemandPurpose, SupplyNode};
 
 use super::lp::PENALTY_COST;
 use super::model::{MIN_BATCH_FROM_MASS_STATION, TaskArc};
-use crate::node::DemandNode;
 
 /// Категория причины, по которой вагоны узла предложения остались нераспределёнными.
+///
+/// ВАЖНО: excess_supply в модели штрафа **не имеет** (dummy_demand cost=0), а
+/// unmet_demand штрафуется `PENALTY_COST` (только для Load-спроса). Поэтому:
+///   * отправка в Load-демы выгодна, если `arc.cost < PENALTY_COST`
+///     (экономия = PENALTY - arc.cost на вагон);
+///   * отправка в Wash-демы **никогда не выгодна** для снижения obj, потому что
+///     Wash не имеет штрафа за незаполнение, а arc всегда имеет ненулевую цену.
 #[derive(Debug)]
 enum ExcessCause {
     /// Из узла вовсе нет допустимых дуг (нет тарифа, несовместим тип вагона, …).
     NoArcs,
 
-    /// Все дуги из узла идут в спросы, которые уже полностью закрыты другими
-    /// назначениями. Свободной «полезной работы» для этих вагонов нет.
-    AllTargetsCovered { arcs_count: usize },
+    /// Все Load-дуги из узла идут в спросы, которые уже полностью закрыты
+    /// другими назначениями (rem_demand=0). Wash-дуги игнорируем — они
+    /// оптимизатору невыгодны по построению модели.
+    AllTargetsCovered {
+        load_arcs: usize,
+        wash_arcs: usize,
+    },
 
-    /// Все дуги с доступным (не полностью закрытым) спросом упираются в
-    /// `MIN_BATCH`: пара `(supply_station, demand_station)` — пара массовой
-    /// выгрузки, и текущий поток в ней `< MIN_BATCH`, а суммарный потенциал
-    /// (текущий поток + доступное) — тоже меньше минимального батча.
+    /// У узла с доступным спросом остались **только Wash-дуги**. MIP корректно
+    /// оставил вагоны в excess: Wash не имеет штрафа, и отправка только
+    /// увеличила бы стоимость.
+    OnlyWashAvailable {
+        wash_arcs: usize,
+        min_arc_cost_per_wagon: f64,
+    },
+
+    /// Все Load-дуги с доступным спросом упираются в `MIN_BATCH`: пара
+    /// `(supply_station, demand_station)` — пара массовой выгрузки, и текущий
+    /// поток в ней `< MIN_BATCH`, а суммарный потенциал тоже меньше.
     MinBatchDeadlock {
         pairs: Vec<(String, String, i32, i32)>, // (ss, ds, current_flow, potential_add)
     },
 
-    /// Есть feasible-дуги с доступным спросом, их минимальная стоимость выше
-    /// `2 * PENALTY_COST` (штраф за excess + штраф за unmet). MIP математически
-    /// правильно предпочёл штраф вместо дорогой маршрутизации.
+    /// Есть feasible Load-дуги с доступным спросом, их минимальная стоимость
+    /// выше `PENALTY_COST`. MIP математически правильно предпочёл штраф unmet
+    /// вместо дорогой маршрутизации.
     PenaltyCheaperThanArcs {
         feasible_arcs_count: usize,
         min_arc_cost_per_wagon: f64,
     },
 
-    /// Есть feasible-дуги дешевле `2 * PENALTY`, но MIP их не задействовал.
-    /// Редкий случай — возможно, использование этих дуг нарушит `MIN_BATCH`
-    /// на соседних парах (каскадный эффект) или упирается в ёмкость Wash.
+    /// Есть feasible Load-дуги дешевле `PENALTY`, но MIP их не задействовал.
+    /// Действительно подозрительный случай — обычно означает каскадный
+    /// эффект `MIN_BATCH` на соседних парах.
     UnexpectedNotUsed {
         feasible_arcs_count: usize,
         min_arc_cost_per_wagon: f64,
+        top_arcs: Vec<(String, f64, i32)>, // (demand_station, cost, d_rem)
     },
 }
 
@@ -140,35 +158,47 @@ pub fn diagnose_excess_supply(
             .map(|v| v.as_slice())
             .unwrap_or(&[]);
 
-        // Разбиваем дуги по статусу.
-        let mut feasible_available: Vec<usize> = Vec::new(); // спрос есть, MIN_BATCH не блокирует
-        let mut min_batch_blocked: Vec<usize>  = Vec::new();
-        let mut target_covered: Vec<usize>     = Vec::new(); // спрос уже закрыт
+        // Разбиваем дуги по статусу. Важно: Wash-дуги рассматриваем отдельно —
+        // их отправка не снижает unmet, поэтому для MIP они «не полезны».
+        let mut load_feasible: Vec<usize> = Vec::new(); // Load-демы, rem>0, MIN_BATCH не блок.
+        let mut wash_feasible: Vec<usize> = Vec::new(); // Wash-демы с rem>0 (информационно).
+        let mut load_min_batch_blocked: Vec<usize> = Vec::new();
+        let mut load_target_covered = 0_usize;
+        let mut wash_target_covered = 0_usize;
 
-        let mut min_arc_cost_feasible = f64::INFINITY;
+        let mut min_arc_cost_load = f64::INFINITY;
+        let mut min_arc_cost_wash = f64::INFINITY;
         let mut min_batch_pairs: HashMap<(String, String), (i32, i32)> = HashMap::new();
 
         for &arc_id in node_arcs {
             let arc = &arcs[arc_id];
+            let d = &demand[arc.d_idx];
             let d_rem = rem_demand[arc.d_idx];
+            let is_wash = d.purpose == DemandPurpose::Wash;
+
             if d_rem <= 0 {
-                target_covered.push(arc_id);
+                if is_wash { wash_target_covered += 1; } else { load_target_covered += 1; }
                 continue;
             }
+
+            if is_wash {
+                wash_feasible.push(arc_id);
+                if arc.cost < min_arc_cost_wash { min_arc_cost_wash = arc.cost; }
+                continue;
+            }
+
+            // Load-дуга с rem>0: проверяем MIN_BATCH (только для mass_unloading).
             if arc.is_mass_unloading {
                 let key = (arc.supply_station_code.clone(), arc.demand_station_code.clone());
                 let flow = pair_flow.get(&key).copied().unwrap_or(0);
                 let add_potential = rem.min(d_rem);
-                // Пара блокируется MIN_BATCH если:
-                //   - текущий поток = 0 и потенциал добавления < MIN_BATCH (нельзя «запустить» пару);
-                //   - или поток > 0, но < MIN_BATCH (MIP поставил y_pair=0 и запретил пару целиком).
                 let blocked = if flow == 0 {
                     add_potential < MIN_BATCH_FROM_MASS_STATION
                 } else {
                     flow < MIN_BATCH_FROM_MASS_STATION
                 };
                 if blocked {
-                    min_batch_blocked.push(arc_id);
+                    load_min_batch_blocked.push(arc_id);
                     min_batch_pairs
                         .entry(key)
                         .and_modify(|e| { e.0 = flow; e.1 = e.1.max(add_potential); })
@@ -176,33 +206,59 @@ pub fn diagnose_excess_supply(
                     continue;
                 }
             }
-            feasible_available.push(arc_id);
-            if arc.cost < min_arc_cost_feasible {
-                min_arc_cost_feasible = arc.cost;
-            }
+            load_feasible.push(arc_id);
+            if arc.cost < min_arc_cost_load { min_arc_cost_load = arc.cost; }
         }
 
-        // Категоризация.
+        // Категоризация. Важно: дешёвая Wash-дуга сама по себе не оправдывает
+        // отправку — учитываем только Load-дуги.
         let cause = if node_arcs.is_empty() {
             ExcessCause::NoArcs
-        } else if feasible_available.is_empty() && min_batch_blocked.is_empty() {
-            ExcessCause::AllTargetsCovered { arcs_count: node_arcs.len() }
-        } else if feasible_available.is_empty() {
+        } else if load_feasible.is_empty() && load_min_batch_blocked.is_empty() {
+            // Нет ни одного Load-направления с доступным спросом. Остались либо
+            // Wash-дуги, либо всё закрыто.
+            if !wash_feasible.is_empty() {
+                ExcessCause::OnlyWashAvailable {
+                    wash_arcs: wash_feasible.len(),
+                    min_arc_cost_per_wagon: min_arc_cost_wash,
+                }
+            } else {
+                ExcessCause::AllTargetsCovered {
+                    load_arcs: load_target_covered,
+                    wash_arcs: wash_target_covered,
+                }
+            }
+        } else if load_feasible.is_empty() {
             ExcessCause::MinBatchDeadlock {
                 pairs: min_batch_pairs
                     .into_iter()
                     .map(|((ss, ds), (f, p))| (ss, ds, f, p))
                     .collect(),
             }
-        } else if min_arc_cost_feasible >= 2.0 * PENALTY_COST {
+        } else if min_arc_cost_load >= PENALTY_COST {
             ExcessCause::PenaltyCheaperThanArcs {
-                feasible_arcs_count: feasible_available.len(),
-                min_arc_cost_per_wagon: min_arc_cost_feasible,
+                feasible_arcs_count: load_feasible.len(),
+                min_arc_cost_per_wagon: min_arc_cost_load,
             }
         } else {
+            // Собираем ТОП-3 самых дешёвых Load-дуги для детальной отладки.
+            let mut top: Vec<(String, f64, i32)> = load_feasible
+                .iter()
+                .map(|&aid| {
+                    let arc = &arcs[aid];
+                    (
+                        demand[arc.d_idx].station_name.clone(),
+                        arc.cost,
+                        rem_demand[arc.d_idx],
+                    )
+                })
+                .collect();
+            top.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+            top.truncate(3);
             ExcessCause::UnexpectedNotUsed {
-                feasible_arcs_count: feasible_available.len(),
-                min_arc_cost_per_wagon: min_arc_cost_feasible,
+                feasible_arcs_count: load_feasible.len(),
+                min_arc_cost_per_wagon: min_arc_cost_load,
+                top_arcs: top,
             }
         };
 
@@ -222,16 +278,24 @@ pub fn diagnose_excess_supply(
                 println!("    ПРИЧИНА: нет ни одной допустимой дуги (нет тарифа, несовм. тип вагона или грязный груз).");
                 add_stat("no_arcs", rem, &mut cause_stats);
             }
-            ExcessCause::AllTargetsCovered { arcs_count } => {
+            ExcessCause::AllTargetsCovered { load_arcs, wash_arcs } => {
                 println!(
-                    "    ПРИЧИНА: все спросы-адресаты уже полностью закрыты (допустимых дуг {}, но rem_demand=0 на всех).",
-                    arcs_count
+                    "    ПРИЧИНА: все Load-спросы уже закрыты (Load-дуг {}, Wash-дуг {}; везде rem_demand=0).",
+                    load_arcs, wash_arcs,
                 );
                 add_stat("targets_covered", rem, &mut cause_stats);
             }
+            ExcessCause::OnlyWashAvailable { wash_arcs, min_arc_cost_per_wagon } => {
+                println!(
+                    "    ПРИЧИНА: доступны только Wash-дуги ({} шт., мин. стоимость {:.0} руб./ваг.). В модели Wash не имеет штрафа за незаполнение,",
+                    wash_arcs, min_arc_cost_per_wagon,
+                );
+                println!("             а excess_supply бесплатный — отправка только увеличила бы obj, MIP корректно оставил вагоны в остатке.");
+                add_stat("only_wash", rem, &mut cause_stats);
+            }
             ExcessCause::MinBatchDeadlock { pairs } => {
                 println!(
-                    "    ПРИЧИНА: MIN_BATCH-тупик ({} пар). Все дуги с доступным спросом — в пары массовой выгрузки с потоком <{}:",
+                    "    ПРИЧИНА: MIN_BATCH-тупик ({} пар). Все Load-дуги с доступным спросом — пары массовой выгрузки с потоком <{}:",
                     pairs.len(), MIN_BATCH_FROM_MASS_STATION
                 );
                 for (ss, ds, flow, potential) in pairs.iter().take(5) {
@@ -249,22 +313,26 @@ pub fn diagnose_excess_supply(
                 min_arc_cost_per_wagon,
             } => {
                 println!(
-                    "    ПРИЧИНА: feasible-дуги есть ({} шт.), но мин. стоимость {:.0} руб./ваг. ≥ 2×PENALTY ({:.0} руб./ваг.). Штраф оптимальнее маршрута.",
+                    "    ПРИЧИНА: Load-дуги есть ({} шт.), но мин. стоимость {:.0} руб./ваг. ≥ PENALTY ({:.0}). Штраф unmet дешевле маршрута.",
                     feasible_arcs_count,
                     min_arc_cost_per_wagon,
-                    2.0 * PENALTY_COST,
+                    PENALTY_COST,
                 );
                 add_stat("penalty_cheaper", rem, &mut cause_stats);
             }
             ExcessCause::UnexpectedNotUsed {
                 feasible_arcs_count,
                 min_arc_cost_per_wagon,
+                top_arcs,
             } => {
                 println!(
-                    "    ПРИЧИНА: feasible-дуги есть ({} шт., мин. стоимость {:.0} руб./ваг. < 2×PENALTY), но MIP их не задействовал.",
-                    feasible_arcs_count, min_arc_cost_per_wagon,
+                    "    ПРИЧИНА: Load-дуги есть ({} шт., мин. стоимость {:.0} руб./ваг. < PENALTY {:.0}), но MIP их не задействовал.",
+                    feasible_arcs_count, min_arc_cost_per_wagon, PENALTY_COST,
                 );
-                println!("             Вероятно, каскадный эффект: использование дуги сломает MIN_BATCH в соседней паре.");
+                println!("             Вероятно, каскадный эффект MIN_BATCH на соседних парах. ТОП-3 самых дешёвых:");
+                for (ds, cost, d_rem) in top_arcs {
+                    println!("      · → {ds}: cost={:.0} руб./ваг., rem_demand={}", cost, d_rem);
+                }
                 add_stat("unexpected", rem, &mut cause_stats);
             }
         }
@@ -276,13 +344,14 @@ pub fn diagnose_excess_supply(
     for (cause, (n_nodes, n_cars)) in &cause_stats {
         let label = match *cause {
             "no_arcs"            => "нет допустимых дуг",
-            "targets_covered"    => "все адресаты закрыты",
+            "targets_covered"    => "все Load-адресаты закрыты",
+            "only_wash"          => "доступны только Wash-дуги",
             "min_batch_deadlock" => "MIN_BATCH-тупик",
             "penalty_cheaper"    => "штраф < стоимости дуг",
-            "unexpected"         => "дуги есть, но не использованы",
+            "unexpected"         => "Load-дуги есть, но не использованы",
             _                    => cause,
         };
-        println!("    {:30} узлов: {:>3}, вагонов: {:>4}", label, n_nodes, n_cars);
+        println!("    {:35} узлов: {:>3}, вагонов: {:>4}", label, n_nodes, n_cars);
     }
     println!("---------------------------------");
 }

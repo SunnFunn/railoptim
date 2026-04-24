@@ -557,10 +557,10 @@ async fn main() -> Result<()> {
         debug::save_checkpoint(&demand_checkpoint, &supply_nodes, Some(&output_records))?;
     println!("Чекпоинт сохранён:           {}", checkpoint.display());
 
-    // match client.send_assignments(&api_records).await {
-    //     Ok(())   => println!("Назначения отправлены в АПИ: OK"),
-    //     Err(e)   => eprintln!("Ошибка отправки в АПИ:       {e}"),
-    // }
+    match client.send_assignments(&api_records).await {
+        Ok(())   => println!("Назначения отправлены в АПИ: OK"),
+        Err(e)   => eprintln!("Ошибка отправки в АПИ:       {e}"),
+    }
 
     // -----------------------------------------------------------------------
     // 8. Вывод результатов в терминал

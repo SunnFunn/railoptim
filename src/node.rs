@@ -12,42 +12,6 @@ pub enum DemandPurpose {
     Wash,
 }
 
-#[derive(Debug, PartialEq, Clone, Ord, PartialOrd, Eq)]
-pub struct Node {
-    pub s_node_id: usize,
-    pub s_station_code: Option<String>,
-    pub s_qty: i32,
-    pub d_node_id: usize,
-    pub d_station_code: Option<String>,
-    pub d_qty: i32,
-    pub node_cost: i32,
-    pub node_qty: i32,
-}
-
-// impl Node {
-//     pub fn new_with_data(
-//         s_id: usize,
-//         s_station_code: Option<String>,
-//         d_id: usize,
-//         d_station_code: Option<String>,
-//         s_qt: i32,
-//         d_qt: i32,
-//         cost: i32,
-//     ) -> Node {
-//         Node {
-//             s_node_id: s_id,
-//             s_station_code,
-//             s_qty: s_qt,
-//             d_node_id: d_id,
-//             d_station_code,
-//             d_qty: d_qt,
-//             node_cost: cost,
-//             node_qty: 0,
-//         }
-//     }
-// }
-
-
 /// Группа вагона в узле предложения.
 #[derive(Debug, Clone, PartialEq)]
 pub enum CarKind {

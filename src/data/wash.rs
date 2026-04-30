@@ -224,9 +224,13 @@ pub fn supply_needs_wash(
     supply_matches_wash_product_list(s, wash_codes)
 }
 
-/// На станции текущего положения вагона (`station_to_code`) есть спрос на погрузку того же ЕТСНГ —
-/// можно обойтись без промывки под тот же груз.
-pub fn load_demand_covers_same_etsng(s: &SupplyNode, load_demands: &[DemandNode]) -> bool {
+/// Есть ли среди узлов погрузки (`purpose == Load`) хотя бы один с тем же ЕТСНГ, что и «грязный»
+/// вагон по правилу [`effective_etsng_for_wash_tariff`] — теоретическая альтернатива промывке
+/// (на любой станции спроса).
+///
+/// Наличие тарифа и прочих ограничений дуги не проверяется: допустимость конкурирующих назначений
+/// определяется в [`crate::solver::model::build_task_arcs`].
+pub fn load_demand_has_matching_dirty_etsng(s: &SupplyNode, load_demands: &[DemandNode]) -> bool {
     let Some(eff) = effective_etsng_for_wash_tariff(s) else {
         return false;
     };
@@ -237,7 +241,6 @@ pub fn load_demand_covers_same_etsng(s: &SupplyNode, load_demands: &[DemandNode]
                 .as_deref()
                 .map(|e| normalize_etsng_code(e) == eff)
                 .unwrap_or(false)
-            && d.station_code.trim() == s.station_to_code.trim()
     })
 }
 

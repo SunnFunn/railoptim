@@ -138,16 +138,17 @@ async fn main() -> Result<()> {
         .sum::<i32>();
     // Итого «грязных», требующих промывки.
     let n_supply_wash_list = n_supply_wash_raw - n_supply_wash_exempt;
+    // По данным спроса Load (любая станция с тем же ЕТСНГ); без проверки тарифа до этих станций.
     let n_supply_wash_skip = opt_supply
         .iter()
         .filter(|s| {
             data::wash::supply_needs_wash(s, &wash_codes, &no_cleaning_roads)
-                && data::wash::load_demand_covers_same_etsng(s, &demand_nodes)
+                && data::wash::load_demand_has_matching_dirty_etsng(s, &demand_nodes)
         })
         .map(|s| s.car_count)
         .sum::<i32>();
     println!(
-        "  предложений с ЕТСНГ из списка промывки: {} вагонов (освобождены по NoCleaningRoads: {}; из них погрузка того же ЕТСНГ — промывка не обязательна: {} вагонов)",
+        "  предложений с ЕТСНГ из списка промывки: {} вагонов (освобождены по NoCleaningRoads: {}; из них есть узел погрузки с тем же ЕТСНГ на любой станции — альтернатива промывке по спросу: {} вагонов)",
         n_supply_wash_list, n_supply_wash_exempt, n_supply_wash_skip
     );
 

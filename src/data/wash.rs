@@ -228,9 +228,19 @@ pub fn supply_needs_wash(
 /// вагон по правилу [`effective_etsng_for_wash_tariff`] — теоретическая альтернатива промывке
 /// (на любой станции спроса).
 ///
+/// Для дорог образования из `NoCleaningRoads` всегда возвращает `false`: такие вагоны промывку не
+/// требуют и допускаются под любой груз — искать «ту же погрузку по ЕТСНГ» не имеет смысла.
+///
 /// Наличие тарифа и прочих ограничений дуги не проверяется: допустимость конкурирующих назначений
 /// определяется в [`crate::solver::model::build_task_arcs`].
-pub fn load_demand_has_matching_dirty_etsng(s: &SupplyNode, load_demands: &[DemandNode]) -> bool {
+pub fn load_demand_has_matching_dirty_etsng(
+    s: &SupplyNode,
+    load_demands: &[DemandNode],
+    no_cleaning_roads: &HashSet<String>,
+) -> bool {
+    if no_cleaning_roads.contains(s.railway_to.trim()) {
+        return false;
+    }
     let Some(eff) = effective_etsng_for_wash_tariff(s) else {
         return false;
     };

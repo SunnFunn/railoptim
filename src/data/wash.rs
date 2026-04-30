@@ -165,8 +165,27 @@ pub fn supply_is_loaded(s: &SupplyNode) -> bool {
         .unwrap_or(false)
 }
 
-/// Код ЕТСНГ для тарифа промывки: груженый — текущий (`FrETSNGCode` в АПИ), порожний — предыдущий груз.
+/// Вагон идёт **порожним** по статусу (`GRPOName`: типично «ПОР», «ПОРОЖН» и т.п.).
+///
+/// У такого вагона в АПИ поле `FrETSNGCode` относится к порожнему пробегу и **не** отражает
+/// «грязность»; для промывки и подборки под спрос с тем же ЕТСНГ используется только предыдущий груз
+/// ([`SupplyNode::prev_etsngs`]).
+pub fn supply_is_porozhniy(s: &SupplyNode) -> bool {
+    s.status.as_deref().map_or(false, |x| {
+        let u = x.to_uppercase();
+        u.contains("ПОР")
+    })
+}
+
+/// Код ЕТСНГ для промывки и совместимости со спросом Load:
+/// - порожний по статусу [`supply_is_porozhniy`] — доминирующий код из [`SupplyNode::prev_etsngs`]
+///   (текущий `FrETSNGCode` порожнего пробега не используется);
+/// - груженый [`supply_is_loaded`] — текущий [`SupplyNode::etsng`] (`FrETSNGCode` в АПИ);
+/// - иначе — предыдущий груз (как для порожнего без явной метки ПОР в статусе).
 pub fn effective_etsng_for_wash_tariff(s: &SupplyNode) -> Option<String> {
+    if supply_is_porozhniy(s) {
+        return dominant_nonempty_code(&s.prev_etsngs);
+    }
     if supply_is_loaded(s) {
         return s
             .etsng

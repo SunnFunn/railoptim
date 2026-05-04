@@ -75,12 +75,15 @@ pub struct MipOutcome {
 impl MipOutcome {
     /// Решение признано глобальным оптимумом (gap ≈ 0 при `HighsModelStatus::Optimal`).
     ///
-    /// При `Optimal` HiGHS гарантирует оптимальность в рамках `mip_rel_gap`; строгое
-    /// `gap < 1e-6` фильтрует случаи, когда решатель остановился по допустимому разрыву.
+    /// При `Optimal` HiGHS гарантирует оптимальность в рамках `mip_rel_gap`. Порог
+    /// согласован с [`DEFAULT_MIP_REL_GAP`]: после введения `PENALTY_EXCESS` (вещественная
+    /// константа для непрерывных dummy-дуг) LP-релаксация и MIP могут расходиться на
+    /// дробных значениях dummy-переменных, давая gap ~1e-5–1e-4. Строгий `1e-6` ложно
+    /// признавал такие решения субоптимальными и запускал лишнюю ALNS-фазу.
     pub fn is_globally_optimal(&self) -> bool {
         self.status == HighsModelStatus::Optimal
             && self.mip_gap.is_finite()
-            && self.mip_gap < 1e-6
+            && self.mip_gap < DEFAULT_MIP_REL_GAP
     }
 
     /// Есть ли в распоряжении допустимое (может быть субоптимальное) решение.

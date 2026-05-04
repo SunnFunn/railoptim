@@ -409,9 +409,15 @@ async fn main() -> Result<()> {
             mip_undist - greedy_undist,
             mip_outcome.optim.total_cost - greedy_result.total_cost,
         );
-        if !mip_outcome.is_globally_optimal() && mip_undist > greedy_undist {
+        // Предупреждаем только если MIP оставил реальный спрос незакрытым (unmet > 0).
+        // Сравнение по undist намеренно убрано: после разделения PENALTY_EXCESS/PENALTY_UNMET
+        // MIP правомерно имеет больший excess (отстой дёшев), но меньший real_cost —
+        // это корректное поведение, а не дефект.
+        let mip_unmet = mip_outcome.optim.penalty_cars as i32;
+        if mip_unmet > 0 {
             println!(
-                "  ВНИМАНИЕ: MIP хуже greedy по числу нераспределённых вагонов. Возможные причины:\n           (а) санитизация warm-start сняла вагоны с пар (0 < sum < MIN_BATCH),\n           (б) PENALTY_UNMET ниже стоимости единственно допустимых плеч,\n           (в) HiGHS остановился по rel_gap до полного перераспределения."
+                "  ВНИМАНИЕ: MIP не закрыл {} ваг. спроса на погрузку (unmet > 0). Возможные причины:\n           (а) PENALTY_UNMET ниже стоимости единственно допустимых плеч,\n           (б) HiGHS остановился по rel_gap до закрытия всего спроса.",
+                mip_unmet,
             );
         }
     }
@@ -452,9 +458,15 @@ async fn main() -> Result<()> {
         // Берём лучший из (greedy, MIP) как старт ALNS. Определение «лучше»
         // должно совпадать с accept-критерием ALNS — иначе ALNS сразу же
         // может «откатить» seed обратно:
-        //   1) меньше нераспределённых вагонов (unmet + excess);
-        //   2) при равенстве — меньше unmet (Load-покрытие важнее excess);
-        //   3) при полной ничье — ниже real_cost.
+        //   1) меньше unmet (неудовлетворённый Load-спрос) — жёсткий приоритет;
+        //   2) при равенстве — ниже real_cost (фактические тарифы);
+        //   3) при полной ничье — меньше excess (косметика, влияние незначительно).
+        //
+        // Важно: «undist = unmet + excess» здесь НЕ используется как первый критерий.
+        // После введения PENALTY_EXCESS << PENALTY_UNMET, MIP правомерно оставляет
+        // больше вагонов в excess (отстой дёшев), поэтому его undist > greedy.undist
+        // — это не дефект, а оптимальное поведение. Критерий min(undist) ошибочно
+        // выбирал бы greedy, игнорируя существенно меньшую реальную стоимость MIP.
         let mip_as_greedy = solver::arc_vals_to_greedy_result(
             &mip_outcome.arc_vals, &arcs, &opt_supply, &demand_lp,
         );
@@ -463,8 +475,8 @@ async fn main() -> Result<()> {
 
         // Кортежи для лексикографического сравнения.
         // Для real_cost используем i64 (округляем до рубля) — для lex ок.
-        let greedy_key = (greedy_undist, greedy_result.unmet_demand, greedy_result.total_cost as i64);
-        let mip_key    = (mip_undist,    mip_as_greedy.unmet_demand, mip_as_greedy.total_cost as i64);
+        let greedy_key = (greedy_result.unmet_demand, greedy_result.total_cost as i64, greedy_result.excess_supply);
+        let mip_key    = (mip_as_greedy.unmet_demand, mip_as_greedy.total_cost as i64, mip_as_greedy.excess_supply);
 
         let alns_seed = if mip_key < greedy_key { &mip_as_greedy } else { &greedy_result };
         let seed_name = if mip_key < greedy_key { "MIP" } else { "greedy" };
@@ -481,7 +493,7 @@ async fn main() -> Result<()> {
             mip_as_greedy.assigned_cars, mip_as_greedy.total_cost,
         );
         println!(
-            "  выбран : {} (критерий: min(undist), затем min(unmet), затем min(real_cost))",
+            "  выбран : {} (критерий: min(unmet), затем min(real_cost), затем min(excess))",
             seed_name,
         );
         println!("---------------------");

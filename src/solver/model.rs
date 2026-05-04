@@ -25,7 +25,7 @@ pub const PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_RUB: f64 = 15_000.0;
 /// Вдвое выше [`PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_RUB`], что отражает бо́льшую
 /// неопределённость в сроках порожних из дислокации. Окно при этом сдвигается на −5 сут.:
 /// проверяется `[L − 3 − 5, U + 3 − 5]`.
-pub const PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_PERIOD10_RUB: f64 = 100_000.0;
+pub const PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_PERIOD10_RUB: f64 = 30_000.0;
 
 /// Надбавка к стоимости дуг предложения с `supply_period == 10` (дислокация 2–10 суток).
 ///
@@ -36,7 +36,7 @@ pub const PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_PERIOD10_RUB: f64 = 100_000.
 ///
 /// [`super::lp::PENALTY_COST`] — period=10 остаётся конкурентным там, где
 /// period=1 объективно недоступен (нет тарифа, нарушение срока).
-pub const PERIOD10_COST_SURCHARGE_RUB: f64 = 500_000.0;
+pub const PERIOD10_COST_SURCHARGE_RUB: f64 = 30_000.0;
 
 /// Средняя стоимость промывки вагона (руб.), добавляется к тарифу «до станции промывки»
 /// для честного сравнения с назначением под погрузку аналогичного груза.

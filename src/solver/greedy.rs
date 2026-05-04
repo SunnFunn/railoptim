@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::node::{DemandNode, DemandPurpose, SupplyNode};
 use super::model::{MIN_BATCH_FROM_MASS_STATION, TaskArc};
@@ -38,6 +38,361 @@ pub struct GreedyResult {
 }
 
 // ---------------------------------------------------------------------------
+// Остаточная сеть и поток (Edmonds–Karp), ограничение сверху
+// ---------------------------------------------------------------------------
+
+#[derive(Clone)]
+struct ResEdge {
+    to: usize,
+    rev: usize,
+    cap: i32,
+}
+
+fn add_residual_edge(g: &mut Vec<Vec<ResEdge>>, fr: usize, to: usize, cap: i32) {
+    let rev_to = g[to].len();
+    let rev_fr = g[fr].len();
+    g[fr].push(ResEdge {
+        to,
+        rev: rev_to,
+        cap,
+    });
+    g[to].push(ResEdge {
+        to: fr,
+        rev: rev_fr,
+        cap: 0,
+    });
+}
+
+/// Ориентированное ребро слева направо: позиция в `g[fr]` после добавления.
+struct TrackedForward {
+    fr: usize,
+    pos: usize,
+    arc_idx: usize,
+    cap0: i32,
+}
+
+/// Максимальный поток из `s` в `t`, не превосходящий `limit`.
+/// Возвращает величину отправленного потока.
+fn max_flow_edmonds_karp_limit(
+    g: &mut Vec<Vec<ResEdge>>,
+    s: usize,
+    t: usize,
+    limit: i32,
+) -> i32 {
+    let n = g.len();
+    let mut flow = 0;
+    while flow < limit {
+        let mut parent: Vec<Option<(usize, usize)>> = vec![None; n]; // (вершина, индекс ребра из неё)
+        let mut q = VecDeque::new();
+        parent[s] = Some((s, 0));
+        q.push_back(s);
+        while let Some(v) = q.pop_front() {
+            if v == t {
+                break;
+            }
+            for (ei, e) in g[v].iter().enumerate() {
+                if e.cap <= 0 {
+                    continue;
+                }
+                if parent[e.to].is_none() {
+                    parent[e.to] = Some((v, ei));
+                    q.push_back(e.to);
+                }
+            }
+        }
+        if parent[t].is_none() {
+            break;
+        }
+
+        let mut add = limit - flow;
+        let mut cur = t;
+        while cur != s {
+            let (pv, ei) = parent[cur].unwrap();
+            add = add.min(g[pv][ei].cap);
+            cur = pv;
+        }
+
+        cur = t;
+        while cur != s {
+            let (pv, ei) = parent[cur].unwrap();
+            let e_to = g[pv][ei].to;
+            let e_rev = g[pv][ei].rev;
+            g[pv][ei].cap -= add;
+            g[e_to][e_rev].cap += add;
+            cur = pv;
+        }
+        flow += add;
+    }
+    flow
+}
+
+/// Жадно набирает по дугам пары (порядок `pair_arc_indices`) до суммарного потока `min_target`.
+/// Изменяет `rem_s`, `rem_d`. Возвращает список ненулевых отгрузок по индексам дуг в `arcs`.
+fn greedy_fill_mass_pair_to_min(
+    pair_arc_indices: &[usize],
+    arcs: &[TaskArc],
+    rem_s: &mut [i32],
+    rem_d: &mut [i32],
+    min_target: i32,
+) -> Option<Vec<(usize, i32)>> {
+    let mut flows: Vec<(usize, i32)> = Vec::new();
+    let mut total_pair = 0;
+
+    while total_pair < min_target {
+        let mut progressed = false;
+        for &arc_idx in pair_arc_indices {
+            let arc = &arcs[arc_idx];
+            let q = rem_s[arc.s_idx]
+                .min(rem_d[arc.d_idx])
+                .min(min_target - total_pair);
+            if q <= 0 {
+                continue;
+            }
+            progressed = true;
+            rem_s[arc.s_idx] -= q;
+            rem_d[arc.d_idx] -= q;
+            total_pair += q;
+            flows.push((arc_idx, q));
+            if total_pair >= min_target {
+                break;
+            }
+        }
+        if total_pair >= min_target {
+            break;
+        }
+        if !progressed {
+            return None;
+        }
+    }
+
+    Some(merge_flows_by_arc(flows))
+}
+
+/// Поток по подграфу пары «массовая выгрузка → погрузка» не более `limit`.
+/// Возвращает объёмы по индексам дуг в `arcs`, если достигнут поток `limit`; иначе `None`.
+fn dinic_like_mass_pair_flow(
+    pair_arc_indices: &[usize],
+    arcs: &[TaskArc],
+    rem_s: &mut [i32],
+    rem_d: &mut [i32],
+    limit: i32,
+) -> Option<Vec<(usize, i32)>> {
+    let mut s_idx_set: Vec<usize> = pair_arc_indices
+        .iter()
+        .map(|&i| arcs[i].s_idx)
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    let mut d_idx_set: Vec<usize> = pair_arc_indices
+        .iter()
+        .map(|&i| arcs[i].d_idx)
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    s_idx_set.sort_unstable();
+    d_idx_set.sort_unstable();
+
+    let ns = s_idx_set.len();
+    let nd = d_idx_set.len();
+    if ns == 0 || nd == 0 {
+        return None;
+    }
+
+    let mut map_s: HashMap<usize, usize> = HashMap::with_capacity(ns);
+    for (i, &sidx) in s_idx_set.iter().enumerate() {
+        map_s.insert(sidx, i);
+    }
+    let mut map_d: HashMap<usize, usize> = HashMap::with_capacity(nd);
+    for (j, &didx) in d_idx_set.iter().enumerate() {
+        map_d.insert(didx, j);
+    }
+
+    let src = 0;
+    let snk = 1 + ns + nd;
+    let n_nodes = snk + 1;
+    let mut g: Vec<Vec<ResEdge>> = vec![Vec::new(); n_nodes];
+
+    for (i, &sidx) in s_idx_set.iter().enumerate() {
+        let cap = rem_s[sidx];
+        if cap > 0 {
+            add_residual_edge(&mut g, src, 1 + i, cap);
+        }
+    }
+    for (j, &didx) in d_idx_set.iter().enumerate() {
+        let cap = rem_d[didx];
+        if cap > 0 {
+            add_residual_edge(&mut g, 1 + ns + j, snk, cap);
+        }
+    }
+
+    let sum_sup: i32 = s_idx_set.iter().map(|&si| rem_s[si]).sum();
+    let sum_dem: i32 = d_idx_set.iter().map(|&di| rem_d[di]).sum();
+    let inf = sum_sup.max(sum_dem).max(limit).max(MIN_BATCH_FROM_MASS_STATION);
+
+    let mut tracked: Vec<TrackedForward> = Vec::with_capacity(pair_arc_indices.len());
+    for &arc_idx in pair_arc_indices {
+        let arc = &arcs[arc_idx];
+        let Some(&si) = map_s.get(&arc.s_idx) else {
+            continue;
+        };
+        let Some(&dj) = map_d.get(&arc.d_idx) else {
+            continue;
+        };
+        let fr = 1 + si;
+        let to = 1 + ns + dj;
+        let pos = g[fr].len();
+        add_residual_edge(&mut g, fr, to, inf);
+        tracked.push(TrackedForward {
+            fr,
+            pos,
+            arc_idx,
+            cap0: inf,
+        });
+    }
+
+    let sent_total = max_flow_edmonds_karp_limit(&mut g, src, snk, limit);
+    if sent_total < limit {
+        return None;
+    }
+
+    let mut raw: Vec<(usize, i32)> = Vec::new();
+    for tr in tracked {
+        let residual = g[tr.fr][tr.pos].cap;
+        let f = tr.cap0.saturating_sub(residual);
+        if f > 0 {
+            raw.push((tr.arc_idx, f));
+        }
+    }
+
+    // Применяем к локальным остаткам для согласованности вызывающего кода
+    for &(arc_idx, q) in &raw {
+        let arc = &arcs[arc_idx];
+        rem_s[arc.s_idx] -= q;
+        rem_d[arc.d_idx] -= q;
+    }
+
+    Some(merge_flows_by_arc(raw))
+}
+
+fn merge_flows_by_arc(mut flows: Vec<(usize, i32)>) -> Vec<(usize, i32)> {
+    flows.sort_unstable_by_key(|x| x.0);
+    let mut out: Vec<(usize, i32)> = Vec::new();
+    for (aid, q) in flows {
+        if q == 0 {
+            continue;
+        }
+        if let Some(last) = out.last_mut() {
+            if last.0 == aid {
+                last.1 += q;
+                continue;
+            }
+        }
+        out.push((aid, q));
+    }
+    out
+}
+
+/// Записывает назначения и счётчики по уже применённому к остаткам потоку активации пары
+/// (`trial_s` / `trial_d` скопированы в `remaining_*` до вызова).
+fn record_assignments_for_mass_pair_flows(
+    flows: &[(usize, i32)],
+    arcs: &[TaskArc],
+    mass_pair_totals: &mut HashMap<(String, String), i32>,
+    key: &(String, String),
+    assignments: &mut Vec<Assignment>,
+    total_cost: &mut f64,
+    assigned_cars: &mut i32,
+) {
+    let mut add_pair = 0;
+    for &(arc_idx, qty) in flows {
+        if qty <= 0 {
+            continue;
+        }
+        let arc = &arcs[arc_idx];
+        add_pair += qty;
+        let arc_cost = qty as f64 * arc.cost;
+        *total_cost += arc_cost;
+        *assigned_cars += qty;
+        assignments.push(Assignment {
+            arc_id: arc.arc_id,
+            s_idx: arc.s_idx,
+            d_idx: arc.d_idx,
+            quantity: qty,
+            total_cost: arc_cost,
+        });
+    }
+    *mass_pair_totals.entry(key.clone()).or_insert(0) += add_pair;
+}
+
+/// Активация пары массовой выгрузки: поток по паре становится ≥ MIN_BATCH или пара запрещается.
+fn try_activate_mass_pair(
+    key: &(String, String),
+    pair_arc_indices: &[usize],
+    arcs: &[TaskArc],
+    remaining_supply: &mut Vec<i32>,
+    remaining_demand: &mut Vec<i32>,
+    mass_pair_totals: &mut HashMap<(String, String), i32>,
+    forbidden_pairs: &mut HashSet<(String, String)>,
+    assignments: &mut Vec<Assignment>,
+    total_cost: &mut f64,
+    assigned_cars: &mut i32,
+) {
+    if pair_arc_indices.is_empty() {
+        forbidden_pairs.insert(key.clone());
+        return;
+    }
+
+    let mut trial_s = remaining_supply.clone();
+    let mut trial_d = remaining_demand.clone();
+
+    if let Some(flows) = greedy_fill_mass_pair_to_min(
+        pair_arc_indices,
+        arcs,
+        &mut trial_s,
+        &mut trial_d,
+        MIN_BATCH_FROM_MASS_STATION,
+    ) {
+        remaining_supply.clone_from(&trial_s);
+        remaining_demand.clone_from(&trial_d);
+        record_assignments_for_mass_pair_flows(
+            &flows,
+            arcs,
+            mass_pair_totals,
+            key,
+            assignments,
+            total_cost,
+            assigned_cars,
+        );
+        return;
+    }
+
+    let mut trial_s = remaining_supply.clone();
+    let mut trial_d = remaining_demand.clone();
+    if let Some(flows) = dinic_like_mass_pair_flow(
+        pair_arc_indices,
+        arcs,
+        &mut trial_s,
+        &mut trial_d,
+        MIN_BATCH_FROM_MASS_STATION,
+    ) {
+        remaining_supply.clone_from(&trial_s);
+        remaining_demand.clone_from(&trial_d);
+        record_assignments_for_mass_pair_flows(
+            &flows,
+            arcs,
+            mass_pair_totals,
+            key,
+            assignments,
+            total_cost,
+            assigned_cars,
+        );
+        return;
+    }
+
+    forbidden_pairs.insert(key.clone());
+}
+
+// ---------------------------------------------------------------------------
 // Жадный алгоритм
 // ---------------------------------------------------------------------------
 
@@ -45,45 +400,29 @@ pub struct GreedyResult {
 ///
 /// # Стратегия
 ///
-/// 1. Отбрасываем дуги с `car_type_ok == false`. Нарушение срока подсыла для части предложений
-///    учтено штрафом в `arc.cost`; жёстко отсеиваются только дуги, не попавшие в граф.
-/// 2. Сортируем допустимые дуги по **стоимости** (возрастание).
-///    Внутри одинаковой стоимости — по `distance` (ближе лучше).
-/// 3. Проходим по отсортированным дугам. Для каждой дуги:
-///    - Проверяем остатки предложения и спроса.
-///    - Для дуг с флагом `is_mass_unloading` применяем двухусловную станционную проверку
-///      [`MIN_BATCH_FROM_MASS_STATION`] (подробнее см. комментарии в теле функции):
-///      (A) `existing + station_remaining < MIN_BATCH` — пара неосуществима;
-///      (B) назначение `qty` оставит застрявший остаток `< MIN_BATCH` и других
-///          узлов на станции недостаточно для его дальнейшего распределения.
-///    - Назначаем `min(remaining_supply[s], remaining_demand[d])` вагонов.
-///    - Обновляем остатки.
-///    - Прекращаем, когда весь спрос на погрузку закрыт или предложение исчерпано.
+/// 1. Отбрасываем дуги с `car_type_ok == false`.
+/// 2. Сортируем допустимые дуги по стоимости, затем по расстоянию.
+/// 3. Для дуг **без** массовой выгрузки — классическое назначение
+///    `min(остаток_s, остаток_d)`.
+/// 4. Для дуг с массовой выгрузкой ограничение
+///    [`MIN_BATCH_FROM_MASS_STATION`] на пару станций `(образование порожнего → погрузка)`:
+///    - индекс всех допустимых дуг по ключу пары станций;
+///    - при первом обращении к паре: набрать не менее MIN_BATCH суммарного потока
+///      (сначала жадно в порядке дуг пары по стоимости; если не удалось — поток в двудольном
+///      подграфе пары, Edmonds–Karp с лимитом MIN_BATCH);
+///    - если достичь MIN_BATCH невозможно, пара помечается запрещённой (нулевой поток);
+///    - при уже активированной паре — обычное добавление по текущей дуге.
 ///
-/// # Почему это хорошая отправная точка для ALNS
-///
-/// - Гарантированно допустимо по типу вагона и по ограничению MIN_BATCH (без пост-обработки).
-/// - Жадная сортировка по стоимости даёт решение, близкое к LP-оптимуму,
-///   но без дробных значений.
-/// - Быстро: O(|arcs| log |arcs|) — миллисекунды даже для 800K дуг.
-///
-/// # Параметры
-/// - `arcs`   — плоский список всех дуг задачи.
-/// - `supply` — узлы предложения (порядок совпадает с `s_idx` в дугах).
-/// - `demand` — узлы спроса (порядок совпадает с `d_idx` в дугах).
+/// Жадность по стоимости глобально сохраняется порядком обхода отсортированных дуг;
+/// внутри пары при активации дуги упорядочены по `(cost, distance)`.
 pub fn greedy_initial_solution(
-    arcs:   &[TaskArc],
+    arcs: &[TaskArc],
     supply: &[SupplyNode],
     demand: &[DemandNode],
 ) -> GreedyResult {
-    // --- Остатки предложения и спроса (мутабельные копии) ---
     let mut remaining_supply: Vec<i32> = supply.iter().map(|s| s.car_count).collect();
     let mut remaining_demand: Vec<i32> = demand.iter().map(|d| d.car_count).collect();
 
-    // --- Фильтрация и сортировка допустимых дуг ---
-    //
-    // Используем индексы, чтобы не клонировать дуги.
-    // Сортировка: (cost ASC, distance ASC).
     let mut feasible_arc_indices: Vec<usize> = arcs
         .iter()
         .enumerate()
@@ -94,35 +433,41 @@ pub fn greedy_initial_solution(
     feasible_arc_indices.sort_unstable_by(|&a, &b| {
         let arc_a = &arcs[a];
         let arc_b = &arcs[b];
-        arc_a.cost
+        arc_a
+            .cost
             .partial_cmp(&arc_b.cost)
             .unwrap_or(std::cmp::Ordering::Equal)
             .then_with(|| arc_a.distance.cmp(&arc_b.distance))
     });
 
-    // --- Пред-вычисление: узлы предложения по парам (mass_station, demand_station) ---
-    //
-    // Для каждой пары (supply_station_code, demand_station_code) из mass_unloading дуг
-    // собираем множество s_idx. Это позволяет в O(|узлов на станции|) вычислять
-    // суммарный остаток по станции, а не по одному узлу.
-    // Дедупликация по s_idx важна: одна пара станций может давать несколько дуг,
-    // если demand-станция имеет несколько узлов (разные периоды, разные типы отправок и др.).
-    let mut mass_pair_supply_idx: HashMap<(String, String), HashSet<usize>> = HashMap::new();
-    for arc in arcs.iter().filter(|a| a.is_mass_unloading) {
-        mass_pair_supply_idx
-            .entry((arc.supply_station_code.clone(), arc.demand_station_code.clone()))
-            .or_default()
-            .insert(arc.s_idx);
+    // Пары станций (массовая выгрузка → погрузка): только допустимые по типу дуги.
+    let mut mass_pair_arc_indices: HashMap<(String, String), Vec<usize>> = HashMap::new();
+    for (i, arc) in arcs.iter().enumerate() {
+        if arc.is_mass_unloading && arc.car_type_ok {
+            mass_pair_arc_indices
+                .entry((arc.supply_station_code.clone(), arc.demand_station_code.clone()))
+                .or_default()
+                .push(i);
+        }
+    }
+    for v in mass_pair_arc_indices.values_mut() {
+        v.sort_unstable_by(|&a, &b| {
+            let arca = &arcs[a];
+            let arcb = &arcs[b];
+            arca
+                .cost
+                .partial_cmp(&arcb.cost)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| arca.distance.cmp(&arcb.distance))
+        });
     }
 
-    // --- Жадное назначение ---
     let mut assignments: Vec<Assignment> = Vec::new();
-    let mut total_cost:    f64 = 0.0;
+    let mut total_cost: f64 = 0.0;
     let mut assigned_cars: i32 = 0;
 
-    // Суммарный назначенный поток по парам (supply_station_code, demand_station_code)
-    // для дуг is_mass_unloading. Используется для проверки MIN_BATCH.
     let mut mass_pair_totals: HashMap<(String, String), i32> = HashMap::new();
+    let mut forbidden_pairs: HashSet<(String, String)> = HashSet::new();
 
     for arc_i in feasible_arc_indices {
         let arc = &arcs[arc_i];
@@ -130,92 +475,92 @@ pub fn greedy_initial_solution(
         let avail_supply = remaining_supply[arc.s_idx];
         let avail_demand = remaining_demand[arc.d_idx];
 
-        // Оба узла должны иметь остаток.
         if avail_supply <= 0 || avail_demand <= 0 {
             continue;
         }
 
-        let qty = avail_supply.min(avail_demand);
-
-        // Станционная inline-проверка ограничения MIN_BATCH.
-        //
-        // Правило: поток по паре (mass_station A → load_station B) должен быть
-        // 0 или >= MIN_BATCH_FROM_MASS_STATION.
-        //
-        // Два условия пропуска дуги:
-        //
-        // (A) existing + station_remaining < MIN_BATCH
-        //     Суммарный остаток по ВСЕМ узлам станции A с дугами до B плюс уже
-        //     назначенный поток — меньше порога. Пара никогда не наберёт допустимую
-        //     партию; дугу пропускаем.
-        //     Это также позволяет объединять мелкие узлы одной станции: если у
-        //     двух узлов по 2 вагона, station_remaining = 4 ≥ 3 → оба разрешены.
-        //
-        // (B) avail_supply > avail_demand
-        //     AND residual (= avail_supply − qty) < MIN_BATCH
-        //     AND (station_remaining − avail_supply) < MIN_BATCH
-        //     После назначения qty вагонов спрос у узла D будет исчерпан (avail_demand
-        //     вагонов ушли, больше места нет), у нас остаётся residual < MIN_BATCH,
-        //     а других узлов на станции A тоже недостаточно чтобы открыть для
-        //     остатка новую валидную пару. Лучше пропустить эту дугу и найти
-        //     destination с avail_demand ≥ avail_supply, куда вагоны уйдут целиком.
-        //
-        // Если ни одно из условий не выполнено — назначение разрешается.
         if arc.is_mass_unloading {
-            let key = (arc.supply_station_code.clone(), arc.demand_station_code.clone());
-            let existing = mass_pair_totals.get(&key).copied().unwrap_or(0);
-            let station_remaining: i32 = mass_pair_supply_idx
-                .get(&key)
-                .map(|nodes| nodes.iter().map(|&si| remaining_supply[si]).sum())
-                .unwrap_or(0);
-
-            // (A) пара неосуществима
-            if existing + station_remaining < MIN_BATCH_FROM_MASS_STATION {
+            let key = (
+                arc.supply_station_code.clone(),
+                arc.demand_station_code.clone(),
+            );
+            if forbidden_pairs.contains(&key) {
                 continue;
             }
 
-            // (B) назначение оставит застрявший остаток < MIN_BATCH
-            let residual = avail_supply - qty; // > 0 только когда avail_supply > avail_demand
-            let other_station_remaining = station_remaining - avail_supply; // ≥ 0
-            if residual > 0
-                && residual < MIN_BATCH_FROM_MASS_STATION
-                && other_station_remaining < MIN_BATCH_FROM_MASS_STATION
-            {
+            let pair_flow = mass_pair_totals.get(&key).copied().unwrap_or(0);
+            if pair_flow == 0 {
+                let Some(pair_indices) = mass_pair_arc_indices.get(&key) else {
+                    forbidden_pairs.insert(key.clone());
+                    continue;
+                };
+                try_activate_mass_pair(
+                    &key,
+                    pair_indices,
+                    arcs,
+                    &mut remaining_supply,
+                    &mut remaining_demand,
+                    &mut mass_pair_totals,
+                    &mut forbidden_pairs,
+                    &mut assignments,
+                    &mut total_cost,
+                    &mut assigned_cars,
+                );
+                if forbidden_pairs.contains(&key) {
+                    continue;
+                }
+            }
+
+            let avail_supply = remaining_supply[arc.s_idx];
+            let avail_demand = remaining_demand[arc.d_idx];
+            if avail_supply <= 0 || avail_demand <= 0 {
+                if demand_load_exhausted(demand, &remaining_demand) {
+                    break;
+                }
                 continue;
             }
+
+            let qty = avail_supply.min(avail_demand);
+            remaining_supply[arc.s_idx] -= qty;
+            remaining_demand[arc.d_idx] -= qty;
+
+            let arc_cost = qty as f64 * arc.cost;
+            total_cost += arc_cost;
+            assigned_cars += qty;
+
+            assignments.push(Assignment {
+                arc_id: arc.arc_id,
+                s_idx: arc.s_idx,
+                d_idx: arc.d_idx,
+                quantity: qty,
+                total_cost: arc_cost,
+            });
 
             *mass_pair_totals.entry(key).or_insert(0) += qty;
+        } else {
+            let qty = avail_supply.min(avail_demand);
+
+            remaining_supply[arc.s_idx] -= qty;
+            remaining_demand[arc.d_idx] -= qty;
+
+            let arc_cost = qty as f64 * arc.cost;
+            total_cost += arc_cost;
+            assigned_cars += qty;
+
+            assignments.push(Assignment {
+                arc_id: arc.arc_id,
+                s_idx: arc.s_idx,
+                d_idx: arc.d_idx,
+                quantity: qty,
+                total_cost: arc_cost,
+            });
         }
 
-        remaining_supply[arc.s_idx] -= qty;
-        remaining_demand[arc.d_idx] -= qty;
-
-        let arc_cost = qty as f64 * arc.cost;
-        total_cost    += arc_cost;
-        assigned_cars += qty;
-
-        assignments.push(Assignment {
-            arc_id:     arc.arc_id,
-            s_idx:      arc.s_idx,
-            d_idx:      arc.d_idx,
-            quantity:   qty,
-            total_cost: arc_cost,
-        });
-
-        // Ранний выход: закрыт спрос на **погрузку** (промывка — опциональная ёмкость).
-        if demand
-            .iter()
-            .zip(remaining_demand.iter())
-            .all(|(d, &r)| d.purpose != DemandPurpose::Load || r <= 0)
-        {
+        if demand_load_exhausted(demand, &remaining_demand) {
             break;
         }
     }
 
-    // Post-processing удалён: inline-проверка выше гарантирует, что все назначения
-    // на mass-unloading дуги уже соответствуют ограничению MIN_BATCH.
-
-    // --- Итоговая статистика ---
     let unmet_demand: i32 = remaining_demand
         .iter()
         .zip(demand.iter())
@@ -233,6 +578,13 @@ pub fn greedy_initial_solution(
     }
 }
 
+fn demand_load_exhausted(demand: &[DemandNode], remaining_demand: &[i32]) -> bool {
+    demand
+        .iter()
+        .zip(remaining_demand.iter())
+        .all(|(d, &r)| d.purpose != DemandPurpose::Load || r <= 0)
+}
+
 // ---------------------------------------------------------------------------
 // Конвертация жадного решения в формат LP (Vec<f64> по arc_id)
 // ---------------------------------------------------------------------------
@@ -240,12 +592,12 @@ pub fn greedy_initial_solution(
 /// Переводит `GreedyResult` в плоский вектор значений переменных LP,
 /// совместимый с форматом `arc_vals` из `solve()`.
 ///
-/// Индекс в векторе = `arc.arc_id`. Значение = количество назначенных вагонов.
+/// Индекс в векторе = `arc.arc_id`. Значение = сумма назначенных вагонов по дуге.
 /// Дуги без назначения получают 0.0.
 pub fn greedy_to_arc_vals(result: &GreedyResult, n_arcs: usize) -> Vec<f64> {
     let mut arc_vals = vec![0.0_f64; n_arcs];
     for assignment in &result.assignments {
-        arc_vals[assignment.arc_id] = assignment.quantity as f64;
+        arc_vals[assignment.arc_id] += assignment.quantity as f64;
     }
     arc_vals
 }
@@ -279,4 +631,159 @@ pub fn print_greedy_result(result: &GreedyResult, supply: &[SupplyNode], demand:
         );
     }
     println!("----------------------");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::node::DemandPurpose;
+
+    fn dummy_supply(count: i32, station_code: &str, s_idx: usize, mass: bool) -> SupplyNode {
+        SupplyNode {
+            s_id: s_idx + 1,
+            kind: crate::node::CarKind::Free,
+            car_count: count,
+            station_to: String::new(),
+            station_to_code: station_code.to_string(),
+            railway_to: String::new(),
+            railway_to_code: None,
+            railway_part_to: None,
+            car_type: Some("Прочие".to_string()),
+            etsng: None,
+            etsng_name: None,
+            repair_status: crate::node::RepairStatus::Ok,
+            status: None,
+            supply_period: 1,
+            car_numbers: vec![],
+            stations_from: vec![],
+            stations_from_code: vec![],
+            railways_from: vec![],
+            railways_from_code: vec![],
+            railways_part_from: vec![],
+            is_mass_unloading: mass,
+            prev_etsngs: vec![],
+            prev_etsng_names: vec![],
+        }
+    }
+
+    fn dummy_demand(count: i32, station_code: &str, d_idx: usize) -> DemandNode {
+        DemandNode {
+            d_id: d_idx + 1,
+            purpose: DemandPurpose::Load,
+            period: 1,
+            station_name: String::new(),
+            station_code: station_code.to_string(),
+            railway_name: String::new(),
+            railway_code: None,
+            railway_part: None,
+            station_to_name: None,
+            station_to_code: None,
+            railway_to_name: None,
+            railway_to_code: None,
+            railway_to_part: None,
+            sender: None,
+            sender_okpo: None,
+            sender_tgnl: None,
+            client: None,
+            customer_okpo: None,
+            recipient: None,
+            loader_to_okpo: None,
+            gng_cargo: None,
+            etsng: None,
+            request_numbers: None,
+            request_dates: None,
+            gu12_number: None,
+            shipping_type: None,
+            car_type: Some("Прочие".to_string()),
+            car_count: count,
+            cars_on_station: 0,
+        }
+    }
+
+    fn arc(
+        id: usize,
+        s: usize,
+        d: usize,
+        from_st: &str,
+        to_st: &str,
+        cost: f64,
+        mass: bool,
+    ) -> TaskArc {
+        TaskArc {
+            arc_id: id,
+            s_idx: s,
+            d_idx: d,
+            supply_station_code: from_st.to_string(),
+            demand_station_code: to_st.to_string(),
+            cost,
+            distance: 1,
+            delivery_days: 1,
+            period_ok: true,
+            car_type_ok: true,
+            is_mass_unloading: mass,
+        }
+    }
+
+    /// Спрос на B только 2 вагона — пара массовой станции не должна открыться (поток 0).
+    #[test]
+    fn mass_pair_forbidden_when_demand_less_than_min_batch() {
+        let supply = vec![
+            dummy_supply(5, "A", 0, true),
+        ];
+        let demand = vec![
+            dummy_demand(2, "B", 0),
+        ];
+        let arcs = vec![
+            arc(0, 0, 0, "A", "B", 100.0, true),
+        ];
+        let r = greedy_initial_solution(&arcs, &supply, &demand);
+        assert_eq!(r.assignments.len(), 0);
+        assert_eq!(r.unmet_demand, 2);
+    }
+
+    /// Два узла спроса на B по 2 вагона — сумма 4 ≥ 3, активация возможна.
+    #[test]
+    fn mass_pair_activates_when_aggregate_demand_ge_min_batch() {
+        let supply = vec![dummy_supply(5, "A", 0, true)];
+        let demand = vec![
+            dummy_demand(2, "B", 0),
+            dummy_demand(2, "B", 1),
+        ];
+        let arcs = vec![
+            arc(0, 0, 0, "A", "B", 10.0, true),
+            arc(1, 0, 1, "A", "B", 20.0, true),
+        ];
+        let r = greedy_initial_solution(&arcs, &supply, &demand);
+        assert!(r.assigned_cars >= MIN_BATCH_FROM_MASS_STATION);
+        assert!(r.unmet_demand <= 1);
+    }
+
+    /// Две станции погрузки: активация первой пары не должна ломать вторую.
+    #[test]
+    fn mass_pair_two_destinations() {
+        let supply = vec![dummy_supply(10, "A", 0, true)];
+        let demand = vec![
+            dummy_demand(3, "B", 0),
+            dummy_demand(3, "C", 1),
+        ];
+        let arcs = vec![
+            arc(0, 0, 0, "A", "B", 5.0, true),
+            arc(1, 0, 1, "A", "C", 6.0, true),
+        ];
+        let r = greedy_initial_solution(&arcs, &supply, &demand);
+        let sum_b: i32 = r
+            .assignments
+            .iter()
+            .filter(|a| a.d_idx == 0)
+            .map(|a| a.quantity)
+            .sum();
+        let sum_c: i32 = r
+            .assignments
+            .iter()
+            .filter(|a| a.d_idx == 1)
+            .map(|a| a.quantity)
+            .sum();
+        assert!(sum_b == 0 || sum_b >= MIN_BATCH_FROM_MASS_STATION);
+        assert!(sum_c == 0 || sum_c >= MIN_BATCH_FROM_MASS_STATION);
+    }
 }

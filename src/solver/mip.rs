@@ -27,7 +27,7 @@ use std::time::Duration;
 use highs::{ColProblem, HighsModelStatus, Row, Sense};
 
 use super::greedy::{Assignment, GreedyResult};
-use super::lp::{OptimResult, PENALTY_COST};
+use super::lp::{OptimResult, PENALTY_EXCESS, PENALTY_UNMET};
 use super::model::{MIN_BATCH_FROM_MASS_STATION, TaskArc};
 use crate::node::{DemandNode, DemandPurpose, SupplyNode};
 
@@ -246,19 +246,19 @@ pub fn solve_mip(
         model.add_integer_column(arc.cost, 0.0..=upper, factors);
     }
 
-    // Dummy-demand (поглощает избыток предложения). Штрафуем PENALTY_COST за
-    // каждый вагон в остатке: это симметрично штрафу unmet и заставляет MIP
-    // агрессивно распределять вагоны, даже если единственно доступные дуги —
-    // Wash (ёмкостные, без встречного штрафа за незаполнение).
+    // Dummy-demand (поглощает избыток предложения / отстой).
+    // PENALTY_EXCESS намеренно ниже минимального реального тарифа: MIP не тянет
+    // дорогие вагоны period=10 под погрузку только ради снижения excess_supply.
     for s_row in &supply_rows {
-        model.add_column(PENALTY_COST, 0.0.., [(*s_row, 1.0), (dummy_demand_row, 1.0)]);
+        model.add_column(PENALTY_EXCESS, 0.0.., [(*s_row, 1.0), (dummy_demand_row, 1.0)]);
     }
 
     // Dummy-supply (штрафное покрытие только для Load-спроса).
+    // PENALTY_UNMET >> max(arc.cost): MIP всегда предпочтёт реальный вагон.
     for (d_row, d) in demand_rows.iter().zip(demand.iter()) {
         if d.purpose == DemandPurpose::Load {
             model.add_column(
-                PENALTY_COST,
+                PENALTY_UNMET,
                 0.0..,
                 [(dummy_supply_row, 1.0), (*d_row, 1.0)],
             );

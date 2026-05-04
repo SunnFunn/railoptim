@@ -34,7 +34,7 @@ pub const PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_PERIOD10_RUB: f64 = 30_000.0
 /// узел спроса и разница в тарифе ≤ `PERIOD10_COST_SURCHARGE_RUB`, решатель
 /// предпочтёт вагон периода 1.
 ///
-/// [`super::lp::PENALTY_COST`] — period=10 остаётся конкурентным там, где
+/// [`super::lp::PENALTY_UNMET`] — period=10 остаётся конкурентным там, где
 /// period=1 объективно недоступен (нет тарифа, нарушение срока).
 pub const PERIOD10_COST_SURCHARGE_RUB: f64 = 30_000.0;
 

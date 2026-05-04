@@ -4,7 +4,7 @@
 //! решатель не распределил оставшиеся вагоны. На реальных данных типовые причины
 //! разделены по категориям (см. [`ExcessCause`]) — это позволяет быстро понять,
 //! нужно ли править входные данные, релаксировать `MIN_BATCH` или поднимать
-//! `PENALTY_COST`.
+//! `PENALTY_UNMET`.
 //!
 //! Функция не меняет состояние — только печатает отчёт в stdout.
 
@@ -12,15 +12,16 @@ use std::collections::{BTreeMap, HashMap};
 
 use crate::node::{DemandNode, DemandPurpose, SupplyNode};
 
-use super::lp::PENALTY_COST;
+use super::lp::PENALTY_UNMET;
 use super::model::{MIN_BATCH_FROM_MASS_STATION, TaskArc};
 
 /// Категория причины, по которой вагоны узла предложения остались нераспределёнными.
 ///
-/// ВАЖНО: excess_supply в модели штрафа **не имеет** (dummy_demand cost=0), а
-/// unmet_demand штрафуется `PENALTY_COST` (только для Load-спроса). Поэтому:
-///   * отправка в Load-демы выгодна, если `arc.cost < PENALTY_COST`
-///     (экономия = PENALTY - arc.cost на вагон);
+/// ВАЖНО: excess_supply штрафуется `PENALTY_EXCESS` (5 000 руб., ниже мин. тарифа),
+/// unmet_demand штрафуется `PENALTY_UNMET` (1 000 000 руб., выше макс. тарифа).
+/// Поэтому:
+///   * отправка в Load-демы выгодна, если `arc.cost < PENALTY_UNMET`
+///     (экономия = PENALTY_UNMET - arc.cost на вагон);
 ///   * отправка в Wash-демы **никогда не выгодна** для снижения obj, потому что
 ///     Wash не имеет штрафа за незаполнение, а arc всегда имеет ненулевую цену.
 #[derive(Debug)]
@@ -52,14 +53,14 @@ enum ExcessCause {
     },
 
     /// Есть feasible Load-дуги с доступным спросом, их минимальная стоимость
-    /// выше `PENALTY_COST`. MIP математически правильно предпочёл штраф unmet
+    /// выше `PENALTY_UNMET`. MIP математически правильно предпочёл штраф unmet
     /// вместо дорогой маршрутизации.
     PenaltyCheaperThanArcs {
         feasible_arcs_count: usize,
         min_arc_cost_per_wagon: f64,
     },
 
-    /// Есть feasible Load-дуги дешевле `PENALTY`, но MIP их не задействовал.
+    /// Есть feasible Load-дуги дешевле `PENALTY_UNMET`, но MIP их не задействовал.
     /// Действительно подозрительный случай — обычно означает каскадный
     /// эффект `MIN_BATCH` на соседних парах.
     UnexpectedNotUsed {
@@ -235,7 +236,7 @@ pub fn diagnose_excess_supply(
                     .map(|((ss, ds), (f, p))| (ss, ds, f, p))
                     .collect(),
             }
-        } else if min_arc_cost_load >= PENALTY_COST {
+        } else if min_arc_cost_load >= PENALTY_UNMET {
             ExcessCause::PenaltyCheaperThanArcs {
                 feasible_arcs_count: load_feasible.len(),
                 min_arc_cost_per_wagon: min_arc_cost_load,
@@ -313,10 +314,10 @@ pub fn diagnose_excess_supply(
                 min_arc_cost_per_wagon,
             } => {
                 println!(
-                    "    ПРИЧИНА: Load-дуги есть ({} шт.), но мин. стоимость {:.0} руб./ваг. ≥ PENALTY ({:.0}). Штраф unmet дешевле маршрута.",
+                    "    ПРИЧИНА: Load-дуги есть ({} шт.), но мин. стоимость {:.0} руб./ваг. ≥ PENALTY_UNMET ({:.0}). Штраф unmet дешевле маршрута.",
                     feasible_arcs_count,
                     min_arc_cost_per_wagon,
-                    PENALTY_COST,
+                    PENALTY_UNMET,
                 );
                 add_stat("penalty_cheaper", rem, &mut cause_stats);
             }
@@ -326,8 +327,8 @@ pub fn diagnose_excess_supply(
                 top_arcs,
             } => {
                 println!(
-                    "    ПРИЧИНА: Load-дуги есть ({} шт., мин. стоимость {:.0} руб./ваг. < PENALTY {:.0}), но MIP их не задействовал.",
-                    feasible_arcs_count, min_arc_cost_per_wagon, PENALTY_COST,
+                    "    ПРИЧИНА: Load-дуги есть ({} шт., мин. стоимость {:.0} руб./ваг. < PENALTY_UNMET {:.0}), но MIP их не задействовал.",
+                    feasible_arcs_count, min_arc_cost_per_wagon, PENALTY_UNMET,
                 );
                 println!("             Вероятно, каскадный эффект MIN_BATCH на соседних парах. ТОП-3 самых дешёвых:");
                 for (ds, cost, d_rem) in top_arcs {

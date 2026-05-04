@@ -5,7 +5,7 @@ use rand::prelude::*;
 use crate::node::{DemandNode, DemandPurpose, SupplyNode};
 use super::model::{collect_mass_pair_violations, MIN_BATCH_FROM_MASS_STATION, TaskArc};
 use super::greedy::{Assignment, GreedyResult, greedy_to_arc_vals};
-use super::lp::{solve, OptimResult, PENALTY_COST};
+use super::lp::{solve, OptimResult, PENALTY_EXCESS, PENALTY_UNMET};
 use super::mip::solve_mip;
 
 // ---------------------------------------------------------------------------
@@ -99,11 +99,13 @@ impl AlnsState {
         self.total_cost = self.assignments.iter().map(|a| a.total_cost).sum();
     }
 
-    /// Полная целевая функция, согласованная с LP:
-    /// стоимость реальных дуг + штраф за незакрытый спрос + штраф за избыток предложения.
+    /// Полная целевая функция, согласованная с LP/MIP:
+    /// стоимость реальных дуг + PENALTY_UNMET * unmet_demand + PENALTY_EXCESS * excess_supply.
     pub fn objective_cost(&self, demand: &[DemandNode]) -> f64 {
         let (unmet_demand, excess_supply) = self.unmet_and_excess(demand);
-        self.total_cost + PENALTY_COST * (unmet_demand + excess_supply) as f64
+        self.total_cost
+            + PENALTY_UNMET * unmet_demand as f64
+            + PENALTY_EXCESS * excess_supply as f64
     }
 
     /// Текущие остатки по спросу и предложению.
@@ -124,7 +126,7 @@ impl AlnsState {
     /// Штрафная часть целевой функции (без реальной стоимости дуг).
     pub fn penalty_component_cost(&self, demand: &[DemandNode]) -> f64 {
         let (unmet_demand, excess_supply) = self.unmet_and_excess(demand);
-        PENALTY_COST * (unmet_demand + excess_supply) as f64
+        PENALTY_UNMET * unmet_demand as f64 + PENALTY_EXCESS * excess_supply as f64
     }
 }
 
@@ -865,7 +867,7 @@ pub fn run_alns(
         //      и незакрытый Load-спрос, и неиспользованное предложение. Главный
         //      приоритет: итерация НЕ должна увеличивать суммарное количество
         //      нераспределённых вагонов. Совпадает со штрафным компонентом модели
-        //      (PENALTY_COST * (unmet + excess)).
+        //      (PENALTY_UNMET * unmet + PENALTY_EXCESS * excess).
         //   2) unmet — при равной сумме предпочитаем меньший незакрытый Load-спрос
         //      (Load-покрытие важнее excess: «куда-то отправить» всегда можно в
         //      Wash или в следующую итерацию, а недовоз — прямая потеря клиента).

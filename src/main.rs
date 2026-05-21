@@ -16,8 +16,16 @@ async fn main() -> Result<()> {
     // -----------------------------------------------------------------------
     // 1. Конфигурация и API-клиент
     // -----------------------------------------------------------------------
-    let cfg    = Config::from_env()?;
-    let client = ApiClient::new(&cfg.api_base_url, &cfg.api_token)?;
+    // cfg живёт только внутри блока: токен копируется в default headers клиента,
+    // затем SecretString затирается при drop. Authorization в client не зависит от env.
+    let client = {
+        let cfg = Config::from_env()?;
+        ApiClient::new(&cfg.api_base_url, &cfg.api_token)?
+    };
+    // Убираем токен из environ процесса (читается через /proc); на запросы не влияет.
+    // SAFETY: вызывается один раз при старте; после этого код не читает API_TOKEN из env,
+    // авторизация только через default headers в `client`.
+    unsafe { std::env::remove_var("API_TOKEN") };
 
     // -----------------------------------------------------------------------
     // 2. Получение данных спроса и предложения

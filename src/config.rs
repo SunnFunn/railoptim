@@ -44,10 +44,11 @@ impl Config {
             source: e,
         })?;
 
-        let api_token = SecretString::new(raw_token.clone().into());
+        // let api_token = SecretString::new(raw_token.clone().into());
+        let api_token = SecretString::new(raw_token.into());
 
         // Затираем временную копию из стека сразу после обёртки в SecretString.
-        raw_token.zeroize();
+        // raw_token.zeroize();
 
         Ok(Self {
             api_base_url,

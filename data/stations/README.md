@@ -20,8 +20,9 @@ cargo test esr::
 ## Пункт 2 — выгрузка NSI.Station (MSSQL)
 
 ```bash
-pip install -r scripts/stations/requirements-stations.txt
+pip install -r scripts/stations/requirements-stations.txt   # pyarrow для parquet
 
+# MSSQL: pymssql уже нужен для src/data/dislocations.py — отдельно не ставим.
 # Прод: переменные как у dislocations.py (Infisical / run.sh окружение)
 python3 scripts/stations/fetch_nsi_from_mssql.py
 

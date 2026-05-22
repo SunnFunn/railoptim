@@ -22,7 +22,10 @@ def env(key: str, default: str | None = None) -> str | None:
 def mssql_connect() -> Any:
     """Возвращает pymssql connection или завершает процесс с кодом 1."""
     if pymssql is None:
-        print("fetch_nsi: установите pymssql (scripts/stations/requirements-stations.txt)", file=sys.stderr)
+        print(
+            "fetch_nsi: нужен pymssql (тот же пакет, что для src/data/dislocations.py)",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     server = env("MSSQL_SERVER") or env("MSSQL_HOST") or env("MSSQL_SERVER_MSKASUVPL")

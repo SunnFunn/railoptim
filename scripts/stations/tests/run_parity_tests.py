@@ -7,11 +7,11 @@ import json
 import sys
 from pathlib import Path
 
-from country import EsrCountryIndex
-from normalize import normalize_esr6, validate_esr6_checksum
+from stations_etl.country import EsrCountryIndex
+from stations_etl.normalize import normalize_esr6, validate_esr6_checksum
+from stations_etl.paths import ESR_COUNTRY_PREFIXES
 
-ROOT = Path(__file__).resolve().parents[2]
-FIXTURE = Path(__file__).resolve().parent / "test_normalize_parity.json"
+FIXTURE = Path(__file__).resolve().parent / "fixtures" / "test_normalize_parity.json"
 
 
 def main() -> int:
@@ -35,7 +35,7 @@ def main() -> int:
             print(f"checksum FAIL invalid: {code}")
             errors += 1
 
-    idx = EsrCountryIndex.load(ROOT / "data/stations/esr_country_prefixes.csv")
+    idx = EsrCountryIndex.load(ESR_COUNTRY_PREFIXES)
     assert idx.classify("160001") is not None
     assert idx.classify("160001").country_hint == "BY"
     assert idx.classify("194013").region_group == "ru"

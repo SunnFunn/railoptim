@@ -13,5 +13,7 @@ data/stations/build_report.json
 data/stations/unmatched_esr6.csv
 data/stations/osm_esr_index.parquet
 data/stations/osm_index_report.json
+data/stations/sbin_esr_index.parquet
+data/stations/sbin_index_report.json
 data/stations/stations_geo.sqlite
 data/stations/cross_border_esr6_conflicts.csv

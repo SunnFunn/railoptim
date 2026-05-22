@@ -6,9 +6,8 @@ import csv
 from dataclasses import dataclass
 from pathlib import Path
 
-from normalize import normalize_esr6
-
-DEFAULT_PREFIXES_PATH = Path(__file__).resolve().parents[2] / "data/stations/esr_country_prefixes.csv"
+from stations_etl.normalize import normalize_esr6
+from stations_etl.paths import ESR_COUNTRY_PREFIXES
 
 
 @dataclass(frozen=True)
@@ -40,7 +39,7 @@ class EsrCountryIndex:
 
     @classmethod
     def load(cls, path: Path | None = None) -> EsrCountryIndex:
-        path = path or DEFAULT_PREFIXES_PATH
+        path = path or ESR_COUNTRY_PREFIXES
         rules: list[EsrCountryRule] = []
         with path.open(encoding="utf-8", newline="") as f:
             for row in csv.reader(f):

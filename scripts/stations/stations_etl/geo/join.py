@@ -71,86 +71,125 @@ class JoinResult:
     invalid_coords: list[dict[str, str]] = field(default_factory=list)
 
 
+def _index_coord_rows(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    out: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        esr6 = str(row.get("esr6", "")).strip()
+        if len(esr6) == 6 and esr6.isdigit():
+            out[esr6] = row
+    return out
+
+
+def _row_from_coord(
+    nsi: dict[str, Any],
+    coord: dict[str, Any],
+    *,
+    built_at: str,
+) -> tuple[GeoStationRow | None, dict[str, Any] | None]:
+    """Собрать GeoStationRow или вернуть причину unmatched/invalid."""
+    esr6 = str(nsi.get("esr6", "")).strip()
+    name = str(nsi.get("name_nsi", "")).strip()
+    country_hint = str(nsi.get("country_hint", ""))
+    region_group = str(nsi.get("region_group", "unknown"))
+
+    lat, lon = coord.get("lat"), coord.get("lon")
+    if not is_valid_coord(lat, lon):
+        return None, {
+            "kind": "invalid_coords",
+            "esr6": esr6,
+            "name_nsi": name,
+            "lat": str(lat),
+            "lon": str(lon),
+            "region_group": region_group,
+        }
+
+    confidence = float(coord.get("confidence", 1.0) or 1.0)
+    cross_border: dict[str, Any] | None = None
+    osm_region = str(coord.get("region_group", ""))
+    if osm_region and region_group and osm_region != region_group:
+        cross_border = {
+            "esr6": esr6,
+            "name_nsi": name,
+            "nsi_region_group": region_group,
+            "osm_region_group": osm_region,
+            "pbf_region": str(coord.get("pbf_region", "")),
+            "country_hint": country_hint,
+        }
+        confidence = min(confidence, 0.8)
+
+    osm_id_raw = coord.get("osm_id")
+    osm_id: int | None
+    try:
+        osm_id = int(osm_id_raw) if osm_id_raw is not None else None
+    except (TypeError, ValueError):
+        osm_id = None
+
+    row = GeoStationRow(
+        esr6=esr6,
+        name=name,
+        lat=float(lat),
+        lon=float(lon),
+        country_hint=country_hint,
+        region_group=region_group,
+        source=str(coord.get("source", "osm_pbf")),
+        match_method=str(coord.get("match_method", coord.get("tag_name", ""))),
+        osm_id=osm_id,
+        name_osm=str(coord.get("name_osm", "")),
+        confidence=confidence,
+        built_at=built_at,
+    )
+    return row, cross_border
+
+
 def join_nsi_osm(
     nsi_rows: list[dict[str, Any]],
     osm_rows: list[dict[str, Any]],
+    sbin_rows: list[dict[str, Any]] | None = None,
     *,
     built_at: str | None = None,
 ) -> JoinResult:
+    """Join NSI с координатами: Tier1 osm_pbf, Tier2 osm_sbin (fallback)."""
     built_at = built_at or datetime.now(timezone.utc).isoformat()
-    osm_by_esr: dict[str, dict[str, Any]] = {}
-    for row in osm_rows:
-        esr6 = str(row.get("esr6", "")).strip()
-        if len(esr6) == 6 and esr6.isdigit():
-            osm_by_esr[esr6] = row
+    osm_by_esr = _index_coord_rows(osm_rows)
+    sbin_by_esr = _index_coord_rows(sbin_rows or [])
 
     result = JoinResult()
     for nsi in nsi_rows:
         esr6 = str(nsi.get("esr6", "")).strip()
         name = str(nsi.get("name_nsi", "")).strip()
-        country_hint = str(nsi.get("country_hint", ""))
         region_group = str(nsi.get("region_group", "unknown"))
 
-        osm = osm_by_esr.get(esr6)
-        if osm is None:
+        coord = osm_by_esr.get(esr6)
+        if coord is None:
+            coord = sbin_by_esr.get(esr6)
+
+        if coord is None:
             result.unmatched.append(
                 {"esr6": esr6, "name_nsi": name, "region_group": region_group}
             )
             continue
 
-        lat, lon = osm.get("lat"), osm.get("lon")
-        if not is_valid_coord(lat, lon):
-            result.invalid_coords.append(
-                {
-                    "esr6": esr6,
-                    "name_nsi": name,
-                    "lat": str(lat),
-                    "lon": str(lon),
-                }
-            )
+        row, extra = _row_from_coord(nsi, coord, built_at=built_at)
+        if row is None:
+            assert extra is not None
+            if extra["kind"] == "invalid_coords":
+                result.invalid_coords.append(
+                    {
+                        "esr6": extra["esr6"],
+                        "name_nsi": extra["name_nsi"],
+                        "lat": extra["lat"],
+                        "lon": extra["lon"],
+                    }
+                )
             result.unmatched.append(
                 {"esr6": esr6, "name_nsi": name, "region_group": region_group}
             )
             continue
 
-        confidence = float(osm.get("confidence", 1.0) or 1.0)
-        osm_region = str(osm.get("region_group", ""))
-        if osm_region and region_group and osm_region != region_group:
-            result.cross_border.append(
-                {
-                    "esr6": esr6,
-                    "name_nsi": name,
-                    "nsi_region_group": region_group,
-                    "osm_region_group": osm_region,
-                    "pbf_region": str(osm.get("pbf_region", "")),
-                    "country_hint": country_hint,
-                }
-            )
-            confidence = min(confidence, 0.8)
+        if extra is not None:
+            result.cross_border.append(extra)
 
-        osm_id_raw = osm.get("osm_id")
-        osm_id: int | None
-        try:
-            osm_id = int(osm_id_raw) if osm_id_raw is not None else None
-        except (TypeError, ValueError):
-            osm_id = None
-
-        result.rows.append(
-            GeoStationRow(
-                esr6=esr6,
-                name=name,
-                lat=float(lat),
-                lon=float(lon),
-                country_hint=country_hint,
-                region_group=region_group,
-                source=str(osm.get("source", "osm_pbf")),
-                match_method=str(osm.get("match_method", osm.get("tag_name", ""))),
-                osm_id=osm_id,
-                name_osm=str(osm.get("name_osm", "")),
-                confidence=confidence,
-                built_at=built_at,
-            )
-        )
+        result.rows.append(row)
 
     return result
 
@@ -245,12 +284,15 @@ def build_report(
     join: JoinResult,
     nsi_rows: list[dict[str, Any]],
     osm_rows: list[dict[str, Any]],
+    sbin_rows: list[dict[str, Any]] | None = None,
     *,
     built_at: str,
     paths: dict[str, str],
 ) -> dict[str, Any]:
     nsi_unique = len(nsi_rows)
     osm_unique = len({str(r.get("esr6")) for r in osm_rows if r.get("esr6")})
+    sbin_list = sbin_rows or []
+    sbin_unique = len({str(r.get("esr6")) for r in sbin_list if r.get("esr6")})
     matched_esr = {r.esr6 for r in join.rows}
     matched_n = len(join.rows)
     coverage_pct = round(100.0 * matched_n / nsi_unique, 2) if nsi_unique else 0.0
@@ -260,8 +302,12 @@ def build_report(
     by_pbf: Counter[str] = Counter()
     osm_by_esr = {str(r["esr6"]): r for r in osm_rows if r.get("esr6")}
     for esr6 in matched_esr:
-        pbf = str(osm_by_esr.get(esr6, {}).get("pbf_region", "unknown"))
-        by_pbf[pbf] += 1
+        if esr6 in osm_by_esr:
+            pbf = str(osm_by_esr[esr6].get("pbf_region", "unknown"))
+            by_pbf[pbf] += 1
+
+    matched_via_sbin = sum(1 for r in join.rows if r.source == "osm_sbin")
+    matched_via_pbf = sum(1 for r in join.rows if r.source == "osm_pbf")
 
     return {
         "built_at": built_at,
@@ -269,7 +315,11 @@ def build_report(
         "nsi_unique_esr6": nsi_unique,
         "osm_index_size": len(osm_rows),
         "osm_unique_esr6": osm_unique,
+        "sbin_index_size": len(sbin_list),
+        "sbin_unique_esr6": sbin_unique,
         "matched_with_coords": matched_n,
+        "matched_via_osm_pbf": matched_via_pbf,
+        "matched_via_osm_sbin": matched_via_sbin,
         "coverage_pct": coverage_pct,
         "coverage_by_region_group": coverage_by_region_group(nsi_rows, matched_esr),
         "unmatched_count": len(join.unmatched),

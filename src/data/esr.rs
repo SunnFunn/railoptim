@@ -123,7 +123,8 @@ mod tests {
     use std::path::PathBuf;
 
     fn parity_fixture() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("scripts/stations/test_normalize_parity.json")
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("scripts/stations/tests/fixtures/test_normalize_parity.json")
     }
 
     fn prefixes_path() -> PathBuf {

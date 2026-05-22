@@ -8,8 +8,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from country import EsrCountryIndex
-from normalize import normalize_esr6, validate_esr6_checksum
+from stations_etl.country import EsrCountryIndex
+from stations_etl.normalize import normalize_esr6, validate_esr6_checksum
 
 _WHITESPACE = re.compile(r"\s+")
 

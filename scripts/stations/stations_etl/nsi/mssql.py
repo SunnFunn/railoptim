@@ -11,13 +11,12 @@ try:
 except ImportError:
     pymssql = None  # type: ignore[assignment]
 
-# Имена секретов в Infisical (run.sh → infisical secrets --env …).
 MSSQL_ENV = (
     "MSSQL_SERVER_MSKASUVPL",
     "DOMAIN_USER",
     "PASSWORD",
     "MSSQL_DB_ASUVP",
-    "MSSQL_DOMAIN",  # опционально, префикс к логину
+    "MSSQL_DOMAIN",
 )
 
 

@@ -1,5 +1,8 @@
 # Общие функции для scripts/stations/*.sh (source, не запускать напрямую).
 
+# shellcheck source=_python_env.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_python_env.sh"
+
 STATIONS_PROJECT_ID="a28f09d6-1840-4ac3-ad90-f8c9464facef"
 
 stations_repo_root() {

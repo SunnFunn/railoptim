@@ -8,19 +8,18 @@ import sys
 import tempfile
 from pathlib import Path
 
-from country import EsrCountryIndex
-from fetch_nsi_from_mssql import _load_csv_rows
-from geo_join import join_nsi_osm, write_sqlite
-from nsi_process import process_nsi_rows
+from stations_etl.country import EsrCountryIndex
+from stations_etl.geo.join import join_nsi_osm, write_sqlite
+from stations_etl.nsi.parquet_io import load_csv_rows
+from stations_etl.nsi.process import process_nsi_rows
+from stations_etl.paths import ESR_COUNTRY_PREFIXES
 
-ROOT = Path(__file__).resolve().parents[2]
-SAMPLE = Path(__file__).resolve().parent / "test_nsi_sample.csv"
-PREFIXES = ROOT / "data/stations/esr_country_prefixes.csv"
+SAMPLE = Path(__file__).resolve().parent / "fixtures" / "test_nsi_sample.csv"
 
 
 def main() -> int:
-    rows = _load_csv_rows(SAMPLE)
-    index = EsrCountryIndex.load(PREFIXES)
+    rows = load_csv_rows(SAMPLE)
+    index = EsrCountryIndex.load(ESR_COUNTRY_PREFIXES)
     nsi_records, _ = process_nsi_rows(rows, index, source="csv:test")
     nsi_rows = [r.as_dict() for r in nsi_records]
 
@@ -68,11 +67,36 @@ def main() -> int:
 
     join = join_nsi_osm(nsi_rows, osm_rows, built_at="2026-01-01T00:00:00+00:00")
     assert len(join.rows) == 3
-    assert len(join.unmatched) == 3  # 6 nsi - 3 matched
+    assert len(join.unmatched) == 3
     by_esr = {r.esr6: r for r in join.rows}
     assert by_esr["194013"].name == "Москва-Пассажирская-Казанская (полное имя)"
     assert by_esr["194013"].region_group == "ru"
+    assert by_esr["194013"].source == "osm_pbf"
     assert "063000" in {u["esr6"] for u in join.unmatched}
+
+    sbin_rows = [
+        {
+            "esr6": "063000",
+            "lat": 55.1,
+            "lon": 37.2,
+            "source": "osm_sbin",
+            "match_method": "osm2esr_csv",
+            "osm_id": 999001,
+            "name_osm": "Тест-SBIN",
+            "confidence": 0.95,
+        }
+    ]
+    join2 = join_nsi_osm(
+        nsi_rows, osm_rows, sbin_rows, built_at="2026-01-01T00:00:00+00:00"
+    )
+    assert len(join2.rows) == 4
+    assert len(join2.unmatched) == 2
+    sbin_match = next(r for r in join2.rows if r.esr6 == "063000")
+    assert sbin_match.source == "osm_sbin"
+    assert sbin_match.name == "Пенза III"
+    # Tier1 wins over Tier2 for same esr6
+    assert by_esr["194013"].source == "osm_pbf"
+    assert next(r for r in join2.rows if r.esr6 == "194013").source == "osm_pbf"
 
     with tempfile.TemporaryDirectory() as td:
         db = Path(td) / "geo.sqlite"

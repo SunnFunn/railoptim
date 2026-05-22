@@ -8,8 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_MANIFEST = ROOT / "data/stations/geofabrik_regions.yaml"
+from stations_etl.paths import GEOFABRIK_MANIFEST, PBF_CACHE_DIR, REPO_ROOT
 
 
 @dataclass(frozen=True)
@@ -45,7 +44,7 @@ def _parse_bbox(raw: Any) -> tuple[float, float, float, float] | None:
 
 
 def load_manifest(path: Path | None = None) -> GeofabrikManifest:
-    path = path or DEFAULT_MANIFEST
+    path = path or GEOFABRIK_MANIFEST
     try:
         import yaml
     except ImportError as e:
@@ -57,7 +56,7 @@ def load_manifest(path: Path | None = None) -> GeofabrikManifest:
     cache_rel = data.get("cache_dir", "data/stations/cache/pbf")
     cache_dir = Path(cache_rel)
     if not cache_dir.is_absolute():
-        cache_dir = ROOT / cache_dir
+        cache_dir = REPO_ROOT / cache_dir
 
     regions: list[GeofabrikRegion] = []
     for item in data.get("regions", []):
@@ -84,7 +83,6 @@ def load_manifest(path: Path | None = None) -> GeofabrikManifest:
 
 
 def pbf_path(manifest: GeofabrikManifest, region: GeofabrikRegion) -> Path:
-    # Имя файла — последний сегмент slug (europe/moldova-latest → moldova-latest.osm.pbf)
     name = region.geofabrik_slug.split("/")[-1]
     return manifest.cache_dir / f"{name}.osm.pbf"
 

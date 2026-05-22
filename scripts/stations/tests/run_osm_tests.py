@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import sys
 
-from osm_esr_extract import (
+from stations_etl.osm.extract import (
     OsmEsrCandidate,
     iter_esr_from_tag_value,
     iter_esr_from_tags,

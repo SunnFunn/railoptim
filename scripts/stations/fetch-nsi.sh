@@ -1,7 +1,7 @@
 #!/bin/bash
 # NSI.Station (MSSQL) → parquet. Оффлайн-режим: proxy-trap + локальный Infisical.
 #
-#   ./scripts/stations/fetch-nsi.sh [dev|prod] [args для fetch_nsi_from_mssql.py…]
+#   ./scripts/stations/fetch-nsi.sh [dev|prod] [args для bin/fetch_nsi.py…]
 
 set -euo pipefail
 
@@ -41,4 +41,4 @@ if [ -n "${MSSQL_SERVER_MSKASUVPL:-}" ]; then
     extend_no_proxy "$mssql_host"
 fi
 
-python3 "$dir/fetch_nsi_from_mssql.py" "${PY_ARGS[@]+"${PY_ARGS[@]}"}"
+run_stations_python "$dir/bin/fetch_nsi.py" "${PY_ARGS[@]+"${PY_ARGS[@]}"}"

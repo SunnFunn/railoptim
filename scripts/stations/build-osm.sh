@@ -12,4 +12,4 @@ source "$dir/_infisical_env.sh"
 cd "$(stations_repo_root)"
 clear_proxy
 
-python3 "$dir/build_osm_esr_index.py" "$@"
+run_stations_python "$dir/bin/build_osm_index.py" "$@"

@@ -2,11 +2,10 @@
 """
 Geofabrik PBF → osm_esr_index.parquet (esr6 → lat/lon из OSM).
 
-  python3 build_osm_esr_index.py --download              # только скачать PBF
-  python3 build_osm_esr_index.py --index                 # индекс из cache
-  python3 build_osm_esr_index.py                         # download + index
-  python3 build_osm_esr_index.py --regions russia,belarus
-  python3 build_osm_esr_index.py --download --include-optional   # china-latest
+  python3 bin/build_osm_index.py --download
+  python3 bin/build_osm_index.py --index
+  python3 bin/build_osm_index.py
+  python3 bin/build_osm_index.py --regions russia,belarus
 """
 
 from __future__ import annotations
@@ -18,10 +17,9 @@ from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_MANIFEST = ROOT / "data/stations/geofabrik_regions.yaml"
-DEFAULT_OUTPUT = ROOT / "data/stations/osm_esr_index.parquet"
-DEFAULT_REPORT = ROOT / "data/stations/osm_index_report.json"
+from stations_etl.osm.extract import extract_from_pbf, merge_candidates
+from stations_etl.osm.geofabrik import download_regions, load_manifest, pbf_path
+from stations_etl.paths import GEOFABRIK_MANIFEST, OSM_INDEX_PARQUET, OSM_INDEX_REPORT
 
 
 def _write_parquet(rows: list[dict], path: Path) -> None:
@@ -39,9 +37,9 @@ def _write_parquet(rows: list[dict], path: Path) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="OSM PBF → esr6 index")
-    parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
-    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
-    parser.add_argument("--report", type=Path, default=DEFAULT_REPORT)
+    parser.add_argument("--manifest", type=Path, default=GEOFABRIK_MANIFEST)
+    parser.add_argument("--output", type=Path, default=OSM_INDEX_PARQUET)
+    parser.add_argument("--report", type=Path, default=OSM_INDEX_REPORT)
     parser.add_argument("--download", action="store_true", help="скачать PBF по манифесту")
     parser.add_argument("--index", action="store_true", help="построить индекс из cache")
     parser.add_argument("--force-download", action="store_true")
@@ -63,19 +61,12 @@ def main() -> int:
     if args.download and args.index:
         do_download = do_index = True
 
-    from geofabrik import download_regions, load_manifest, pbf_path
-    from osm_esr_extract import extract_from_pbf, merge_candidates
-
     manifest = load_manifest(args.manifest)
     region_ids: set[str] | None = None
     if args.regions.strip():
         region_ids = {x.strip() for x in args.regions.split(",") if x.strip()}
 
-    regions = [
-        r
-        for r in manifest.regions
-        if region_ids is None or r.id in region_ids
-    ]
+    regions = [r for r in manifest.regions if region_ids is None or r.id in region_ids]
     if not regions:
         raise SystemExit("нет регионов для обработки")
 

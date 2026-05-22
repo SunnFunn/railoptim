@@ -9,8 +9,9 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_INPUT = ROOT / "data/stations/osm_esr_index.parquet"
+from stations_etl.paths import OSM_INDEX_PARQUET
+
+DEFAULT_INPUT = OSM_INDEX_PARQUET
 
 DISPLAY_COLS = (
     "esr6",

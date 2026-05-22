@@ -1,0 +1,18 @@
+[project]
+name = "stations-etl"
+version = "0.1.0"
+description = "ETL справочника станций ЕСР для railoptim"
+requires-python = ">=3.10"
+dependencies = [
+    "pyarrow",
+    "pyyaml",
+    "osmium",
+]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["stations_etl*"]

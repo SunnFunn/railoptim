@@ -15,8 +15,9 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_INPUT = ROOT / "data/stations/stations_nsi_raw.parquet"
+from stations_etl.paths import NSI_PARQUET
+
+DEFAULT_INPUT = NSI_PARQUET
 
 DISPLAY_COLS = (
     "esr6",

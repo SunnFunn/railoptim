@@ -5,15 +5,17 @@
 #
 # Шаги (можно пропускать флагами):
 #   1. fetch-nsi   — MSSQL + Infisical, proxy-trap
-#   2. download-pbf + build-osm --index — интернет, без proxy
+#   2. download-pbf + build-osm --index — Tier1 OSM (интернет)
+#   2b. build-sbin — Tier2 osm.sbin.ru (интернет, ~2 MB CSV)
 #   3. build-geo   — join → SQLite (оффлайн OK)
 #
 # Options:
 #   --skip-nsi            не выгружать NSI
 #   --skip-osm            не скачивать PBF и не строить osm_esr_index
+#   --skip-sbin           не строить sbin_esr_index (Tier2)
 #   --skip-geo            не собирать SQLite
 #   --include-optional    china-latest и пр. optional регионы
-#   --osm-args '…'        доп. аргументы для build_osm_esr_index.py (шаг 2b)
+#   --osm-args '…'        доп. аргументы для bin/build_osm_index.py (шаг 2b)
 #
 # Examples:
 #   ./scripts/stations/build_all.sh prod
@@ -33,14 +35,16 @@ Usage: build_all.sh [dev|prod] [options]
 Options:
   --skip-nsi
   --skip-osm
+  --skip-sbin
   --skip-geo
   --include-optional
-  --osm-args 'ARGS'     передать в build_osm_esr_index.py (шаг index)
+  --osm-args 'ARGS'     передать в bin/build_osm_index.py (шаг index)
   -h, --help
 
 Артефакты:
   data/stations/stations_nsi_raw.parquet
   data/stations/osm_esr_index.parquet
+  data/stations/sbin_esr_index.parquet
   data/stations/stations_geo.sqlite
   data/stations/build_report.json
 EOF
@@ -49,6 +53,7 @@ EOF
 ENV="dev"
 SKIP_NSI=false
 SKIP_OSM=false
+SKIP_SBIN=false
 SKIP_GEO=false
 INCLUDE_OPTIONAL=false
 OSM_EXTRA=()
@@ -65,6 +70,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --skip-osm)
             SKIP_OSM=true
+            shift
+            ;;
+        --skip-sbin)
+            SKIP_SBIN=true
             shift
             ;;
         --skip-geo)
@@ -103,7 +112,7 @@ echo "[build_all] env=$ENV repo=$repo"
 
 if ! $SKIP_NSI; then
     echo ""
-    echo "========== 1/3 NSI (MSSQL) =========="
+    echo "========== 1/4 NSI (MSSQL) =========="
     "$dir/fetch-nsi.sh" "$ENV"
 else
     echo "[build_all] skip NSI"
@@ -111,7 +120,7 @@ fi
 
 if ! $SKIP_OSM; then
     echo ""
-    echo "========== 2/3 OSM (Geofabrik) =========="
+    echo "========== 2/4 OSM (Geofabrik Tier1) =========="
     set -- "${OSM_FLAGS[@]}"
     "$dir/download-pbf.sh" "$@"
     set -- --index "${OSM_FLAGS[@]}" "${OSM_EXTRA[@]+"${OSM_EXTRA[@]}"}"
@@ -120,9 +129,17 @@ else
     echo "[build_all] skip OSM"
 fi
 
+if ! $SKIP_SBIN; then
+    echo ""
+    echo "========== 2b/4 SBIN (osm.sbin.ru Tier2) =========="
+    "$dir/build-sbin.sh"
+else
+    echo "[build_all] skip SBIN"
+fi
+
 if ! $SKIP_GEO; then
     echo ""
-    echo "========== 3/3 GEO (SQLite) =========="
+    echo "========== 3/4 GEO (SQLite) =========="
     "$dir/build-geo.sh"
 else
     echo "[build_all] skip GEO"
@@ -133,6 +150,7 @@ echo ""
 echo "[build_all] готово за $((end - start)) сек."
 echo "  NSI:    data/stations/stations_nsi_raw.parquet"
 echo "  OSM:    data/stations/osm_esr_index.parquet"
+echo "  SBIN:   data/stations/sbin_esr_index.parquet"
 echo "  SQLite: data/stations/stations_geo.sqlite"
 echo "  Отчёт:  data/stations/build_report.json"
 echo ""

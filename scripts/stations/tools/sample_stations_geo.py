@@ -10,8 +10,9 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_DB = ROOT / "data/stations/stations_geo.sqlite"
+from stations_etl.paths import GEO_SQLITE
+
+DEFAULT_DB = GEO_SQLITE
 
 DISPLAY = ("esr6", "name", "lat", "lon", "region_group", "country_hint", "match_method", "confidence")
 

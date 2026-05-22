@@ -7,15 +7,14 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Iterator
 
-from geofabrik import GeofabrikRegion
-from normalize import normalize_esr6
+from stations_etl.normalize import normalize_esr6
+from stations_etl.osm.geofabrik import GeofabrikRegion
 
 _SPLIT_RE = re.compile(r"[;,]")
 
 RAILWAY_VALUES = frozenset({"station", "halt", "stop"})
 RAILWAY_PRIORITY = {"station": 30, "halt": 20, "stop": 10}
 
-# Меньше = выше приоритет тега при merge.
 TAG_PRIORITY = {
     "ref": 1,
     "uic_ref": 2,
@@ -49,7 +48,6 @@ class OsmEsrCandidate:
         return TAG_PRIORITY.get(self.tag_name, 99)
 
     def sort_key(self) -> tuple[int, int, int]:
-        # Выше pbf_priority (manifest) перезаписывает нижний; затем railway и tag.
         return (self.pbf_priority, self.railway_priority, -self.tag_priority)
 
     def as_dict(self) -> dict[str, Any]:

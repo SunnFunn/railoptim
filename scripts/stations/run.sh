@@ -2,7 +2,7 @@
 # ETL справочника станций ЕСР — диспетчер скриптов.
 #
 #   fetch-nsi   — MSSQL + Infisical, proxy-trap (оффлайн-машина)
-#   download-pbf / build-osm — Geofabrik, без proxy-trap (интернет)
+#   download-pbf / build-osm / build-sbin — Geofabrik / sbin, без proxy-trap (интернет)
 #   build-all   — полный pipeline NSI → OSM → SQLite
 #   sample-geo  — выборка из SQLite
 #   test        — unit-тесты без БД
@@ -11,6 +11,8 @@
 set -euo pipefail
 
 dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=_python_env.sh
+source "$dir/_python_env.sh"
 
 usage() {
     cat <<'EOF'
@@ -19,7 +21,8 @@ Usage:
   run.sh download-pbf [args…]   — только скачать PBF
   run.sh build-osm [args…]      — download + index (или --index из cache)
   run.sh build-all [dev|prod] [opts]  — полный ETL (см. build_all.sh --help)
-  run.sh build-geo [args…]        — NSI + OSM → SQLite
+  run.sh build-sbin [args…]      — Tier2: osm.sbin.ru → parquet
+  run.sh build-geo [args…]        — NSI + OSM + sbin → SQLite
   run.sh sample-geo [--n 20]      — выборка stations_geo.sqlite
   run.sh sample-osm [--n 20]        — выборка osm_esr_index.parquet
   run.sh test
@@ -27,7 +30,7 @@ Usage:
 
 Сеть:
   fetch-nsi       — proxy-trap; Infisical localhost:9000
-  download-pbf / build-osm — proxy снят; Infisical не нужен
+  download-pbf / build-osm / build-sbin — proxy снят; Infisical не нужен
 
 Examples:
   ./scripts/stations/run.sh
@@ -50,7 +53,7 @@ while [[ $# -gt 0 ]]; do
             ENV="$1"
             shift
             ;;
-        fetch-nsi|download-pbf|build-osm|build-geo|build-all|test|sample-nsi|sample-osm|sample-geo)
+        fetch-nsi|download-pbf|build-osm|build-sbin|build-geo|build-all|test|sample-nsi|sample-osm|sample-geo)
             CMD="$1"
             shift
             ;;
@@ -88,15 +91,19 @@ case "$CMD" in
         set -- "${FORWARD[@]+"${FORWARD[@]}"}"
         exec "$dir/build-osm.sh" "$@"
         ;;
+    build-sbin)
+        if [ -n "$ENV" ]; then
+            echo "run.sh: env ($ENV) для build-sbin не используется" >&2
+        fi
+        set -- "${FORWARD[@]+"${FORWARD[@]}"}"
+        exec "$dir/build-sbin.sh" "$@"
+        ;;
     test)
         if [ -n "$ENV" ] || [ "${#FORWARD[@]}" -gt 0 ]; then
             echo "run.sh test: не принимает env и доп. аргументы" >&2
             exit 1
         fi
-        (cd "$dir" && python3 run_parity_tests.py)
-        (cd "$dir" && python3 run_nsi_tests.py)
-        (cd "$dir" && python3 run_osm_tests.py)
-        (cd "$dir" && python3 run_geo_tests.py)
+        exec "$dir/tests/run_all.sh"
         ;;
     build-geo)
         if [ -n "$ENV" ]; then
@@ -118,21 +125,21 @@ case "$CMD" in
             echo "run.sh: env ($ENV) для sample-nsi не используется" >&2
         fi
         set -- "${FORWARD[@]+"${FORWARD[@]}"}"
-        exec python3 "$dir/sample_nsi_parquet.py" "$@"
+        exec run_stations_python "$dir/tools/sample_nsi_parquet.py" "$@"
         ;;
     sample-osm)
         if [ -n "$ENV" ]; then
             echo "run.sh: env ($ENV) для sample-osm не используется" >&2
         fi
         set -- "${FORWARD[@]+"${FORWARD[@]}"}"
-        exec python3 "$dir/sample_osm_parquet.py" "$@"
+        exec run_stations_python "$dir/tools/sample_osm_parquet.py" "$@"
         ;;
     sample-geo)
         if [ -n "$ENV" ]; then
             echo "run.sh: env ($ENV) для sample-geo не используется" >&2
         fi
         set -- "${FORWARD[@]+"${FORWARD[@]}"}"
-        exec python3 "$dir/sample_stations_geo.py" "$@"
+        exec run_stations_python "$dir/tools/sample_stations_geo.py" "$@"
         ;;
     *)
         usage >&2

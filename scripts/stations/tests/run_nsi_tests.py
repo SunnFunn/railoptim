@@ -3,24 +3,24 @@
 
 from __future__ import annotations
 
-import csv
 import json
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
-from country import EsrCountryIndex
-from fetch_nsi_from_mssql import _load_csv_rows, _write_parquet
-from nsi_process import process_nsi_rows
+from stations_etl.country import EsrCountryIndex
+from stations_etl.nsi.parquet_io import load_csv_rows, write_parquet
+from stations_etl.nsi.process import process_nsi_rows
+from stations_etl.paths import ESR_COUNTRY_PREFIXES
 
-ROOT = Path(__file__).resolve().parents[2]
-SAMPLE = Path(__file__).resolve().parent / "test_nsi_sample.csv"
-PREFIXES = ROOT / "data/stations/esr_country_prefixes.csv"
+SAMPLE = Path(__file__).resolve().parent / "fixtures" / "test_nsi_sample.csv"
+TOOLS_DIR = Path(__file__).resolve().parents[1] / "tools"
 
 
 def main() -> int:
-    rows = _load_csv_rows(SAMPLE)
-    index = EsrCountryIndex.load(PREFIXES)
+    rows = load_csv_rows(SAMPLE)
+    index = EsrCountryIndex.load(ESR_COUNTRY_PREFIXES)
     records, report = process_nsi_rows(rows, index, source="csv:test")
 
     assert report["nsi_total"] == 9
@@ -38,7 +38,7 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory() as td:
         pq = Path(td) / "out.parquet"
-        _write_parquet(records, pq)
+        write_parquet(records, pq)
         try:
             import pyarrow.parquet as pq_mod
 
@@ -46,13 +46,21 @@ def main() -> int:
             assert table.num_rows == 6
             assert "country_hint" in table.column_names
 
-            import subprocess
-
             r = subprocess.run(
-                [sys.executable, str(Path(__file__).resolve().parent / "sample_nsi_parquet.py"),
-                 "--input", str(pq), "--n", "6", "--seed", "1", "--check"],
+                [
+                    sys.executable,
+                    str(TOOLS_DIR / "sample_nsi_parquet.py"),
+                    "--input",
+                    str(pq),
+                    "--n",
+                    "6",
+                    "--seed",
+                    "1",
+                    "--check",
+                ],
                 capture_output=True,
                 text=True,
+                env={**dict(__import__("os").environ), "PYTHONPATH": str(Path(__file__).resolve().parents[1])},
             )
             if r.returncode != 0:
                 print(r.stdout, r.stderr, file=sys.stderr)

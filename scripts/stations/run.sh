@@ -4,6 +4,7 @@
 #   fetch-nsi   — MSSQL + Infisical, proxy-trap (оффлайн-машина)
 #   download-pbf — Geofabrik, без proxy-trap (нужен интернет)
 #   test        — unit-тесты без БД
+#   sample-nsi  — случайная выборка из parquet для визуальной проверки
 
 set -euo pipefail
 
@@ -15,6 +16,7 @@ Usage:
   run.sh [dev|prod] fetch-nsi [python args…]   — MSSQL → parquet (default)
   run.sh download-pbf [args…]                    — Geofabrik PBF (интернет)
   run.sh test
+  run.sh sample-nsi [--n 30] [--seed 42] [python args…]
 
 Сеть:
   fetch-nsi     — proxy-trap как run.sh; Infisical только localhost:9000
@@ -25,6 +27,7 @@ Examples:
   ./scripts/stations/run.sh prod fetch-nsi
   ./scripts/stations/run.sh download-pbf
   ./scripts/stations/run.sh test
+  ./scripts/stations/run.sh sample-nsi --n 25
 EOF
 }
 
@@ -38,7 +41,7 @@ while [[ $# -gt 0 ]]; do
             ENV="$1"
             shift
             ;;
-        fetch-nsi|download-pbf|test)
+        fetch-nsi|download-pbf|test|sample-nsi)
             CMD="$1"
             shift
             ;;
@@ -76,6 +79,13 @@ case "$CMD" in
         fi
         (cd "$dir" && python3 run_parity_tests.py)
         (cd "$dir" && python3 run_nsi_tests.py)
+        ;;
+    sample-nsi)
+        if [ -n "$ENV" ]; then
+            echo "run.sh: env ($ENV) для sample-nsi не используется" >&2
+        fi
+        set -- "${FORWARD[@]+"${FORWARD[@]}"}"
+        exec python3 "$dir/sample_nsi_parquet.py" "$@"
         ;;
     *)
         usage >&2

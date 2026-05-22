@@ -45,6 +45,18 @@ def main() -> int:
             table = pq_mod.read_table(pq)
             assert table.num_rows == 6
             assert "country_hint" in table.column_names
+
+            import subprocess
+
+            r = subprocess.run(
+                [sys.executable, str(Path(__file__).resolve().parent / "sample_nsi_parquet.py"),
+                 "--input", str(pq), "--n", "6", "--seed", "1", "--check"],
+                capture_output=True,
+                text=True,
+            )
+            if r.returncode != 0:
+                print(r.stdout, r.stderr, file=sys.stderr)
+                raise AssertionError("sample_nsi_parquet --check failed")
         except ImportError:
             print("skip parquet read: pyarrow not installed", file=sys.stderr)
 

@@ -39,6 +39,10 @@ pip install -r scripts/stations/requirements-stations.txt   # pyarrow
 ./scripts/stations/fetch-nsi.sh prod
 
 ./scripts/stations/run.sh test
+
+# Визуальная проверка после fetch-nsi (~47k):
+./scripts/stations/run.sh sample-nsi --n 30 --seed 42
+# stratified: минимум по одной станции из каждого region_group в выборке
 ```
 
 **Артефакты:** `data/stations/stations_nsi_raw.parquet`, `data/stations/fetch_report.json`

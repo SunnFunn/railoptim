@@ -1,68 +1,57 @@
 # Справочник станций ЕСР + координаты
 
-Пошаговая сборка (см. план в `.cursor/plans/`).
+Пошаговая сборка ETL → [`stations_geo.sqlite`](stations_geo.sqlite) для карты и lookup в `railoptim`.
 
-## Скрипты запуска
-
-| Скрипт | Сеть | Infisical | Назначение |
-|--------|------|-----------|------------|
-| [`fetch-nsi.sh`](../../scripts/stations/fetch-nsi.sh) | proxy-trap | да | MSSQL → parquet |
-| [`download-pbf.sh`](../../scripts/stations/download-pbf.sh) | интернет | нет | только скачать PBF |
-| [`build-osm.sh`](../../scripts/stations/build-osm.sh) | интернет | нет | PBF → `osm_esr_index.parquet` |
-| [`run.sh`](../../scripts/stations/run.sh) | диспетчер | — | все команды ниже |
-
-**Оффлайн-машина:** MSSQL — `fetch-nsi.sh` (proxy-trap + локальный Infisical). PBF/OSM — на хосте с HTTPS или перенос `data/stations/cache/pbf/` вручную + `build-osm.sh --index`.
-
-## Зависимости
+## Быстрый старт
 
 ```bash
 pip install -r scripts/stations/requirements-stations.txt
-# osmium: нужен libosmium (macOS: brew install libosmium)
+# brew install libosmium   # macOS
+
+# Полный pipeline (NSI → OSM → SQLite)
+./scripts/stations/build_all.sh prod
+
+# или по шагам — см. scripts/stations/run.sh
+./scripts/stations/run.sh prod fetch-nsi      # proxy-trap + Infisical
+./scripts/stations/run.sh download-pbf        # интернет
+./scripts/stations/run.sh build-osm --index
+./scripts/stations/run.sh build-geo           # оффлайн OK
 ```
 
-## Пункт 2 — NSI (MSSQL)
+Диспетчер: [`scripts/stations/run.sh`](../scripts/stations/run.sh) · полный pipeline: [`build_all.sh`](../scripts/stations/build_all.sh)
+
+## Скрипты
+
+| Скрипт | Сеть | Infisical | Назначение |
+|--------|------|-----------|------------|
+| [`fetch-nsi.sh`](../scripts/stations/fetch-nsi.sh) | proxy-trap | да | MSSQL → parquet |
+| [`download-pbf.sh`](../scripts/stations/download-pbf.sh) | интернет | нет | скачать PBF |
+| [`build-osm.sh`](../scripts/stations/build-osm.sh) | интернет | нет | PBF → OSM index |
+| [`build-geo.sh`](../scripts/stations/build-geo.sh) | оффлайн | нет | NSI + OSM → SQLite |
+| [`build_all.sh`](../scripts/stations/build_all.sh) | см. шаги | см. шаги | все три этапа |
+
+`build_all.sh` options: `--skip-nsi`, `--skip-osm`, `--skip-geo`, `--include-optional`.
+
+## Артефакты
+
+| Файл | Описание |
+|------|----------|
+| `stations_nsi_raw.parquet` | NSI ~47k, `country_hint`, `region_group` |
+| `osm_esr_index.parquet` | esr6 → lat/lon из OSM |
+| `stations_geo.sqlite` | **продакшен** — только станции с coords |
+| `build_report.json` | `coverage_by_region_group`, KPI |
+| `unmatched_esr6.csv` | NSI без координат в OSM |
+
+## Rust
+
+[`src/data/stations_geo.rs`](../src/data/stations_geo.rs) — `STATIONS_GEO_DB` (default `data/stations/stations_geo.sqlite`), загрузка при старте `railoptim`.
 
 ```bash
-./scripts/stations/run.sh prod fetch-nsi
-./scripts/stations/run.sh sample-nsi --n 30
-```
-
-Артефакты: `stations_nsi_raw.parquet`, `fetch_report.json`
-
-## Пункт 3 — OSM / Geofabrik PBF
-
-```bash
-# Скачать все required PBF (~десятки GB суммарно; russia ~2.8 GB)
-./scripts/stations/run.sh download-pbf
-
-# Китай (optional, ~1.3 GB) + bbox при индексации
-./scripts/stations/run.sh download-pbf --include-optional
-
-# Только часть регионов (отладка)
-./scripts/stations/run.sh download-pbf --regions belarus,latvia
-
-# Индекс (download + extract, или --index если PBF уже в cache)
-./scripts/stations/run.sh build-osm
-./scripts/stations/run.sh build-osm --index          # без скачивания
-./scripts/stations/run.sh build-osm --regions russia
-
-# Визуальная проверка индекса
-./scripts/stations/run.sh sample-osm --n 25
-```
-
-Арteфакты:
-- `data/stations/cache/pbf/*.osm.pbf` — кэш Geofabrik
-- `data/stations/osm_esr_index.parquet` — `esr6`, `lat`, `lon`, `pbf_region`, `match_method`, …
-- `data/stations/osm_index_report.json` — статистика, ambiguous/cross_border
-
-Теги OSM (приоритет): `ref` → `uic_ref` → `esr:user` → `railway:ref`. Объекты: `railway` ∈ {station, halt, stop}.
-
-## Тесты
-
-```bash
+cargo test stations_geo::
 ./scripts/stations/run.sh test
+./scripts/stations/run.sh sample-geo --n 30
 ```
 
-## Пункт 4 (далее)
+## Опционально (не реализовано)
 
-`build_stations_geo.py` — join NSI + OSM → `stations_geo.sqlite`
+Tier 2: [osm.sbin.ru/esr](http://osm.sbin.ru/esr/) (в основном РФ) · Tier 3: Wikidata P2815 для зарубежного хвоста.

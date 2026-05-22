@@ -26,6 +26,7 @@ railoptim/
 ├── run.sh                  — запуск с подгрузкой секретов из Infisical
 ├── auth-infisical.sh       — аутентификация в Infisical
 ├── data/                   — входные JSON-референсы (references.json, …)
+│   └── stations/           — ETL справочника ЕСР + координаты ([README](data/stations/README.md))
 ├── app/                    — вспомогательные артефакты рантайма
 ├── example.py              — Python-прототип (PuLP), из которого заимствована
 │                             big-M формулировка MIN_BATCH
@@ -44,6 +45,8 @@ railoptim/
     │   ├── repairs.rs      — станции ремонта (для исключения NeedsRepair)
     │   ├── wash.rs         — станции промывки и логика надбавок
     │   ├── references.rs   — справочники (WashProductCodes, NoCleaningRoads, …)
+    │   ├── esr.rs          — normalize_esr6, классификация по сетевому району
+    │   ├── stations_geo.rs — загрузка stations_geo.sqlite (STATIONS_GEO_DB)
     │   ├── output.rs       — отправка назначений в API
     │   └── mod.rs          — реэкспорты модуля data
     └── solver/             — оптимизационное ядро
@@ -238,13 +241,22 @@ cargo run --release
 Секреты извлекаются только из self-hosted Infisical
 (см. `auth-infisical.sh`); в коде и репозитории их быть не должно.
 
+### Справочник станций (ЕСР + координаты)
+
+Отдельный ETL, не входит в `./run.sh` оптимизации. Подробности: [`data/stations/README.md`](data/stations/README.md).
+
+```bash
+./scripts/stations/build_all.sh prod   # NSI → OSM → stations_geo.sqlite
+export STATIONS_GEO_DB=data/stations/stations_geo.sqlite   # опционально для railoptim
+```
+
 ---
 
 ## Технологический стек
 
 - **Язык**: Rust 2024, async runtime — `tokio`.
 - **Solver**: [HiGHS](https://highs.dev/) 2.0 — LP (simplex) и MIP (branch-and-cut).
-- **Источники данных**: REST API (через `reqwest` + `serde`) и MSSQL.
+- **Источники данных**: REST API (через `reqwest` + `serde`), MSSQL, справочник станций [`data/stations/`](data/stations/README.md) (SQLite).
 - **Ошибки**: `anyhow` на верхнем уровне, `thiserror` в модулях.
 - **Выходные данные**: JSON-отчёт и xlsx (через `rust_xlsxwriter`); финальные
   назначения отправляются обратно в API.

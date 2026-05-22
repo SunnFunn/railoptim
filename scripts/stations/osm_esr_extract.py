@@ -128,11 +128,11 @@ def extract_from_pbf(
     class Handler(osmium.SimpleHandler):
         def __init__(self) -> None:
             super().__init__()
-            self.nls = osmium.NodeLocationsForWays(osmium.index.create_map("sparse_mem_array"))
+            self.node_locs = osmium.index.create_map("sparse_mem_array")
 
         def node(self, n: osmium.osm.Node) -> None:
             if n.location.valid():
-                self.nls.set(n.id, n.location)
+                self.node_locs.set(n.id, n.location)
             rw = n.tags.get("railway")
             if rw not in RAILWAY_VALUES:
                 return
@@ -145,11 +145,18 @@ def extract_from_pbf(
             rw = w.tags.get("railway")
             if rw not in RAILWAY_VALUES:
                 return
-            try:
-                loc = w.center(self.nls)
-            except (RuntimeError, osmium.InvalidLocationError):
+            lats: list[float] = []
+            lons: list[float] = []
+            for nr in w.nodes:
+                loc = self.node_locs.get(nr.ref)
+                if loc is None or not loc.valid():
+                    continue
+                lats.append(loc.lat)
+                lons.append(loc.lon)
+            if not lats:
                 return
-            lat, lon = loc.lat, loc.lon
+            lat = sum(lats) / len(lats)
+            lon = sum(lons) / len(lons)
             if not in_bbox(lat, lon, region.bbox):
                 return
             self._emit("way", int(w.id), w.tags, lat, lon, str(rw))

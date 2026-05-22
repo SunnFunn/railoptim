@@ -4,3 +4,9 @@
 # /logs
 .cursorrules
 # *.log
+data/stations/cache/
+data/stations/*.parquet
+data/stations/fetch_report.json
+data/stations/build_report.json
+data/stations/unmatched_esr6.csv
+data/stations/osm_esr_index.parquet

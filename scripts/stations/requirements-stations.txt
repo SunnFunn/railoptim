@@ -1,0 +1,2 @@
+pymssql>=2.3.0
+pyarrow>=15.0.0

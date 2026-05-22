@@ -25,6 +25,7 @@ async fn main() -> Result<()> {
     // Убираем токен из environ процесса (читается через /proc); на запросы не влияет.
     // SAFETY: вызывается один раз при старте; после этого код не читает API_TOKEN из env,
     // авторизация только через default headers в `client`.
+    // это unsafe! контролировать запуск других сервисов с тем же токеном!
     unsafe { std::env::remove_var("API_TOKEN") };
 
     // -----------------------------------------------------------------------
@@ -36,170 +37,170 @@ async fn main() -> Result<()> {
                 .sum();
     println!("Получено узлов спроса (погрузка): {} или {} вагонов", demand_nodes.len(), demand_total_cars);
 
-    // let mut supply_nodes = client.fetch_supply_nodes().await?;
-    // let supply1_total_cars: i32 = supply_nodes.iter()
-    //             .map(|s| s.car_count)
-    //             .sum();
-    // println!("Получено узлов предложения 1 сут.:  {} или {} вагонов", supply_nodes.len(), supply1_total_cars);
+    let mut supply_nodes = client.fetch_supply_nodes().await?;
+    let supply1_total_cars: i32 = supply_nodes.iter()
+                .map(|s| s.car_count)
+                .sum();
+    println!("Получено узлов предложения 1 сут.:  {} или {} вагонов", supply_nodes.len(), supply1_total_cars);
 
-    // match data::dislocations::fetch_dislocation_supply_nodes() {
-    //     Ok(extra) if !extra.is_empty() => {
-    //         let extra_total_cars: i32 = extra.iter()
-    //             .map(|e| e.car_count)
-    //             .sum();
-    //         println!(
-    //             "  узлов дислокации (2-10 сут., период 10): {} или {} вагонов",
-    //             extra.len(),
-    //             extra_total_cars
-    //         );
-    //         supply_nodes.extend(extra);
-    //     }
-    //     Ok(_) => {}
-    //     Err(e) => eprintln!(
-    //         "  дислокация 2-10 сут.: не загружена ({}), продолжаем только АПИ",
-    //         e
-    //     ),
-    // }
-    // for (i, n) in supply_nodes.iter_mut().enumerate() {
-    //     n.s_id = i + 1;
-    // }
-    // data::supply::apply_mass_unloading_flags(&mut supply_nodes);
-    // let supply_total_cars: i32 = supply_nodes.iter()
-    //             .map(|s| s.car_count)
-    //             .sum();
-    // println!("Получено узлов предложения всего:  {} или {} вагонов", supply_nodes.len(), supply_total_cars);
+    match data::dislocations::fetch_dislocation_supply_nodes() {
+        Ok(extra) if !extra.is_empty() => {
+            let extra_total_cars: i32 = extra.iter()
+                .map(|e| e.car_count)
+                .sum();
+            println!(
+                "  узлов дислокации (2-10 сут., период 10): {} или {} вагонов",
+                extra.len(),
+                extra_total_cars
+            );
+            supply_nodes.extend(extra);
+        }
+        Ok(_) => {}
+        Err(e) => eprintln!(
+            "  дислокация 2-10 сут.: не загружена ({}), продолжаем только АПИ",
+            e
+        ),
+    }
+    for (i, n) in supply_nodes.iter_mut().enumerate() {
+        n.s_id = i + 1;
+    }
+    data::supply::apply_mass_unloading_flags(&mut supply_nodes);
+    let supply_total_cars: i32 = supply_nodes.iter()
+                .map(|s| s.car_count)
+                .sum();
+    println!("Получено узлов предложения всего:  {} или {} вагонов", supply_nodes.len(), supply_total_cars);
 
-    // // Разделяем по трём группам:
-    // //  1. Assigned  — уже назначены по факту, не участвуют в оптимизации.
-    // //  2. NeedsRepair — требуют ремонта, исключаются из оптимизации → «В ремонт».
-    // //  3. opt_supply  — свободные вагоны, участвуют в оптимизации.
-    // let (assigned_nodes, non_assigned): (Vec<_>, Vec<_>) = supply_nodes
-    //     .iter()
-    //     .cloned()
-    //     .partition(|s| s.kind == CarKind::Assigned);
+    // Разделяем по трём группам:
+    //  1. Assigned  — уже назначены по факту, не участвуют в оптимизации.
+    //  2. NeedsRepair — требуют ремонта, исключаются из оптимизации → «В ремонт».
+    //  3. opt_supply  — свободные вагоны, участвуют в оптимизации.
+    let (assigned_nodes, non_assigned): (Vec<_>, Vec<_>) = supply_nodes
+        .iter()
+        .cloned()
+        .partition(|s| s.kind == CarKind::Assigned);
 
-    // let (repair_nodes, opt_supply): (Vec<_>, Vec<_>) = non_assigned
-    //     .into_iter()
-    //     .partition(|s| s.repair_status == RepairStatus::NeedsRepair);
+    let (repair_nodes, opt_supply): (Vec<_>, Vec<_>) = non_assigned
+        .into_iter()
+        .partition(|s| s.repair_status == RepairStatus::NeedsRepair);
     
-    // let [cars_free, cars_repair, cars_assigned] = [&opt_supply, &repair_nodes, &assigned_nodes]
-    // .map(|v| v.iter().map(|d| d.car_count).sum::<i32>());
+    let [cars_free, cars_repair, cars_assigned] = [&opt_supply, &repair_nodes, &assigned_nodes]
+    .map(|v| v.iter().map(|d| d.car_count).sum::<i32>());
 
-    // println!("  свободных для назначения:  {} или {} вагонов", opt_supply.len(), cars_free);
-    // println!("  требуют ремонта (В ремонт):{} или {} вагонов", repair_nodes.len(), cars_repair);
-    // println!("  по факту (Assigned):       {} или {} вагонов", assigned_nodes.len(), cars_assigned);
+    println!("  свободных для назначения:  {} или {} вагонов", opt_supply.len(), cars_free);
+    println!("  требуют ремонта (В ремонт):{} или {} вагонов", repair_nodes.len(), cars_repair);
+    println!("  по факту (Assigned):       {} или {} вагонов", assigned_nodes.len(), cars_assigned);
 
-    // let wash_codes = match data::load_wash_product_codes("data/references.json") {
-    //     Ok(c) => c,
-    //     Err(e) => {
-    //         eprintln!("  WashProductCodes из references.json: не загружены ({e})");
-    //         HashSet::new()
-    //     }
-    // };
-    // let no_cleaning_roads = match data::load_no_cleaning_roads("data/references.json") {
-    //     Ok(r) => {
-    //         println!("Дороги без промывки (NoCleaningRoads): {}", r.len());
-    //         r
-    //     }
-    //     Err(e) => {
-    //         eprintln!("  NoCleaningRoads из references.json: не загружены ({e})");
-    //         HashSet::new()
-    //     }
-    // };
-    // let wash_stations = match data::wash::fetch_wash_stations() {
-    //     Ok(ws) => ws,
-    //     Err(e) => {
-    //         eprintln!("  станции промывки (wash.py json): не загружены ({e})");
-    //         vec![]
-    //     }
-    // };
-    // let wash_demand_nodes = if wash_stations.is_empty() {
-    //     Vec::new()
-    // } else {
-    //     data::wash::wash_demand_nodes(&wash_stations, demand_nodes.len() + 1)
-    // };
-    // let wash_total_cap: i32 = wash_demand_nodes.iter()
-    //             .map(|w| w.car_count)
-    //             .sum();
-    // println!("Узлов спроса (промывка):     {} или мощность в период {} суток {} вагонов",
-    //         wash_demand_nodes.len(),
-    //         data::wash::PLANNING_HORIZON_DAYS,
-    //         wash_total_cap);
+    let wash_codes = match data::load_wash_product_codes("data/references.json") {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("  WashProductCodes из references.json: не загружены ({e})");
+            HashSet::new()
+        }
+    };
+    let no_cleaning_roads = match data::load_no_cleaning_roads("data/references.json") {
+        Ok(r) => {
+            println!("Дороги без промывки (NoCleaningRoads): {}", r.len());
+            r
+        }
+        Err(e) => {
+            eprintln!("  NoCleaningRoads из references.json: не загружены ({e})");
+            HashSet::new()
+        }
+    };
+    let wash_stations = match data::wash::fetch_wash_stations() {
+        Ok(ws) => ws,
+        Err(e) => {
+            eprintln!("  станции промывки (wash.py json): не загружены ({e})");
+            vec![]
+        }
+    };
+    let wash_demand_nodes = if wash_stations.is_empty() {
+        Vec::new()
+    } else {
+        data::wash::wash_demand_nodes(&wash_stations, demand_nodes.len() + 1)
+    };
+    let wash_total_cap: i32 = wash_demand_nodes.iter()
+                .map(|w| w.car_count)
+                .sum();
+    println!("Узлов спроса (промывка):     {} или мощность в период {} суток {} вагонов",
+            wash_demand_nodes.len(),
+            data::wash::PLANNING_HORIZON_DAYS,
+            wash_total_cap);
 
-    // let mut demand_lp: Vec<DemandNode> = demand_nodes.clone();
-    // demand_lp.extend(wash_demand_nodes.clone());
+    let mut demand_lp: Vec<DemandNode> = demand_nodes.clone();
+    demand_lp.extend(wash_demand_nodes.clone());
 
-    // // Все вагоны с «грязным» ETSNG (без учёта NoCleaningRoads).
-    // let n_supply_wash_raw = opt_supply
-    //     .iter()
-    //     .filter(|s| data::wash::supply_matches_wash_product_list(s, &wash_codes))
-    //     .map(|s| s.car_count)
-    //     .sum::<i32>();
-    // // Из них освобождены от промывки по дороге образования (NoCleaningRoads).
-    // let n_supply_wash_exempt = opt_supply
-    //     .iter()
-    //     .filter(|s| {
-    //         data::wash::supply_matches_wash_product_list(s, &wash_codes)
-    //             && no_cleaning_roads.contains(s.railway_to.trim())
-    //     })
-    //     .map(|s| s.car_count)
-    //     .sum::<i32>();
-    // // Итого «грязных», требующих промывки.
-    // let n_supply_wash_list = n_supply_wash_raw - n_supply_wash_exempt;
-    // // По данным спроса Load (любая станция с тем же ЕТСНГ); без тарифа; NoCleaningRoads — не считаем (см. wash.rs).
-    // let n_supply_wash_skip = opt_supply
-    //     .iter()
-    //     .filter(|s| {
-    //         data::wash::supply_needs_wash(s, &wash_codes, &no_cleaning_roads)
-    //             && data::wash::load_demand_has_matching_dirty_etsng(s, &demand_nodes, &no_cleaning_roads)
-    //     })
-    //     .map(|s| s.car_count)
-    //     .sum::<i32>();
-    // println!(
-    //     "  предложений с ЕТСНГ из списка промывки: {} вагонов (освобождены по NoCleaningRoads: {}; из них есть узел погрузки с тем же ЕТСНГ на любой станции — альтернатива промывке по спросу: {} вагонов)",
-    //     n_supply_wash_list, n_supply_wash_exempt, n_supply_wash_skip
-    // );
+    // Все вагоны с «грязным» ETSNG (без учёта NoCleaningRoads).
+    let n_supply_wash_raw = opt_supply
+        .iter()
+        .filter(|s| data::wash::supply_matches_wash_product_list(s, &wash_codes))
+        .map(|s| s.car_count)
+        .sum::<i32>();
+    // Из них освобождены от промывки по дороге образования (NoCleaningRoads).
+    let n_supply_wash_exempt = opt_supply
+        .iter()
+        .filter(|s| {
+            data::wash::supply_matches_wash_product_list(s, &wash_codes)
+                && no_cleaning_roads.contains(s.railway_to.trim())
+        })
+        .map(|s| s.car_count)
+        .sum::<i32>();
+    // Итого «грязных», требующих промывки.
+    let n_supply_wash_list = n_supply_wash_raw - n_supply_wash_exempt;
+    // По данным спроса Load (любая станция с тем же ЕТСНГ); без тарифа; NoCleaningRoads — не считаем (см. wash.rs).
+    let n_supply_wash_skip = opt_supply
+        .iter()
+        .filter(|s| {
+            data::wash::supply_needs_wash(s, &wash_codes, &no_cleaning_roads)
+                && data::wash::load_demand_has_matching_dirty_etsng(s, &demand_nodes, &no_cleaning_roads)
+        })
+        .map(|s| s.car_count)
+        .sum::<i32>();
+    println!(
+        "  предложений с ЕТСНГ из списка промывки: {} вагонов (освобождены по NoCleaningRoads: {}; из них есть узел погрузки с тем же ЕТСНГ на любой станции — альтернатива промывке по спросу: {} вагонов)",
+        n_supply_wash_list, n_supply_wash_exempt, n_supply_wash_skip
+    );
 
-    // // -----------------------------------------------------------------------
-    // // 3. Получение тарифов
-    // //    stations_from: станции образования порожних opt_supply +
-    // //                   станции отправления Assigned-вагонов
-    // //    stations_to:   станции погрузки (demand) +
-    // //                   станции назначения Assigned-вагонов
-    // // -----------------------------------------------------------------------
-    // let stations_from: Vec<StationRef> = opt_supply
-    //     .iter()
-    //     .map(|s| (s.station_to_code.clone(), s.railway_to.clone()))
-    //     .chain(
-    //         // Берём первую (или единственную) дорогу/станцию отправления каждой группы.
-    //         assigned_nodes.iter().flat_map(|s| {
-    //             s.stations_from_code.iter()
-    //                 .zip(s.railways_from.iter())
-    //                 .take(1)
-    //                 .map(|(code, rw)| (code.clone(), rw.clone()))
-    //         })
-    //     )
-    //     .collect::<HashSet<_>>()
-    //     .into_iter()
-    //     .map(|(code, rw)| StationRef::new(code, rw))
-    //     .collect();
+    // -----------------------------------------------------------------------
+    // 3. Получение тарифов
+    //    stations_from: станции образования порожних opt_supply +
+    //                   станции отправления Assigned-вагонов
+    //    stations_to:   станции погрузки (demand) +
+    //                   станции назначения Assigned-вагонов
+    // -----------------------------------------------------------------------
+    let stations_from: Vec<StationRef> = opt_supply
+        .iter()
+        .map(|s| (s.station_to_code.clone(), s.railway_to.clone()))
+        .chain(
+            // Берём первую (или единственную) дорогу/станцию отправления каждой группы.
+            assigned_nodes.iter().flat_map(|s| {
+                s.stations_from_code.iter()
+                    .zip(s.railways_from.iter())
+                    .take(1)
+                    .map(|(code, rw)| (code.clone(), rw.clone()))
+            })
+        )
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .map(|(code, rw)| StationRef::new(code, rw))
+        .collect();
 
-    // let stations_to: Vec<StationRef> = demand_nodes
-    //     .iter()
-    //     .filter(|d| d.purpose == DemandPurpose::Load)
-    //     .map(|d| (d.station_code.clone(), d.railway_name.clone()))
-    //     .chain(
-    //         // Добавляем станции фактического назначения Assigned-вагонов.
-    //         assigned_nodes.iter()
-    //             .map(|s| (s.station_to_code.clone(), s.railway_to.clone()))
-    //     )
-    //     .collect::<HashSet<_>>()
-    //     .into_iter()
-    //     .map(|(code, rw)| StationRef::new(code, rw))
-    //     .collect();
+    let stations_to: Vec<StationRef> = demand_nodes
+        .iter()
+        .filter(|d| d.purpose == DemandPurpose::Load)
+        .map(|d| (d.station_code.clone(), d.railway_name.clone()))
+        .chain(
+            // Добавляем станции фактического назначения Assigned-вагонов.
+            assigned_nodes.iter()
+                .map(|s| (s.station_to_code.clone(), s.railway_to.clone()))
+        )
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .map(|(code, rw)| StationRef::new(code, rw))
+        .collect();
 
-    // let tariff_nodes = client.fetch_tariffs(&stations_from, &stations_to).await?;
-    // println!("Получено тарифов:            {}", tariff_nodes.len());
+    let tariff_nodes = client.fetch_tariffs(&stations_from, &stations_to).await?;
+    println!("Получено тарифов:            {}", tariff_nodes.len());
 
     // // -----------------------------------------------------------------------
     // // 3а. Тарифы до ремонтных станций (data/repairs.json)

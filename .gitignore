@@ -12,3 +12,4 @@ data/stations/fetch_report.json
 data/stations/build_report.json
 data/stations/unmatched_esr6.csv
 data/stations/osm_esr_index.parquet
+data/stations/osm_index_report.json

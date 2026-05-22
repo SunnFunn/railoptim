@@ -1,11 +1,10 @@
-# Манифест Geofabrik extract'ов для build_osm_esr_index.py (пункт 3 плана).
-# cache_dir — каталог загрузки PBF (относительно корня репозитория).
+# Манифест Geofabrik extract'ов для build_osm_esr_index.py.
+# geofabrik_slug — путь относительно base_url (см. структуру download.geofabrik.de).
 
 version: 1
 cache_dir: data/stations/cache/pbf
 base_url: https://download.geofabrik.de
 
-# Порядок merge в osm_esr_index: по возрастанию priority (сначала низкий — перезапись выше).
 regions:
   - id: russia
     geofabrik_slug: russia-latest
@@ -14,101 +13,100 @@ regions:
     required: true
 
   - id: belarus
-    geofabrik_slug: belarus-latest
+    geofabrik_slug: europe/belarus-latest
     region_group: cis
     country_iso: BY
     priority: 20
 
   - id: kazakhstan
-    geofabrik_slug: kazakhstan-latest
+    geofabrik_slug: asia/kazakhstan-latest
     region_group: cis
     country_iso: KZ
     priority: 20
 
   - id: ukraine
-    geofabrik_slug: ukraine-latest
+    geofabrik_slug: europe/ukraine-latest
     region_group: cis
     country_iso: UA
     priority: 20
 
   - id: moldova
-    geofabrik_slug: moldova-latest
+    geofabrik_slug: europe/moldova-latest
     region_group: cis
     country_iso: MD
     priority: 20
 
   - id: uzbekistan
-    geofabrik_slug: uzbekistan-latest
+    geofabrik_slug: asia/uzbekistan-latest
     region_group: cis
     country_iso: UZ
     priority: 20
 
   - id: turkmenistan
-    geofabrik_slug: turkmenistan-latest
+    geofabrik_slug: asia/turkmenistan-latest
     region_group: cis
     country_iso: TM
     priority: 20
 
   - id: tajikistan
-    geofabrik_slug: tajikistan-latest
+    geofabrik_slug: asia/tajikistan-latest
     region_group: cis
     country_iso: TJ
     priority: 20
 
   - id: kyrgyzstan
-    geofabrik_slug: kyrgyzstan-latest
+    geofabrik_slug: asia/kyrgyzstan-latest
     region_group: cis
     country_iso: KG
     priority: 20
 
   - id: latvia
-    geofabrik_slug: latvia-latest
+    geofabrik_slug: europe/latvia-latest
     region_group: baltic
     country_iso: LV
     priority: 20
 
   - id: lithuania
-    geofabrik_slug: lithuania-latest
+    geofabrik_slug: europe/lithuania-latest
     region_group: baltic
     country_iso: LT
     priority: 20
 
   - id: estonia
-    geofabrik_slug: estonia-latest
+    geofabrik_slug: europe/estonia-latest
     region_group: baltic
     country_iso: EE
     priority: 20
 
   - id: georgia
-    geofabrik_slug: georgia-latest
+    geofabrik_slug: asia/georgia-latest
     region_group: south_caucasus
     country_iso: GE
     priority: 20
 
   - id: armenia
-    geofabrik_slug: armenia-latest
+    geofabrik_slug: asia/armenia-latest
     region_group: south_caucasus
     country_iso: AM
     priority: 20
 
   - id: azerbaijan
-    geofabrik_slug: azerbaijan-latest
+    geofabrik_slug: asia/azerbaijan-latest
     region_group: south_caucasus
     country_iso: AZ
     priority: 20
 
   - id: mongolia
-    geofabrik_slug: mongolia-latest
+    geofabrik_slug: asia/mongolia-latest
     region_group: china_mongolia
     country_iso: MN
     priority: 20
 
-  # Полный china-latest ~1.3 GB; для пограничных ж/д станций — bbox Забайкалья/Приморья/Синьцзяна.
   - id: china_border
-    geofabrik_slug: china-latest
+    geofabrik_slug: asia/china-latest
     region_group: china_mongolia
     country_iso: CN
     priority: 25
     optional: true
     bbox: [73.0, 41.0, 135.0, 53.5]
-    note: "osmium extract --bbox после скачивания полного PBF"
+    note: "bbox-фильтр при extract (без отдельного osmium extract)"

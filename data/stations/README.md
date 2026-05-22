@@ -6,56 +6,63 @@
 
 | Скрипт | Сеть | Infisical | Назначение |
 |--------|------|-----------|------------|
-| [`fetch-nsi.sh`](../../scripts/stations/fetch-nsi.sh) | proxy-trap (как `run.sh`) | да | MSSQL → parquet |
-| [`download-pbf.sh`](../../scripts/stations/download-pbf.sh) | **без** proxy-trap | нет | Geofabrik PBF (пункт 3) |
-| [`run.sh`](../../scripts/stations/run.sh) | диспетчер | — | `fetch-nsi` / `download-pbf` / `test` |
+| [`fetch-nsi.sh`](../../scripts/stations/fetch-nsi.sh) | proxy-trap | да | MSSQL → parquet |
+| [`download-pbf.sh`](../../scripts/stations/download-pbf.sh) | интернет | нет | только скачать PBF |
+| [`build-osm.sh`](../../scripts/stations/build-osm.sh) | интернет | нет | PBF → `osm_esr_index.parquet` |
+| [`run.sh`](../../scripts/stations/run.sh) | диспетчер | — | все команды ниже |
 
-На оффлайн-машине Infisical CLI без proxy-trap может пытаться выйти в интернет и упасть. **MSSQL-выгрузка** — только через `fetch-nsi.sh` (или `run.sh fetch-nsi`). **PBF** — отдельно, когда есть исходящий HTTPS.
+**Оффлайн-машина:** MSSQL — `fetch-nsi.sh` (proxy-trap + локальный Infisical). PBF/OSM — на хосте с HTTPS или перенос `data/stations/cache/pbf/` вручную + `build-osm.sh --index`.
 
-## Пункт 1 — нормализация и классификация
-
-| Файл | Назначение |
-|------|------------|
-| [`esr_country_prefixes.csv`](esr_country_prefixes.csv) | Сетевой район (2 цифры `Code6`) → `country_hint`, `region_group` |
-| [`geofabrik_regions.yaml`](geofabrik_regions.yaml) | Манифест PBF для ETL OSM (пункт 3) |
-| [`../../scripts/stations/normalize.py`](../../scripts/stations/normalize.py) | `normalize_esr6`, `validate_esr6_checksum` |
-| [`../../scripts/stations/country.py`](../../scripts/stations/country.py) | `EsrCountryIndex::classify` |
-| [`../../src/data/esr.rs`](../../src/data/esr.rs) | То же в Rust |
+## Зависимости
 
 ```bash
-cd scripts/stations && python3 run_parity_tests.py
-cargo test esr::
+pip install -r scripts/stations/requirements-stations.txt
+# osmium: нужен libosmium (macOS: brew install libosmium)
 ```
 
-## Пункт 2 — выгрузка NSI.Station (MSSQL)
+## Пункт 2 — NSI (MSSQL)
 
 ```bash
-pip install -r scripts/stations/requirements-stations.txt   # pyarrow
-
-./scripts/stations/run.sh              # dev → fetch-nsi
-./scripts/stations/run.sh prod
-
-# или напрямую
-./scripts/stations/fetch-nsi.sh prod
-
-./scripts/stations/run.sh test
-
-# Визуальная проверка после fetch-nsi (~47k):
-./scripts/stations/run.sh sample-nsi --n 30 --seed 42
-# stratified: минимум по одной станции из каждого region_group в выборке
+./scripts/stations/run.sh prod fetch-nsi
+./scripts/stations/run.sh sample-nsi --n 30
 ```
 
-**Артефакты:** `data/stations/stations_nsi_raw.parquet`, `data/stations/fetch_report.json`
+Артефакты: `stations_nsi_raw.parquet`, `fetch_report.json`
 
-**MSSQL env (Infisical):** `MSSQL_SERVER_MSKASUVPL`, `DOMAIN_USER`, `PASSWORD`, `MSSQL_DB_ASUVP`, `MSSQL_DOMAIN` (опц.).
-
-## Пункт 3 (далее) — OSM / PBF
+## Пункт 3 — OSM / Geofabrik PBF
 
 ```bash
+# Скачать все required PBF (~десятки GB суммарно; russia ~2.8 GB)
 ./scripts/stations/run.sh download-pbf
-# или ./scripts/stations/download-pbf.sh
+
+# Китай (optional, ~1.3 GB) + bbox при индексации
+./scripts/stations/run.sh download-pbf --include-optional
+
+# Только часть регионов (отладка)
+./scripts/stations/run.sh download-pbf --regions belarus,latvia
+
+# Индекс (download + extract, или --index если PBF уже в cache)
+./scripts/stations/run.sh build-osm
+./scripts/stations/run.sh build-osm --index          # без скачивания
+./scripts/stations/run.sh build-osm --regions russia
+
+# Визуальная проверка индекса
+./scripts/stations/run.sh sample-osm --n 25
+```
+
+Арteфакты:
+- `data/stations/cache/pbf/*.osm.pbf` — кэш Geofabrik
+- `data/stations/osm_esr_index.parquet` — `esr6`, `lat`, `lon`, `pbf_region`, `match_method`, …
+- `data/stations/osm_index_report.json` — статистика, ambiguous/cross_border
+
+Теги OSM (приоритет): `ref` → `uic_ref` → `esr:user` → `railway:ref`. Объекты: `railway` ∈ {station, halt, stop}.
+
+## Тесты
+
+```bash
+./scripts/stations/run.sh test
 ```
 
 ## Пункт 4 (далее)
 
-`build_stations_geo.py` — SQLite `stations_geo.sqlite`
+`build_stations_geo.py` — join NSI + OSM → `stations_geo.sqlite`

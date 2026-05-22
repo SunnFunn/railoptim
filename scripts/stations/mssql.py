@@ -1,4 +1,4 @@
-"""Подключение к MSSQL (те же переменные, что dislocations.py + generic MSSQL_*)."""
+"""Подключение к MSSQL — те же переменные окружения, что src/data/dislocations.py."""
 
 from __future__ import annotations
 
@@ -10,6 +10,15 @@ try:
     import pymssql
 except ImportError:
     pymssql = None  # type: ignore[assignment]
+
+# Имена секретов в Infisical (run.sh → infisical secrets --env …).
+MSSQL_ENV = (
+    "MSSQL_SERVER_MSKASUVPL",
+    "DOMAIN_USER",
+    "PASSWORD",
+    "MSSQL_DB_ASUVP",
+    "MSSQL_DOMAIN",  # опционально, префикс к логину
+)
 
 
 def env(key: str, default: str | None = None) -> str | None:
@@ -28,18 +37,18 @@ def mssql_connect() -> Any:
         )
         sys.exit(1)
 
-    server = env("MSSQL_SERVER") or env("MSSQL_HOST") or env("MSSQL_SERVER_MSKASUVPL")
+    server = env("MSSQL_SERVER_MSKASUVPL")
     if not server:
         print(
-            "fetch_nsi: задайте MSSQL_SERVER, MSSQL_HOST или MSSQL_SERVER_MSKASUVPL",
+            "fetch_nsi: задайте MSSQL_SERVER_MSKASUVPL (секрет Infisical, как для dislocations.py)",
             file=sys.stderr,
         )
         sys.exit(1)
 
-    user = env("MSSQL_USER") or env("DOMAIN_USER") or ""
-    password = env("MSSQL_PASSWORD") or env("PASSWORD") or ""
-    database = env("MSSQL_DATABASE") or env("MSSQL_DB_ASUVP") or ""
-    domain = env("MSSQL_DOMAIN") or ""
+    user = env("DOMAIN_USER", "") or ""
+    password = env("PASSWORD", "") or ""
+    database = env("MSSQL_DB_ASUVP", "") or ""
+    domain = env("MSSQL_DOMAIN", "") or ""
 
     return pymssql.connect(
         server=server,

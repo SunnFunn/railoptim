@@ -2,12 +2,14 @@
 """
 Выгрузка NSI.Station → data/stations/stations_nsi_raw.parquet + fetch_report.json.
 
-MSSQL (как dislocations.py):
-  MSSQL_SERVER / MSSQL_HOST / MSSQL_SERVER_MSKASUVPL
-  MSSQL_USER / DOMAIN_USER
-  MSSQL_PASSWORD / PASSWORD
-  MSSQL_DATABASE / MSSQL_DB_ASUVP
-  MSSQL_DOMAIN (опционально, префикс логина)
+MSSQL (те же секреты Infisical, что dislocations.py / wash.py):
+  MSSQL_SERVER_MSKASUVPL
+  DOMAIN_USER
+  PASSWORD
+  MSSQL_DB_ASUVP
+  MSSQL_DOMAIN   (опционально, префикс к логину)
+
+Загрузка env: ./scripts/stations/run.sh (Infisical, как run.sh).
 
 Запрос: SELECT Code6, Name FROM NSI.Station (NOLOCK);
 

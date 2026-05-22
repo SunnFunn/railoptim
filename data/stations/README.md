@@ -2,6 +2,16 @@
 
 Пошаговая сборка (см. план в `.cursor/plans/`).
 
+## Скрипты запуска
+
+| Скрипт | Сеть | Infisical | Назначение |
+|--------|------|-----------|------------|
+| [`fetch-nsi.sh`](../../scripts/stations/fetch-nsi.sh) | proxy-trap (как `run.sh`) | да | MSSQL → parquet |
+| [`download-pbf.sh`](../../scripts/stations/download-pbf.sh) | **без** proxy-trap | нет | Geofabrik PBF (пункт 3) |
+| [`run.sh`](../../scripts/stations/run.sh) | диспетчер | — | `fetch-nsi` / `download-pbf` / `test` |
+
+На оффлайн-машине Infisical CLI без proxy-trap может пытаться выйти в интернет и упасть. **MSSQL-выгрузка** — только через `fetch-nsi.sh` (или `run.sh fetch-nsi`). **PBF** — отдельно, когда есть исходящий HTTPS.
+
 ## Пункт 1 — нормализация и классификация
 
 | Файл | Назначение |
@@ -20,25 +30,28 @@ cargo test esr::
 ## Пункт 2 — выгрузка NSI.Station (MSSQL)
 
 ```bash
-pip install -r scripts/stations/requirements-stations.txt   # pyarrow для parquet
+pip install -r scripts/stations/requirements-stations.txt   # pyarrow
 
-# MSSQL: pymssql уже нужен для src/data/dislocations.py — отдельно не ставим.
-# Прод: переменные как у dislocations.py (Infisical / run.sh окружение)
-python3 scripts/stations/fetch_nsi_from_mssql.py
+./scripts/stations/run.sh              # dev → fetch-nsi
+./scripts/stations/run.sh prod
 
-# Тест без БД
-cd scripts/stations && python3 run_nsi_tests.py
-python3 fetch_nsi_from_mssql.py --input-csv test_nsi_sample.csv \
-  --output /tmp/stations_nsi_raw.parquet --report /tmp/fetch_report.json
+# или напрямую
+./scripts/stations/fetch-nsi.sh prod
+
+./scripts/stations/run.sh test
 ```
 
-**Артефакты:**
-- `data/stations/stations_nsi_raw.parquet` — `esr6`, `name_nsi`, `code6_raw`, `country_hint`, `region_group`, `network_district`, `checksum_valid`
-- `data/stations/fetch_report.json` — `nsi_total`, `nsi_unique_esr6`, `nsi_by_region_group`, дубликаты, отклонённые строки
+**Артефакты:** `data/stations/stations_nsi_raw.parquet`, `data/stations/fetch_report.json`
 
-**MSSQL env:** `MSSQL_SERVER` / `MSSQL_HOST` / `MSSQL_SERVER_MSKASUVPL`, `MSSQL_USER` / `DOMAIN_USER`, `MSSQL_PASSWORD` / `PASSWORD`, `MSSQL_DATABASE` / `MSSQL_DB_ASUVP`, опционально `MSSQL_DOMAIN`.
+**MSSQL env (Infisical):** `MSSQL_SERVER_MSKASUVPL`, `DOMAIN_USER`, `PASSWORD`, `MSSQL_DB_ASUVP`, `MSSQL_DOMAIN` (опц.).
 
-## Дальше
+## Пункт 3 (далее) — OSM / PBF
 
-3. `build_osm_esr_index.py` — PBF по `geofabrik_regions.yaml`  
-4. `build_stations_geo.py` — SQLite `stations_geo.sqlite`
+```bash
+./scripts/stations/run.sh download-pbf
+# или ./scripts/stations/download-pbf.sh
+```
+
+## Пункт 4 (далее)
+
+`build_stations_geo.py` — SQLite `stations_geo.sqlite`

@@ -2,6 +2,8 @@
 
 Production-справочник **Code6 (ЕСР-6) + название + lat/lon** для карты и lookup в `railoptim`.
 
+**Среда prod:** сервис `railoptim` и ETL станций развёрнуты на **Ubuntu Linux** (команды ниже — из корня репозитория на prod-сервере). macOS — только для локальной разработки.
+
 Итоговый артефакт — [`stations_geo.sqlite`](stations_geo.sqlite): только станции из NSI, для которых найдены валидные координаты. Имя станции всегда из **NSI** (`Name`), координаты — из внешних источников (OSM / sbin).
 
 Код ETL: [`scripts/stations/`](../scripts/stations/) · загрузка в Rust: [`src/data/stations_geo.rs`](../src/data/stations_geo.rs)
@@ -12,26 +14,27 @@ Production-справочник **Code6 (ЕСР-6) + название + lat/lon*
 
 1. [Архитектура](#архитектура)
 2. [Зависимости](#зависимости)
-3. [Быстрый старт](#быстрый-старт)
-4. [Pipeline по шагам](#pipeline-по-шагам)
-5. [Источники координат (Tier 1 / 2 / 3)](#источники-координат-tier-1--2--3)
-6. [Join и приоритеты](#join-и-приоритеты)
-7. [Конфигурация в `data/stations/`](#конфигурация-в-datastations)
-8. [Артефакты и отчёты](#артефакты-и-отчёты)
-9. [Примеры данных](#примеры-данных)
-10. [Скрипты и сеть](#скрипты-и-сеть)
-11. [Структура `scripts/stations/`](#структура-scriptsstations)
-12. [Интеграция с Rust](#интеграция-с-rust)
-13. [Проверка и QA](#проверка-и-qa)
-14. [Типовые сценарии](#типовые-сценарии)
-15. [Устранение проблем](#устранение-проблем)
-16. [Roadmap (Tier 3)](#roadmap-tier-3)
+3. [Среда prod (Ubuntu Linux)](#среда-prod-ubuntu-linux)
+4. [Быстрый старт](#быстрый-старт)
+5. [Pipeline по шагам](#pipeline-по-шагам)
+6. [Источники координат (Tier 1 / 2 / 3)](#источники-координат-tier-1--2--3)
+7. [Join и приоритеты](#join-и-приоритеты)
+8. [Конфигурация в `data/stations/`](#конфигурация-в-datastations)
+9. [Артефакты и отчёты](#артефакты-и-отчёты)
+10. [Примеры данных](#примеры-данных)
+11. [Скрипты и сеть](#скрипты-и-сеть)
+12. [Структура `scripts/stations/`](#структура-scriptsstations)
+13. [Интеграция с Rust](#интеграция-с-rust)
+14. [Проверка и QA](#проверка-и-qa)
+15. [Типовые сценарии](#типовые-сценарии)
+16. [Устранение проблем](#устранение-проблем)
+17. [Roadmap (Tier 3)](#roadmap-tier-3)
 
 ---
 
 ## Архитектура
 
-Гибридная схема: **Python ETL offline** → **SQLite** → **Rust lookup** при старте `railoptim`.
+Гибридная схема: **Python ETL offline** (на Ubuntu prod) → **SQLite** → **Rust lookup** при старте `railoptim`.
 
 ```mermaid
 flowchart TB
@@ -60,7 +63,7 @@ flowchart TB
     sbin_idx --> sqlite
   end
 
-  subgraph runtime [Runtime railoptim]
+  subgraph runtime [Runtime railoptim на Ubuntu]
     catalog["StationGeoCatalog\nHashMap esr6 → coords"]
     sqlite --> catalog
   end
@@ -77,16 +80,26 @@ flowchart TB
 
 ## Зависимости
 
+На **Ubuntu prod** используйте `apt` + `pip3` (см. также [Среда prod](#среда-prod-ubuntu-linux)). На macOS — `brew` + `pip`.
+
+**libosmium** — нативная библиотека для парсинга OSM PBF (шаг Tier1). Без неё `import osmium` / `build-osm` не заработает.
+
+**Ubuntu** (prod-сервер):
+
 ```bash
-pip install -r scripts/stations/requirements-stations.txt
-# pyarrow, pyyaml, osmium
-
-# macOS — нативная libosmium для парсинга PBF:
-brew install libosmium
-
-# MSSQL (шаг 1) — тот же pymssql, что для src/data/dislocations.py
-# (не в requirements-stations.txt, ставится отдельно в prod-окружении)
+sudo apt-get update
+sudo apt-get install -y libosmium2-dev pybind11-dev python3-pip
+pip3 install -r scripts/stations/requirements-stations.txt
 ```
+
+**macOS** (локальная разработка):
+
+```bash
+brew install libosmium
+pip install -r scripts/stations/requirements-stations.txt
+```
+
+**MSSQL** (шаг 1) — тот же `pymssql`, что для `src/data/dislocations.py` (не в `requirements-stations.txt`, ставится отдельно в prod-окружении).
 
 Опционально для разработки пакета:
 
@@ -96,13 +109,70 @@ pip install -e scripts/stations   # pyproject.toml, пакет stations_etl
 
 Shell-скрипты выставляют `PYTHONPATH=scripts/stations` автоматически ([`_python_env.sh`](../scripts/stations/_python_env.sh)).
 
+На Ubuntu в shell-скриптах используется **`python3`** (см. [`_python_env.sh`](../scripts/stations/_python_env.sh)).
+
+---
+
+## Среда prod (Ubuntu Linux)
+
+ETL и бинарник **`railoptim`** работают на одном **Ubuntu** prod-сервере (offline-машина с Infisical + MSSQL). Команды ниже — из **корня репозитория** (`/path/to/railoptim`).
+
+### Первичная настройка (один раз)
+
+```bash
+cd /path/to/railoptim
+
+# системные пакеты для Tier1 OSM (libosmium) и сборки pyosmium
+sudo apt-get update
+sudo apt-get install -y libosmium2-dev pybind11-dev python3-pip
+
+# Python-зависимости ETL
+pip3 install -r scripts/stations/requirements-stations.txt
+
+# pymssql для fetch-nsi (как для dislocations.py)
+pip3 install pymssql
+
+# Infisical CLI + keyring — для fetch-nsi (см. auth-infisical.sh в репозитории)
+# Rust-бинарник railoptim — cargo build --release (stations_geo.sqlite читается при старте)
+```
+
+### Диск и пути
+
+| Путь | Размер (ориентир) | Назначение |
+|------|-------------------|------------|
+| `data/stations/cache/pbf/` | **десятки GB** (russia-latest ~4 GB + регионы) | Geofabrik PBF |
+| `data/stations/cache/sbin/` | ~2 MB | кэш osm2esr.csv |
+| `data/stations/stations_geo.sqlite` | ~10–20 MB | **runtime** lookup для `railoptim` |
+
+Убедитесь, что на разделе с `data/stations/` достаточно места перед `./scripts/stations/run.sh download-pbf`.
+
+### Сеть на prod
+
+На Ubuntu prod действуют те же режимы, что в разделе [Скрипты и сеть](#скрипты-и-сеть):
+
+- **`fetch-nsi`** — proxy-trap + локальный Infisical (`127.0.0.1:9000`), MSSQL в `no_proxy`
+- **`download-pbf` / `build-osm` / `build-sbin`** — прямой интернет (`clear_proxy` в shell)
+- **`build-geo`** — без сети
+
+### Cron / периодическое обновление (пример)
+
+```bash
+# /etc/cron.weekly/railoptim-stations-geo — полная пересборка (ночь, воскресенье)
+0 3 * * 0 cd /path/to/railoptim && ./scripts/stations/build_all.sh prod >> /var/log/railoptim-stations-etl.log 2>&1
+```
+
+После успешного ETL перезапустите сервис `railoptim`, чтобы подхватить новый `stations_geo.sqlite` (или задайте `STATIONS_GEO_DB`).
+
 ---
 
 ## Быстрый старт
 
+На **Ubuntu prod** выполняйте команды из корня репозитория (`cd /path/to/railoptim`). См. [Среда prod](#среда-prod-ubuntu-linux).
+
 ### Полный pipeline (prod)
 
 ```bash
+cd /path/to/railoptim
 ./scripts/stations/build_all.sh prod
 ```
 
@@ -183,7 +253,7 @@ cat data/stations/build_report.json | head -40
 
 **Манифест регионов:** [`geofabrik_regions.yaml`](geofabrik_regions.yaml) — Russia, CIS, Baltic, Caucasus, Mongolia; optional China с bbox-фильтром.
 
-**PBF-кэш:** `cache/pbf/*.osm.pbf` (gitignored, может занимать десятки GB).
+**PBF-кэш:** `cache/pbf/*.osm.pbf` (gitignored, **десятки GB** на prod — см. [диск](#диск-и-пути)).
 
 **Извлечение из OSM:**
 
@@ -771,7 +841,7 @@ cargo test stations_geo::
 
 ---
 
-### Локальный прогон на fixture (без MSSQL и PBF)
+### Локальный прогон на fixture (без MSSQL и PBF, macOS или Ubuntu)
 
 ```bash
 ./scripts/stations/run.sh fetch-nsi \
@@ -866,6 +936,8 @@ scripts/stations/
 
 ## Интеграция с Rust
 
+На **Ubuntu prod** бинарник `railoptim` при старте читает SQLite с диска (относительно рабочей директории сервиса или через env).
+
 Модуль [`src/data/stations_geo.rs`](../src/data/stations_geo.rs):
 
 - `StationGeoCatalog::load_from_env()` — при старте `railoptim`
@@ -874,7 +946,11 @@ scripts/stations/
 - при отсутствии файла / 0 строк — **warn**, оптимизация не падает
 
 ```bash
-export STATIONS_GEO_DB=/path/to/stations_geo.sqlite   # опционально
+# prod: после cargo build --release, из корня деплоя
+export STATIONS_GEO_DB=/path/to/railoptim/data/stations/stations_geo.sqlite   # опционально
+./target/release/railoptim   # загрузит stations_geo при старте
+
+# разработка / CI
 cargo test stations_geo::
 cargo test esr::   # паритет normalize/checksum с Python
 ```
@@ -924,7 +1000,26 @@ stations_geo: 42150 записей, data/stations/stations_geo.sqlite (ru=39500,
 
 ## Типовые сценарии
 
-### Prod на оффлайн-машине
+### Prod на Ubuntu (основной)
+
+На prod-сервере обычно **всё на одной машине**: Infisical, MSSQL (через proxy-trap), интернет для Geofabrik/sbin, `railoptim` runtime.
+
+```bash
+cd /path/to/railoptim
+
+# полная пересборка (cron или вручную)
+./scripts/stations/build_all.sh prod
+
+# проверка
+./scripts/stations/run.sh sample-geo --n 20
+systemctl restart railoptim   # или ваш способ перезапуска сервиса
+```
+
+Если ETL и runtime на **разных** хостах — см. сценарий ниже.
+
+### Prod на нескольких машинах
+
+Типично все хосты — **Ubuntu**; команды те же, пути синхронизируются вручную (rsync/scp).
 
 1. На машине с Infisical: `run.sh prod fetch-nsi`
 2. На машине с интернетом: `download-pbf`, `build-osm --index`, `build-sbin`
@@ -937,7 +1032,7 @@ stations_geo: 42150 записей, data/stations/stations_geo.sqlite (ru=39500,
 ./scripts/stations/build_all.sh prod --skip-nsi --skip-osm --skip-sbin
 ```
 
-### Dev без MSSQL
+### Dev без MSSQL (macOS или Ubuntu)
 
 ```bash
 ./scripts/stations/run.sh fetch-nsi \
@@ -961,8 +1056,11 @@ stations_geo: 42150 записей, data/stations/stations_geo.sqlite (ru=39500,
 
 | Симптом | Возможная причина | Действие |
 |---------|-------------------|----------|
+| `python3: command not found` | нет Python 3 | Ubuntu: `apt install python3 python3-pip` |
+| `pip: command not found` | pip не установлен | Ubuntu: `apt install python3-pip` или `pip3 install …` |
+| `No space left on device` при download-pbf | мало места на диске | освободить место в `data/stations/cache/pbf/` или другой раздел |
 | `fetch_nsi: MSSQL_SERVER_MSKASUVPL` | секреты не загрузились | `auth-infisical.sh`, `run.sh prod fetch-nsi` |
-| `osm extract: установите osmium` | нет pyosmium / libosmium | `pip install osmium`, `brew install libosmium` |
+| `osm extract: установите osmium` | нет pyosmium / libosmium | Ubuntu: `apt install libosmium2-dev pybind11-dev`, `pip3 install osmium`; macOS: `brew install libosmium` |
 | `PBF не найден для required: russia` | нет cache | `run.sh download-pbf` или `build-osm` без `--index` |
 | `build_geo: sbin index не найден` | не запускали Tier2 | `run.sh build-sbin` |
 | низкий `coverage_pct` для `ru` | нет Tier2 | убедиться что sbin в pipeline, не `--skip-sbin` |

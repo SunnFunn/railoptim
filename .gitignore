@@ -1,6 +1,8 @@
 /target
 /tmp
 /app
+__pycache__/
+*.py[cod]
 # /logs
 .cursorrules
 # *.log

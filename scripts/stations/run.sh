@@ -125,21 +125,21 @@ case "$CMD" in
             echo "run.sh: env ($ENV) для sample-nsi не используется" >&2
         fi
         set -- "${FORWARD[@]+"${FORWARD[@]}"}"
-        exec run_stations_python "$dir/tools/sample_nsi_parquet.py" "$@"
+        run_stations_python "$dir/tools/sample_nsi_parquet.py" "$@"
         ;;
     sample-osm)
         if [ -n "$ENV" ]; then
             echo "run.sh: env ($ENV) для sample-osm не используется" >&2
         fi
         set -- "${FORWARD[@]+"${FORWARD[@]}"}"
-        exec run_stations_python "$dir/tools/sample_osm_parquet.py" "$@"
+        run_stations_python "$dir/tools/sample_osm_parquet.py" "$@"
         ;;
     sample-geo)
         if [ -n "$ENV" ]; then
             echo "run.sh: env ($ENV) для sample-geo не используется" >&2
         fi
         set -- "${FORWARD[@]+"${FORWARD[@]}"}"
-        exec run_stations_python "$dir/tools/sample_stations_geo.py" "$@"
+        run_stations_python "$dir/tools/sample_stations_geo.py" "$@"
         ;;
     *)
         usage >&2

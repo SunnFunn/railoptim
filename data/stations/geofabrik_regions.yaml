@@ -79,7 +79,7 @@ regions:
     priority: 20
 
   - id: georgia
-    geofabrik_slug: asia/georgia-latest
+    geofabrik_slug: europe/georgia-latest
     region_group: south_caucasus
     country_iso: GE
     priority: 20

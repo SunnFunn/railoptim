@@ -2,30 +2,49 @@
 # Источник: структура ЕСР (NNYYZK), ТР4 / osm.sbin.ru; уточняется после анализа выгрузки NSI.
 # Строки с # игнорируются. default_ru=1 — все неперечисленные районы → RU / ru.
 prefix_len,prefix,country_iso,region_group,note
+2,13,BY,cis,Белорусская ж/д
+2,14,BY,cis,Белорусская ж/д
+2,15,BY,cis,Белорусская ж/д
 2,16,BY,cis,Белорусская ж/д
-2,21,LV,baltic,Latvijas dzelzceļš
-2,23,MD,cis,Молдова
-2,24,LT,baltic,Lietuvos geležinkeliai
-2,26,EE,baltic,Eesti Raudtee
-2,31,MN,china_mongolia,Улан-Баторская ж/д (Монголия)
+2,09,LV,baltic,Latvijas dzelzceļš
+2,11,LV,baltic,Latvijas dzelzceļš
+2,39,MD,cis,Молдова
+2,10,LT,baltic,Lietuvos geležinkeliai
+2,12,LT,baltic,Lietuvos geležinkeliai
+2,08,EE,baltic,Eesti Raudtee
 2,32,UA,cis,Украина (районы ТР4)
 2,33,UA,cis,Украина
+2,34,UA,cis,Украина
+2,35,UA,cis,Украина
+2,36,UA,cis,Украина
+2,37,UA,cis,Украина
+2,38,UA,cis,Украина
+2,40,UA,cis,Украина
+2,41,UA,cis,Украина
+2,42,UA,cis,Украина
 2,43,UA,cis,Украина
+2,44,UA,cis,Украина
+2,45,UA,cis,Украина
+2,46,UA,cis,Украина
+2,47,UA,cis,Украина
 2,48,UA,cis,Украина
-2,51,UA,cis,Украина
-2,55,UA,cis,Украина
+2,49,UA,cis,Украина
+2,50,UA,cis,Украина
 2,56,GE,south_caucasus,Грузия
-2,57,AZ,south_caucasus,Азербайджан
-2,58,AM,south_caucasus,Армения
+2,57,GE,south_caucasus,Грузия
+2,54,AZ,south_caucasus,Азербайджан
+2,55,AZ,south_caucasus,Азербайджан
+2,56,AM,south_caucasus,Армения
 2,65,UA,cis,Украина
+2,66,KZ,cis,Казахстан
+2,67,KZ,cis,Казахстан
 2,68,KZ,cis,Казахстан
 2,69,KZ,cis,Казахстан
+2,68,KZ,cis,Казахстан
 2,71,KG,cis,Киргизия (диапазон 7150–7199 в районе 71)
 2,72,UZ,cis,Узбекистан
 2,73,TJ,cis,Таджикистан
 2,74,UZ,cis,Узбекистан/Таджикистан/Туркменистан (общий район 74)
 2,75,TM,cis,Туркменистан
-2,82,CN,china_mongolia,Пограничные/транзит Китай
-2,83,UA,cis,Украина
 2,94,CN,china_mongolia,Пограничные станции Китай
 2,98,CN,china_mongolia,Пограничные станции Китай

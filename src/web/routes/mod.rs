@@ -19,7 +19,10 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health::health))
         .route("/api/v1/meta", get(meta::meta))
-        .route("/api/v1/stations/reload", post(stations::reload_stations))
+        .route(
+            "/api/v1/stations/reload",
+            get(stations::reload_stations_hint).post(stations::reload_stations),
+        )
         .route("/api/v1/stations/{esr6}", get(stations::get_station))
         .route("/api/v1/plans", get(plans::list_plans))
         .route("/api/v1/plans/latest", get(plans::latest_plan))

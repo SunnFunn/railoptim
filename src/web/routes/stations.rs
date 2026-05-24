@@ -33,10 +33,22 @@ pub async fn get_station(
     }))
 }
 
+pub async fn reload_stations_hint() -> Result<Json<crate::web::dto::GeoReloadResponse>, ApiError> {
+    Err(ApiError::MethodNotAllowed(
+        "перечитать stations_geo.sqlite: curl -X POST http://localhost:8080/api/v1/stations/reload"
+            .into(),
+    ))
+}
+
 pub async fn reload_stations(
     State(state): State<AppState>,
 ) -> Result<Json<crate::web::dto::GeoReloadResponse>, ApiError> {
     let catalog = state.reload_stations().await?;
+    tracing::info!(
+        count = catalog.len(),
+        path = %catalog.path().display(),
+        "stations geo catalog reloaded"
+    );
     Ok(Json(crate::web::dto::GeoReloadResponse {
         reloaded: true,
         stations_geo_count: catalog.len(),

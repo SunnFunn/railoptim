@@ -56,6 +56,24 @@ mod api_tests {
         .status()
     }
 
+    async fn post_status(app: axum::Router, path: &str) -> StatusCode {
+        app.oneshot(
+            Request::post(path).body(Body::empty()).unwrap(),
+        )
+        .await
+        .unwrap()
+        .status()
+    }
+
+    fn write_geo_row(conn: &rusqlite::Connection, esr6: &str, name: &str) {
+        conn.execute(
+            "INSERT OR REPLACE INTO stations_geo VALUES
+             (?1, ?2, 55.0, 37.0, 'RU', 'ru', 't', 'm', NULL, NULL, 1.0, 'x')",
+            rusqlite::params![esr6, name],
+        )
+        .unwrap();
+    }
+
     #[tokio::test]
     async fn health_ok() {
         let db = temp_geo_db("health");
@@ -84,6 +102,42 @@ mod api_tests {
         let app = router(test_state(db.clone()));
         assert_eq!(
             get_station_status(app, "/api/v1/stations/194013").await,
+            StatusCode::OK
+        );
+        let _ = fs::remove_dir_all(db.parent().unwrap());
+    }
+
+    #[tokio::test]
+    async fn stations_reload_get_returns_method_not_allowed() {
+        let db = temp_geo_db("reload_get");
+        let app = router(test_state(db.clone()));
+        assert_eq!(
+            get_station_status(app, "/api/v1/stations/reload").await,
+            StatusCode::METHOD_NOT_ALLOWED
+        );
+        let _ = fs::remove_dir_all(db.parent().unwrap());
+    }
+
+    #[tokio::test]
+    async fn stations_reload_post_picks_up_new_rows() {
+        let db = temp_geo_db("reload_post");
+        let app = router(test_state(db.clone()));
+
+        assert_eq!(
+            get_station_status(app.clone(), "/api/v1/stations/521001").await,
+            StatusCode::NOT_FOUND
+        );
+
+        let conn = rusqlite::Connection::open(&db).unwrap();
+        write_geo_row(&conn, "521001", "Новороссийск");
+        drop(conn);
+
+        assert_eq!(
+            post_status(app.clone(), "/api/v1/stations/reload").await,
+            StatusCode::OK
+        );
+        assert_eq!(
+            get_station_status(app, "/api/v1/stations/521001").await,
             StatusCode::OK
         );
         let _ = fs::remove_dir_all(db.parent().unwrap());

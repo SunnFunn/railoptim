@@ -69,6 +69,17 @@ cargo run --bin railoptim-web
 curl -X POST http://localhost:8080/api/v1/plans/reload
 ```
 
+После `./scripts/stations/run.sh build-geo` — перечитать SQLite **без рестарта** (нужен актуальный `railoptim-web` с endpoint reload):
+
+```bash
+curl -X POST http://localhost:8080/api/v1/stations/reload
+curl -s http://localhost:8080/api/v1/stations/521001 | jq .
+```
+
+Важно: `-X POST` обязателен. Обычный `curl …/stations/reload` (GET) вернёт **405** с подсказкой, а не перечитает каталог.
+
+`./deploy/install_web_service.sh` **уже делает** `systemctl restart` в конце — отдельный рестарт после install не нужен. Рестарт нужен только при смене бинарника или unit-файла; для обновления данных geo после deploy достаточно `build-geo` + `POST …/stations/reload`.
+
 ## systemd (ручная установка)
 
 Unit: [`deploy/systemd/railoptim-web.service`](systemd/railoptim-web.service)  

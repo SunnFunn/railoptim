@@ -14,6 +14,7 @@ pub struct ErrorBody {
 pub enum ApiError {
     NotFound(String),
     BadRequest(String),
+    MethodNotAllowed(String),
     Internal(String),
 }
 
@@ -22,13 +23,17 @@ impl ApiError {
         match self {
             Self::NotFound(_) => StatusCode::NOT_FOUND,
             Self::BadRequest(_) => StatusCode::BAD_REQUEST,
+            Self::MethodNotAllowed(_) => StatusCode::METHOD_NOT_ALLOWED,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 
     fn message(&self) -> &str {
         match self {
-            Self::NotFound(m) | Self::BadRequest(m) | Self::Internal(m) => m,
+            Self::NotFound(m)
+            | Self::BadRequest(m)
+            | Self::MethodNotAllowed(m)
+            | Self::Internal(m) => m,
         }
     }
 }

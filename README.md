@@ -22,20 +22,28 @@
 
 ```
 railoptim/
-├── Cargo.toml              — зависимости (highs, tokio, reqwest, serde, rand, …)
-├── run.sh                  — запуск с подгрузкой секретов из Infisical
+├── Cargo.toml              — зависимости (highs, tokio, reqwest, axum, …)
+├── run.sh                  — batch-запуск оптимизации с секретами из Infisical
 ├── auth-infisical.sh       — аутентификация в Infisical
+├── deploy/                 — systemd unit и инструкция для railoptim-web
 ├── data/                   — входные JSON-референсы (references.json, …)
 │   └── stations/           — ETL справочника ЕСР + координаты ([README](data/stations/README.md))
-├── app/                    — вспомогательные артефакты рантайма
+├── tests/fixtures/         — тестовые JSON (в т.ч. optim_report_sample.json)
 ├── example.py              — Python-прототип (PuLP), из которого заимствована
 │                             big-M формулировка MIN_BATCH
 └── src/
-    ├── main.rs             — оркестровка: данные → граф → greedy → MIP → ALNS → отчёт
-    ├── config.rs           — конфигурация (секреты из Infisical)
+    ├── lib.rs              — общая библиотека (batch + web)
+    ├── main.rs             — batch: данные → граф → greedy → MIP → ALNS → отчёт
+    ├── bin/web.rs          — entry point `railoptim-web` (Axum daemon)
+    ├── config.rs           — конфигурация batch (секреты из Infisical)
     ├── node.rs             — доменные структуры: SupplyNode, DemandNode,
     │                         TariffNode, CarKind, RepairStatus, DemandPurpose
     ├── debug.rs            — диагностика и дампы промежуточных состояний
+    ├── web/                — HTTP API для карты назначений (Axum)
+    │   ├── config.rs       — WEB_BIND_ADDR, OPTIM_RESULT_*, CORS
+    │   ├── plan_store.rs   — загрузка tmp/result_*.json
+    │   ├── geo_enrich.rs   — esr6 → lat/lon для deck.gl
+    │   └── routes/         — /health, /api/v1/*
     ├── data/               — источники данных
     │   ├── client.rs       — HTTP-клиент API
     │   ├── demand.rs       — узлы спроса (из API)
@@ -230,12 +238,14 @@ Adaptive Large Neighbourhood Search — метаэвристика вокруг 
 
 ## Запуск
 
+### Batch-оптимизация (`railoptim`)
+
 ```bash
 # разовый запуск с секретами из Infisical (пароли БД, API-токены)
 ./run.sh
 
 # или напрямую после экспорта переменных окружения
-cargo run --release
+cargo run --release --bin railoptim
 ```
 
 Секреты извлекаются только из self-hosted Infisical
@@ -252,13 +262,83 @@ export STATIONS_GEO_DB=data/stations/stations_geo.sqlite   # опциональ�
 
 ---
 
+## Web-сервер (`railoptim-web`)
+
+Отдельный long-running HTTP-сервис на **Axum** для API карты назначений. Работает
+**независимо** от batch-оптимизации: `./run.sh` по-прежнему one-shot cron,
+`railoptim-web` — systemd daemon на Ubuntu prod.
+
+```text
+tmp/result_*.json  +  stations_geo.sqlite  →  railoptim-web  →  JSON API  →  deck.gl / MapLibre
+```
+
+Batch сохраняет план в `tmp/result_YYYYMMDD_HHMMSS.json` ([`OptimReport`](src/solver/result.rs)).
+Web-сервер читает последний файл (или явный путь), обогащает назначения координатами
+из [`stations_geo.sqlite`](data/stations/stations_geo.sqlite) и отдаёт JSON для frontend.
+
+### Сборка и запуск
+
+```bash
+cargo build --release --bin railoptim-web
+
+export STATIONS_GEO_DB=data/stations/stations_geo.sqlite
+export OPTIM_RESULT_FILE=tests/fixtures/optim_report_sample.json   # dev
+cargo run --bin railoptim-web
+```
+
+Подробнее: [`deploy/README.md`](deploy/README.md).
+
+### Переменные окружения
+
+| Переменная | Default | Описание |
+|------------|---------|----------|
+| `WEB_BIND_ADDR` | `0.0.0.0:8080` | Адрес HTTP-сервера |
+| `STATIONS_GEO_DB` | `data/stations/stations_geo.sqlite` | SQLite справочник станций |
+| `OPTIM_RESULT_DIR` | `tmp` | Каталог с `result_*.json` |
+| `OPTIM_RESULT_FILE` | — | Явный путь к JSON (override latest) |
+| `WEB_CORS_ORIGINS` | `*` | CORS origins через запятую |
+| `RUST_LOG` | — | Фильтр tracing |
+
+Web-сервер **не требует** `API_BASE_URL` / `API_TOKEN`.
+
+### API (v1)
+
+| Method | Path | Описание |
+|--------|------|----------|
+| GET | `/health` | Liveness (systemd) |
+| GET | `/api/v1/meta` | Версия, число станций в geo, загруженный план |
+| GET | `/api/v1/stations/{esr6}` | Lookup станции по ЕСР-6 |
+| GET | `/api/v1/plans` | Список `result_*.json` в `OPTIM_RESULT_DIR` |
+| GET | `/api/v1/plans/latest` | Последний план + `OptimReport` |
+| GET | `/api/v1/plans/latest/map` | Данные для карты: arcs + nodes (deck.gl) |
+| POST | `/api/v1/plans/reload` | Перечитать JSON с диска после batch |
+
+После успешного cron `./run.sh`:
+
+```bash
+curl -X POST http://localhost:8080/api/v1/plans/reload
+```
+
+### systemd (prod)
+
+Пример unit: [`deploy/railoptim-web.service`](deploy/railoptim-web.service).
+
+```bash
+sudo cp deploy/railoptim-web.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now railoptim-web
+```
+
+---
+
 ## Технологический стек
 
 - **Язык**: Rust 2024, async runtime — `tokio`.
 - **Solver**: [HiGHS](https://highs.dev/) 2.0 — LP (simplex) и MIP (branch-and-cut).
+- **Web API**: [Axum](https://github.com/tokio-rs/axum) — бинарник `railoptim-web`; frontend (deck.gl + MapLibre) — отдельный этап.
 - **Источники данных**: REST API (через `reqwest` + `serde`), MSSQL, справочник станций [`data/stations/`](data/stations/README.md) (SQLite).
 - **Ошибки**: `anyhow` на верхнем уровне, `thiserror` в модулях.
-- **Выходные данные**: JSON-отчёт и xlsx (через `rust_xlsxwriter`); финальные
+- **Выходные данные**: JSON-отчёт (`tmp/result_*.json`) и xlsx (через `rust_xlsxwriter`); финальные
   назначения отправляются обратно в API.
 
 ---

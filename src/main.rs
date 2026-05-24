@@ -1,15 +1,9 @@
-mod config;
-mod data;
-mod debug;
-mod node;
-mod solver;
-
 use std::collections::{HashMap, HashSet};
 
 use anyhow::Result;
-use config::Config;
-use data::{ApiClient, StationRef};
-use node::{CarKind, DemandNode, DemandPurpose, RepairStatus, TariffNode};
+use railoptim::config::Config;
+use railoptim::data::{self, ApiClient, StationRef};
+use railoptim::node::{CarKind, DemandNode, DemandPurpose, RepairStatus, TariffNode};
 
 #[tokio::main]
 async fn main() -> Result<()> {

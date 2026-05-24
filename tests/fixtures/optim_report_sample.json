@@ -1,0 +1,50 @@
+{
+  "timestamp": "2026-05-23 12:00:00",
+  "solver_status": "optimal",
+  "total_cost_rub": 150000.0,
+  "assigned_cars": 3.0,
+  "penalty_cars": 0.0,
+  "supply_count": 2,
+  "demand_count": 2,
+  "arc_count": 2,
+  "assignments": [
+    {
+      "cars": 2.0,
+      "supply_id": 1,
+      "supply_kind": "Free",
+      "car_numbers": [100001, 100002],
+      "supply_station": "Станция A",
+      "supply_station_code": "111111",
+      "supply_railway": "Московская",
+      "demand_id": 10,
+      "demand_station": "Станция B",
+      "demand_station_code": "222222",
+      "demand_railway": "Октябрьская",
+      "demand_period": 1,
+      "cost_rub": 50000.0,
+      "distance_km": 120,
+      "delivery_days": 3,
+      "period_ok": true,
+      "car_type_ok": true
+    },
+    {
+      "cars": 1.0,
+      "supply_id": 2,
+      "supply_kind": "NoNumber",
+      "car_numbers": [],
+      "supply_station": "Станция C",
+      "supply_station_code": "333333",
+      "supply_railway": "Свердловская",
+      "demand_id": 11,
+      "demand_station": "Станция D",
+      "demand_station_code": "444444",
+      "demand_railway": "Куйбышевская",
+      "demand_period": 2,
+      "cost_rub": 30000.0,
+      "distance_km": 80,
+      "delivery_days": 2,
+      "period_ok": true,
+      "car_type_ok": true
+    }
+  ]
+}

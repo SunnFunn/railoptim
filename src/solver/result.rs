@@ -2,7 +2,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use chrono::Local;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -17,14 +17,14 @@ use super::model::TaskArc;
 // ---------------------------------------------------------------------------
 
 /// Одна строка плана назначения: конкретный вагон (или группа) → узел спроса.
-#[derive(Serialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AssignmentRecord {
     /// Назначено вагонов.
     pub cars: f64,
 
     // --- Предложение ---
     pub supply_id:           usize,
-    pub supply_kind:         &'static str,
+    pub supply_kind:         String,
     /// Номера вагонов в группе (пусто для NoNumber).
     pub car_numbers:         Vec<u64>,
     pub supply_station:      String,
@@ -47,7 +47,7 @@ pub struct AssignmentRecord {
 }
 
 /// Полный отчёт об одном прогоне оптимизации.
-#[derive(Serialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct OptimReport {
     pub timestamp:       String,
     pub solver_status:   String,
@@ -82,7 +82,7 @@ pub fn build_report(
             AssignmentRecord {
                 cars,
                 supply_id:           s.s_id,
-                supply_kind:         car_kind_str(&s.kind),
+                supply_kind:         car_kind_str(&s.kind).to_string(),
                 car_numbers:         s.car_numbers.clone(),
                 supply_station:      s.station_to.clone(),
                 supply_station_code: arc.supply_station_code.clone(),

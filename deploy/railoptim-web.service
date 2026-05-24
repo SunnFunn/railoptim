@@ -1,0 +1,21 @@
+[Unit]
+Description=Railoptim web map API (Axum)
+After=network.target
+
+[Service]
+Type=simple
+User=railoptim
+Group=railoptim
+WorkingDirectory=/opt/railoptim
+Environment=WEB_BIND_ADDR=0.0.0.0:8080
+Environment=STATIONS_GEO_DB=/opt/railoptim/data/stations/stations_geo.sqlite
+Environment=OPTIM_RESULT_DIR=/opt/railoptim/tmp
+# Environment=OPTIM_RESULT_FILE=/opt/railoptim/tmp/result_latest.json
+Environment=WEB_CORS_ORIGINS=*
+Environment=RUST_LOG=railoptim_web=info,tower_http=info,axum=info
+ExecStart=/opt/railoptim/target/release/railoptim-web
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

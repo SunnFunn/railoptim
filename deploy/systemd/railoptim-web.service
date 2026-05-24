@@ -12,7 +12,7 @@ Group=atretyakov
 WorkingDirectory=/home/atretyakov/railoptim
 ExecStart=/bin/bash /home/atretyakov/railoptim/deploy/start_web.sh
 Restart=on-failure
-RestartSec=5
+RestartSec=10
 StandardOutput=journal
 StandardError=journal
 

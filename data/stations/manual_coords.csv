@@ -1,0 +1,4 @@
+# Tier 0: ручные координаты (fill-only — если Tier1 OSM и Tier2 sbin не дали coords).
+# Строки с # игнорируются. esr6 — 6 цифр с ведущими нулями.
+# lat/lon — WGS84 (десятичные градусы). name_osm можно оставить пустым.
+esr6,lat,lon,note

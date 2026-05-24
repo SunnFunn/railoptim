@@ -141,17 +141,33 @@ def _row_from_coord(
     return row, cross_border
 
 
+def _pick_coord(
+    esr6: str,
+    osm_by_esr: dict[str, dict[str, Any]],
+    sbin_by_esr: dict[str, dict[str, Any]],
+    manual_by_esr: dict[str, dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Tier1 → Tier2 → Tier0 manual (fill-only)."""
+    for bucket in (osm_by_esr, sbin_by_esr):
+        coord = bucket.get(esr6)
+        if coord is not None and is_valid_coord(coord.get("lat"), coord.get("lon")):
+            return coord
+    return manual_by_esr.get(esr6)
+
+
 def join_nsi_osm(
     nsi_rows: list[dict[str, Any]],
     osm_rows: list[dict[str, Any]],
     sbin_rows: list[dict[str, Any]] | None = None,
+    manual_rows: dict[str, dict[str, Any]] | None = None,
     *,
     built_at: str | None = None,
 ) -> JoinResult:
-    """Join NSI с координатами: Tier1 osm_pbf, Tier2 osm_sbin (fallback)."""
+    """Join NSI с координатами: Tier1 osm_pbf, Tier2 osm_sbin, Tier0 manual (fallback)."""
     built_at = built_at or datetime.now(timezone.utc).isoformat()
     osm_by_esr = _index_coord_rows(osm_rows)
     sbin_by_esr = _index_coord_rows(sbin_rows or [])
+    manual_by_esr = manual_rows or {}
 
     result = JoinResult()
     for nsi in nsi_rows:
@@ -159,9 +175,7 @@ def join_nsi_osm(
         name = str(nsi.get("name_nsi", "")).strip()
         region_group = str(nsi.get("region_group", "unknown"))
 
-        coord = osm_by_esr.get(esr6)
-        if coord is None:
-            coord = sbin_by_esr.get(esr6)
+        coord = _pick_coord(esr6, osm_by_esr, sbin_by_esr, manual_by_esr)
 
         if coord is None:
             result.unmatched.append(
@@ -285,6 +299,7 @@ def build_report(
     nsi_rows: list[dict[str, Any]],
     osm_rows: list[dict[str, Any]],
     sbin_rows: list[dict[str, Any]] | None = None,
+    manual_rows: dict[str, dict[str, Any]] | None = None,
     *,
     built_at: str,
     paths: dict[str, str],
@@ -308,6 +323,7 @@ def build_report(
 
     matched_via_sbin = sum(1 for r in join.rows if r.source == "osm_sbin")
     matched_via_pbf = sum(1 for r in join.rows if r.source == "osm_pbf")
+    matched_via_manual = sum(1 for r in join.rows if r.source == "manual")
 
     return {
         "built_at": built_at,
@@ -317,9 +333,11 @@ def build_report(
         "osm_unique_esr6": osm_unique,
         "sbin_index_size": len(sbin_list),
         "sbin_unique_esr6": sbin_unique,
+        "manual_coords_count": len(manual_rows or {}),
         "matched_with_coords": matched_n,
         "matched_via_osm_pbf": matched_via_pbf,
         "matched_via_osm_sbin": matched_via_sbin,
+        "matched_via_manual": matched_via_manual,
         "coverage_pct": coverage_pct,
         "coverage_by_region_group": coverage_by_region_group(nsi_rows, matched_esr),
         "unmatched_count": len(join.unmatched),

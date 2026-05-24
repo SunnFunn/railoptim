@@ -22,11 +22,13 @@ from stations_etl.geo.join import (
     write_sqlite,
     write_unmatched_csv,
 )
+from stations_etl.geo.manual import load_manual_coords
 from stations_etl.paths import (
     GEO_BUILD_REPORT,
     GEO_CROSS_BORDER_CSV,
     GEO_SQLITE,
     GEO_UNMATCHED_CSV,
+    MANUAL_COORDS_CSV,
     NSI_PARQUET,
     OSM_INDEX_PARQUET,
     SBIN_INDEX_PARQUET,
@@ -39,6 +41,7 @@ def main() -> int:
     parser.add_argument("--osm", type=Path, default=OSM_INDEX_PARQUET)
     parser.add_argument("--sbin", type=Path, default=SBIN_INDEX_PARQUET)
     parser.add_argument("--no-sbin", action="store_true", help="не использовать Tier2 sbin")
+    parser.add_argument("--manual", type=Path, default=MANUAL_COORDS_CSV, help="Tier0 manual CSV")
     parser.add_argument("--output", type=Path, default=GEO_SQLITE)
     parser.add_argument("--report", type=Path, default=GEO_BUILD_REPORT)
     parser.add_argument("--unmatched", type=Path, default=GEO_UNMATCHED_CSV)
@@ -61,7 +64,19 @@ def main() -> int:
                 file=sys.stderr,
             )
 
-    join = join_nsi_osm(nsi_rows, osm_rows, sbin_rows or None, built_at=built_at)
+    manual_rows = load_manual_coords(args.manual)
+    if manual_rows:
+        print(f"build_geo: Tier0 manual coords: {len(manual_rows)} из {args.manual}", file=sys.stderr)
+    elif args.manual.is_file():
+        print(f"build_geo: Tier0 manual coords: 0 (только заголовок) в {args.manual}", file=sys.stderr)
+
+    join = join_nsi_osm(
+        nsi_rows,
+        osm_rows,
+        sbin_rows or None,
+        manual_rows,
+        built_at=built_at,
+    )
     write_sqlite(join.rows, args.output)
     write_unmatched_csv(join.unmatched, args.unmatched)
     if join.cross_border:
@@ -72,11 +87,13 @@ def main() -> int:
         nsi_rows,
         osm_rows,
         sbin_rows or None,
+        manual_rows,
         built_at=built_at,
         paths={
             "nsi_parquet": str(args.nsi),
             "osm_parquet": str(args.osm),
             "sbin_parquet": str(sbin_path) if sbin_path else None,
+            "manual_coords_csv": str(args.manual) if manual_rows or args.manual.is_file() else None,
             "output_sqlite": str(args.output),
             "unmatched_csv": str(args.unmatched),
             "cross_border_csv": str(args.cross_border) if join.cross_border else None,
@@ -92,7 +109,8 @@ def main() -> int:
     )
     print(
         f"  tier1 osm_pbf: {report['matched_via_osm_pbf']}, "
-        f"tier2 osm_sbin: {report['matched_via_osm_sbin']}",
+        f"tier2 osm_sbin: {report['matched_via_osm_sbin']}, "
+        f"tier0 manual: {report['matched_via_manual']}",
         file=sys.stderr,
     )
     for rg, stats in report["coverage_by_region_group"].items():

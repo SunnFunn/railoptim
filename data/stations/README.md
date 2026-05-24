@@ -344,10 +344,11 @@ Join NSI + Tier1 + Tier2 → SQLite + отчёты.
 
 ---
 
-## Источники координат (Tier 1 / 2 / 3)
+## Источники координат (Tier 0 / 1 / 2 / 3)
 
 | Tier | Источник | Артефакт | Охват | Статус |
 |------|----------|----------|-------|--------|
+| **0** | Ручной CSV | [`manual_coords.csv`](manual_coords.csv) | исключения (порты и пр.) | ✅ fill-only |
 | **1** | OSM Geofabrik PBF | `osm_esr_index.parquet` | мультирегион (RU, CIS, Baltic, Caucasus, MN) | ✅ |
 | **2** | [osm.sbin.ru/esr](http://osm.sbin.ru/esr/) | `sbin_esr_index.parquet` | ~18k esr6, в основном RU + СНГ | ✅ |
 | **3** | Wikidata P2815 | — | baltic, cis, caucasus, cn/mn | ❌ не реализовано |
@@ -360,10 +361,11 @@ Join NSI + Tier1 + Tier2 → SQLite + отчёты.
 
 Для каждой строки NSI (`esr6`):
 
-1. Ищем координаты в **Tier1** (`osm_esr_index.parquet`).
+1. Ищем координаты в **Tier1** (`osm_esr_index.parquet`) — только валидные lat/lon.
 2. Если не найдено — ищем в **Tier2** (`sbin_esr_index.parquet`).
-3. Если coords валидны (`|lat|≤90`, `|lon|≤180`) — пишем строку в SQLite.
-4. Иначе — в `unmatched_esr6.csv`.
+3. Если не найдено — **Tier0** [`manual_coords.csv`](manual_coords.csv) (ручные coords, fill-only).
+4. Если coords валидны — пишем строку в SQLite.
+5. Иначе — в `unmatched_esr6.csv`.
 
 **Имя в SQLite** — всегда `name_nsi` из NSI, не OSM/sbin.
 
@@ -373,6 +375,7 @@ Join NSI + Tier1 + Tier2 → SQLite + отчёты.
 |--------|--------|
 | `osm_pbf` | Tier1, Geofabrik extract |
 | `osm_sbin` | Tier2, osm.sbin.ru |
+| `manual` | Tier0, `manual_coords.csv` |
 
 Tier1 **всегда** побеждает при совпадении esr6: sbin не перезаписывает OSM PBF.
 
@@ -395,6 +398,26 @@ Tier1 **всегда** побеждает при совпадении esr6: sbin
 | `china_mongolia` | MN, CN (хвост) |
 
 Используется на шаге NSI и в отчётах `coverage_by_region_group`.
+
+### [`manual_coords.csv`](manual_coords.csv)
+
+**Tier 0** — ручные координаты для станций, которых нет в OSM/sbin (порты, экспортные терминалы и т.п.).
+
+| Колонка | Описание |
+|---------|----------|
+| `esr6` | 6 цифр ЕСР (можно без ведущих нулей — нормализуется) |
+| `lat` | WGS84, градусы |
+| `lon` | WGS84, градусы |
+| `note` | комментарий (не попадает в SQLite как name; name всегда из NSI) |
+
+Строки с `#` игнорируются. **Fill-only:** manual не перезаписывает Tier1/2.
+
+После правок — только пересборка geo (без PBF):
+
+```bash
+./scripts/stations/run.sh build-geo
+curl -X POST http://localhost:8080/api/v1/plans/reload   # web
+```
 
 ### [`geofabrik_regions.yaml`](geofabrik_regions.yaml)
 
@@ -1083,5 +1106,5 @@ systemctl restart railoptim   # или ваш способ перезапуск�
 |-------|------------------------|
 | `README.md` | `*.parquet`, `*.sqlite` |
 | `esr_country_prefixes.csv` | `fetch_report.json`, `build_report.json`, … |
-| `geofabrik_regions.yaml` | `cache/pbf/`, `cache/sbin/` |
-| | `unmatched_esr6.csv`, `cross_border_esr6_conflicts.csv` |
+| `manual_coords.csv` | `cache/pbf/`, `cache/sbin/` |
+| `geofabrik_regions.yaml` | `unmatched_esr6.csv`, `cross_border_esr6_conflicts.csv` |

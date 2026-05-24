@@ -9,6 +9,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 DATA_STATIONS = REPO_ROOT / "data/stations"
 
 ESR_COUNTRY_PREFIXES = DATA_STATIONS / "esr_country_prefixes.csv"
+MANUAL_COORDS_CSV = DATA_STATIONS / "manual_coords.csv"
 GEOFABRIK_MANIFEST = DATA_STATIONS / "geofabrik_regions.yaml"
 PBF_CACHE_DIR = DATA_STATIONS / "cache/pbf"
 

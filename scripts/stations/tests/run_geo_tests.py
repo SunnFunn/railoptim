@@ -98,6 +98,28 @@ def main() -> int:
     assert by_esr["194013"].source == "osm_pbf"
     assert next(r for r in join2.rows if r.esr6 == "194013").source == "osm_pbf"
 
+    manual_rows = {
+        "570001": {
+            "esr6": "570001",
+            "lat": 40.4093,
+            "lon": 49.8671,
+            "source": "manual",
+            "match_method": "manual_csv",
+            "osm_id": None,
+            "name_osm": "Баку ручная",
+            "confidence": 1.0,
+        }
+    }
+    join3 = join_nsi_osm(
+        nsi_rows, osm_rows, sbin_rows, manual_rows, built_at="2026-01-01T00:00:00+00:00"
+    )
+    assert len(join3.rows) == 5
+    assert len(join3.unmatched) == 1
+    manual_match = next(r for r in join3.rows if r.esr6 == "570001")
+    assert manual_match.source == "manual"
+    assert manual_match.lat == 40.4093
+    assert "570001" not in {u["esr6"] for u in join3.unmatched}
+
     with tempfile.TemporaryDirectory() as td:
         db = Path(td) / "geo.sqlite"
         write_sqlite(join.rows, db)

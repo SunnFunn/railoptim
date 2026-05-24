@@ -1,0 +1,27 @@
+[Unit]
+Description=Railoptim web map API (Axum)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=atretyakov
+Group=atretyakov
+WorkingDirectory=/home/atretyakov/railoptim
+ExecStart=/bin/bash /home/atretyakov/railoptim/deploy/start_web.sh
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+Environment="WEB_BIND_ADDR=0.0.0.0:8080"
+Environment="STATIONS_GEO_DB=/home/atretyakov/railoptim/data/stations/stations_geo.sqlite"
+Environment="OPTIM_RESULT_DIR=/home/atretyakov/railoptim/tmp"
+Environment="WEB_CORS_ORIGINS=*"
+Environment="RUST_LOG=railoptim_web=info,tower_http=info,axum=info"
+Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+[Install]
+WantedBy=multi-user.target

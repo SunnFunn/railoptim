@@ -44,8 +44,7 @@ export MIP_WARM_START="$MIP_WS_ARG"
 
 # --- ВЫБОР БИНАРНИКА ---
 if [ "$ENV" == "prod" ]; then
-    # BINARY=("$dir/app/bin/railoptim")
-    BINARY=("$dir/target/release/railoptim")
+    BINARY=("$dir/app/bin/railoptim")
 else
     BINARY=("$dir/target/release/railoptim")
 fi

@@ -1,6 +1,7 @@
 /target
 /tmp
-/app
+/app/bin/*
+!/app/bin/.gitkeep
 __pycache__/
 *.py[cod]
 # /logs

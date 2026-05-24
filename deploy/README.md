@@ -2,12 +2,28 @@
 
 Отдельный long-running сервис. Batch-оптимизация (`railoptim` + `run.sh`) работает независимо.
 
-## Сборка
+## Prod: одна команда
+
+Из корня репозитория на Ubuntu prod (пути в unit — см. [`systemd/railoptim-web.service`](systemd/railoptim-web.service)):
 
 ```bash
-cd /path/to/railoptim
-cargo build --release --bin railoptim-web
+./deploy/install_web_service.sh
 ```
+
+Скрипт:
+
+1. `cargo build --release --bin railoptim --bin railoptim-web`
+2. копирует бинарники в [`app/bin/`](../app/bin/) (`railoptim`, `railoptim-web`)
+3. `ln -sf deploy/systemd/railoptim-web.service` → `/etc/systemd/system/`
+4. `systemctl daemon-reload`, `enable`, `restart`
+
+Prod batch (`./run.sh prod`) использует `app/bin/railoptim`.
+
+Unit-файл **не копируется** — симлинк на репозиторий, правки в IDE сразу на месте.
+После изменения unit: `sudo systemctl daemon-reload && sudo systemctl restart railoptim-web`.
+
+Unit по умолчанию: `User=atretyakov`, `WorkingDirectory=/home/atretyakov/railoptim` — поправить при другом пути.
+Wrapper [`start_web.sh`](start_web.sh) запускает `app/bin/railoptim-web`.
 
 ## Переменные окружения
 
@@ -52,18 +68,18 @@ cargo run --bin railoptim-web
 curl -X POST http://localhost:8080/api/v1/plans/reload
 ```
 
-## systemd (Ubuntu prod)
+## systemd (ручная установка)
 
-Пример unit: [`deploy/railoptim-web.service`](railoptim-web.service)
+Unit: [`deploy/systemd/railoptim-web.service`](systemd/railoptim-web.service)  
+Рекомендуется: [`./deploy/install_web_service.sh`](install_web_service.sh)
 
 ```bash
-sudo cp deploy/railoptim-web.service /etc/systemd/system/
+sudo ln -sf /path/to/railoptim/deploy/systemd/railoptim-web.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now railoptim-web
-sudo systemctl status railoptim-web
 ```
 
-Пути `User`, `WorkingDirectory`, `ExecStart` — подставить под prod.
+Пути `User`, `Group`, `WorkingDirectory`, `ExecStart` в unit — под prod (см. [`systemd/railoptim-web.service`](systemd/railoptim-web.service)).
 
 ## Smoke
 

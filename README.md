@@ -25,7 +25,8 @@ railoptim/
 ├── Cargo.toml              — зависимости (highs, tokio, reqwest, axum, …)
 ├── run.sh                  — batch-запуск оптимизации с секретами из Infisical
 ├── auth-infisical.sh       — аутентификация в Infisical
-├── deploy/                 — systemd unit и инструкция для railoptim-web
+├── deploy/                 — deploy web: install_web_service.sh, systemd/, start_web.sh
+├── app/bin/                — prod-бинарники (railoptim, railoptim-web), gitignored
 ├── data/                   — входные JSON-референсы (references.json, …)
 │   └── stations/           — ETL справочника ЕСР + координаты ([README](data/stations/README.md))
 ├── tests/fixtures/         — тестовые JSON (в т.ч. optim_report_sample.json)
@@ -321,13 +322,14 @@ curl -X POST http://localhost:8080/api/v1/plans/reload
 
 ### systemd (prod)
 
-Пример unit: [`deploy/railoptim-web.service`](deploy/railoptim-web.service).
+Одна команда из корня репозитория:
 
 ```bash
-sudo cp deploy/railoptim-web.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now railoptim-web
+./deploy/install_web_service.sh
 ```
+
+Unit — симлинк на [`deploy/systemd/railoptim-web.service`](deploy/systemd/railoptim-web.service) (правки в IDE).
+Подробнее: [`deploy/README.md`](deploy/README.md).
 
 ---
 

@@ -45,15 +45,25 @@ mod api_tests {
         AppState::new(config, stations).unwrap()
     }
 
+    async fn get_station_status(app: axum::Router, path: &str) -> StatusCode {
+        app.oneshot(
+            axum::http::Request::get(path)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+        .status()
+    }
+
     #[tokio::test]
     async fn health_ok() {
         let db = temp_geo_db("health");
         let app = router(test_state(db.clone()));
-        let response = app
-            .oneshot(Request::get("/health").body(Body::empty()).unwrap())
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            get_station_status(app, "/health").await,
+            StatusCode::OK
+        );
         let _ = fs::remove_dir_all(db.parent().unwrap());
     }
 
@@ -61,15 +71,10 @@ mod api_tests {
     async fn station_not_found() {
         let db = temp_geo_db("not_found");
         let app = router(test_state(db.clone()));
-        let response = app
-            .oneshot(
-                Request::get("/api/v1/stations/999999")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            get_station_status(app, "/api/v1/stations/999999").await,
+            StatusCode::NOT_FOUND
+        );
         let _ = fs::remove_dir_all(db.parent().unwrap());
     }
 
@@ -77,15 +82,10 @@ mod api_tests {
     async fn station_found() {
         let db = temp_geo_db("found");
         let app = router(test_state(db.clone()));
-        let response = app
-            .oneshot(
-                Request::get("/api/v1/stations/194013")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            get_station_status(app, "/api/v1/stations/194013").await,
+            StatusCode::OK
+        );
         let _ = fs::remove_dir_all(db.parent().unwrap());
     }
 }

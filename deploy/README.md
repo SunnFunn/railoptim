@@ -56,7 +56,8 @@ cargo run --bin railoptim-web
 | GET | `/api/v1/plans` | Список `result_*.json` |
 | GET | `/api/v1/plans/latest` | Последний план + OptimReport |
 | GET | `/api/v1/plans/latest/map` | Данные для deck.gl (arcs + nodes) |
-| POST | `/api/v1/plans/reload` | Перечитать JSON с диска |
+| POST | `/api/v1/plans/reload` | Перечитать JSON плана с диска |
+| POST | `/api/v1/stations/reload` | Перечитать `stations_geo.sqlite` в память web |
 
 ## Связка с batch
 

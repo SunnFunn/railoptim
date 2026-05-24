@@ -106,3 +106,10 @@ pub struct ReloadResponse {
     pub reloaded: bool,
     pub plan: Option<PlanSummary>,
 }
+
+#[derive(Debug, Serialize)]
+pub struct GeoReloadResponse {
+    pub reloaded: bool,
+    pub stations_geo_count: usize,
+    pub stations_geo_path: String,
+}

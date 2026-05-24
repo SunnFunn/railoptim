@@ -416,8 +416,12 @@ Tier1 **всегда** побеждает при совпадении esr6: sbin
 
 ```bash
 ./scripts/stations/run.sh build-geo
-curl -X POST http://localhost:8080/api/v1/plans/reload   # web
+curl -X POST http://localhost:8080/api/v1/stations/reload   # перечитать SQLite в web
+curl -X POST http://localhost:8080/api/v1/plans/reload        # план назначений (отдельно)
 ```
+
+`POST /api/v1/plans/reload` **не** подхватывает станции — только JSON плана.  
+Альтернатива reload: `sudo systemctl restart railoptim-web`.
 
 ### [`geofabrik_regions.yaml`](geofabrik_regions.yaml)
 

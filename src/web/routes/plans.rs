@@ -38,11 +38,12 @@ pub async fn latest_plan_map(State(state): State<AppState>) -> Result<Json<PlanM
     let summary = plans
         .summary()
         .ok_or_else(|| ApiError::Internal("plan summary unavailable".into()))?;
+    let stations = state.stations.read().await;
 
     Ok(Json(build_map_response(
         loaded,
         summary,
-        state.stations.as_ref(),
+        &stations,
     )))
 }
 

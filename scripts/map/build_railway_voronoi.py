@@ -87,16 +87,39 @@ def apply_rw_aliases(
 
 
 def load_allowlist(path: Path | None) -> set[str] | None:
+    codes, _cis = load_allowlist_sections(path)
+    return codes if codes else None
+
+
+def load_allowlist_sections(path: Path | None) -> tuple[set[str], set[str]]:
+    """Коды allowlist и подмножество СНГ (строки после «# СНГ» в файле)."""
     if path is None or not path.is_file():
-        return None
+        return set(), set()
     codes: set[str] = set()
+    cis: set[str] = set()
+    section_cis = False
     with path.open(encoding="utf-8") as f:
         for line in f:
             line = line.strip()
-            if not line or line.startswith("#"):
+            if not line:
                 continue
-            codes.add(line.upper())
-    return codes
+            if line.startswith("#"):
+                if "СНГ" in line.upper() or "сосед" in line.lower():
+                    section_cis = True
+                continue
+            code = line.upper()
+            codes.add(code)
+            if section_cis:
+                cis.add(code)
+    return codes, cis
+
+
+def _use_point_for_centroid(p: dict, rw: str, cis_rw: set[str]) -> bool:
+    """Центроид СНГ-дорог — только станции region_group=cis (без «БЕЛ» по всей РФ)."""
+    rg = p.get("region_group") or ""
+    if rw in cis_rw:
+        return rg == "cis"
+    return rg == "ru"
 
 
 def load_esr_fallback(path: Path) -> dict[str, str]:
@@ -277,12 +300,131 @@ def _voronoi_cell_for_coord(
     return min(geoms, key=lambda g: g.distance(pt))
 
 
+def _railway_centroids(
+    points: list[dict],
+    cis_rw: set[str],
+    *,
+    min_filtered: int = 3,
+) -> tuple[list[str], list[tuple[float, float]], Counter[str], dict[str, str]]:
+    """
+    Одна опорная точка на дорогу: среднее lon/lat станций.
+    Для кодов СНГ — только станции с region_group=cis.
+    """
+    by_rw: dict[str, list[tuple[float, float]]] = defaultdict(list)
+    by_rw_filtered: dict[str, list[tuple[float, float]]] = defaultdict(list)
+    for p in points:
+        rw = p["railway_rw"]
+        coord = (p["lon"], p["lat"])
+        by_rw[rw].append(coord)
+        if _use_point_for_centroid(p, rw, cis_rw):
+            by_rw_filtered[rw].append(coord)
+
+    rw_order: list[str] = []
+    sites: list[tuple[float, float]] = []
+    station_counts: Counter[str] = Counter()
+    centroid_source: dict[str, str] = {}
+
+    for rw in sorted(by_rw.keys()):
+        station_counts[rw] = len(by_rw[rw])
+        filt = by_rw_filtered[rw]
+        if len(filt) >= min_filtered:
+            coords = filt
+            centroid_source[rw] = "cis_filtered" if rw in cis_rw else "ru_filtered"
+        else:
+            coords = by_rw[rw]
+            centroid_source[rw] = "all_stations_fallback"
+
+        lon = sum(c[0] for c in coords) / len(coords)
+        lat = sum(c[1] for c in coords) / len(coords)
+        rw_order.append(rw)
+        sites.append((lon, lat))
+
+    return rw_order, sites, station_counts, centroid_source
+
+
 def build_voronoi_geojson(
+    points: list[dict],
+    bbox: tuple[float, float, float, float],
+    *,
+    simplify_tol: float = 0.35,
+    cis_rw: set[str] | None = None,
+    mode: str = "centroids",
+) -> tuple[dict, dict]:
+    """
+    centroids (по умолчанию): Voronoi между центроидами сетей — одна крупная зона на дорогу.
+    stations: устаревший режим (union ячеек всех станций — «фракталы»).
+    """
+    if mode == "stations":
+        return _build_voronoi_by_stations(points, bbox, simplify_tol=simplify_tol)
+
+    from shapely.geometry import MultiPoint, box, mapping
+    from shapely.ops import voronoi_diagram
+
+    cis_rw = cis_rw or set()
+    min_lon, min_lat, max_lon, max_lat = bbox
+    envelope = box(min_lon, min_lat, max_lon, max_lat)
+
+    rw_order, sites, station_counts, centroid_source = _railway_centroids(
+        points, cis_rw
+    )
+    if len(sites) < 3:
+        raise RuntimeError(f"Слишком мало дорог для Voronoi: {len(sites)}")
+
+    mp = MultiPoint(sites)
+    diagram = voronoi_diagram(mp, envelope=envelope)
+    diagram_geoms = list(diagram.geoms)
+
+    if len(diagram_geoms) != len(sites):
+        raise RuntimeError(
+            f"Voronoi centroids: {len(sites)} точек, {len(diagram_geoms)} ячеек"
+        )
+
+    features = []
+    for idx, (rw, geom) in enumerate(zip(rw_order, diagram_geoms, strict=True)):
+        if geom.is_empty:
+            continue
+        clipped = geom.intersection(envelope)
+        if clipped.is_empty:
+            continue
+        if simplify_tol > 0:
+            clipped = clipped.simplify(simplify_tol, preserve_topology=True)
+        minx, miny, maxx, maxy = clipped.bounds
+        c_lon, c_lat = sites[idx]
+        features.append(
+            {
+                "type": "Feature",
+                "properties": {
+                    "rw": rw,
+                    "station_count": station_counts[rw],
+                    "centroid_lon": c_lon,
+                    "centroid_lat": c_lat,
+                    "centroid_source": centroid_source.get(rw, ""),
+                    "label_lon": minx,
+                    "label_lat": maxy,
+                },
+                "geometry": mapping(clipped),
+            }
+        )
+
+    collection = {"type": "FeatureCollection", "features": features}
+    meta = {
+        "mode": "centroids",
+        "zone_count": len(features),
+        "station_count": len(points),
+        "railway_count": len(rw_order),
+        "centroid_source": centroid_source,
+        "railways": dict(sorted(station_counts.items())),
+    }
+    return collection, meta
+
+
+def _build_voronoi_by_stations(
     points: list[dict],
     bbox: tuple[float, float, float, float],
     *,
     simplify_tol: float = 0.08,
 ) -> tuple[dict, dict]:
+    """Старый режим: union Voronoi-ячеек каждой станции (даёт фрактальные MultiPolygon)."""
     from shapely.geometry import MultiPoint, box, mapping
     from shapely.ops import unary_union, voronoi_diagram
 
@@ -347,6 +489,7 @@ def build_voronoi_geojson(
 
     collection = {"type": "FeatureCollection", "features": features}
     meta = {
+        "mode": "stations",
         "zone_count": len(features),
         "station_count": len(points),
         "unique_coord_count": len(rep_coords),
@@ -395,7 +538,18 @@ def main() -> int:
         default=",".join(str(x) for x in DEFAULT_BBOX),
         help="min_lon,min_lat,max_lon,max_lat",
     )
-    parser.add_argument("--simplify", type=float, default=0.08)
+    parser.add_argument(
+        "--mode",
+        choices=("centroids", "stations"),
+        default="centroids",
+        help="centroids — одна зона на дорогу (рекомендуется); stations — union по всем станциям",
+    )
+    parser.add_argument(
+        "--simplify",
+        type=float,
+        default=None,
+        help="tolerance simplify (градусы); по умолчанию 0.35 для centroids, 0.08 для stations",
+    )
     args = parser.parse_args()
 
     bbox_parts = [float(x) for x in args.bbox.split(",")]
@@ -409,9 +563,16 @@ def main() -> int:
         return 1
 
     region_groups = parse_region_filter(args.region)
-    allowlist = None if args.no_allowlist else load_allowlist(args.allowlist)
+    _allow, cis_rw = load_allowlist_sections(
+        None if args.no_allowlist else args.allowlist
+    )
+    allowlist = None if args.no_allowlist else (_allow or None)
     if allowlist is not None and not allowlist:
         print(f"WARN: пустой allowlist {args.allowlist}", file=sys.stderr)
+
+    simplify = args.simplify
+    if simplify is None:
+        simplify = 0.35 if args.mode == "centroids" else 0.08
 
     fallback = load_esr_fallback(args.fallback) if args.fallback.is_file() else {}
     nsi_rw = load_nsi_rw(args.nsi)
@@ -437,7 +598,11 @@ def main() -> int:
 
     try:
         collection, voronoi_meta = build_voronoi_geojson(
-            filtered, bbox, simplify_tol=args.simplify
+            filtered,
+            bbox,
+            simplify_tol=simplify,
+            cis_rw=cis_rw,
+            mode=args.mode,
         )
     except ImportError as e:
         print(
@@ -453,6 +618,9 @@ def main() -> int:
     by_region = Counter(p.get("region_group", "") for p in filtered)
     report = {
         "built_at": datetime.now(timezone.utc).isoformat(),
+        "voronoi_mode": args.mode,
+        "simplify_tol": simplify,
+        "cis_rw_codes": sorted(cis_rw) if cis_rw else [],
         "region_filter": args.region,
         "region_groups_resolved": sorted(region_groups) if region_groups else "all",
         "bbox": list(bbox),

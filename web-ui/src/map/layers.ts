@@ -2,11 +2,7 @@ import { ArcLayer, GeoJsonLayer, ScatterplotLayer, TextLayer } from "@deck.gl/la
 import type { Layer } from "@deck.gl/core";
 import type { FeatureCollection } from "geojson";
 import type { ArcDatum, HoverInfo, NodeDatum } from "../types/map";
-import type {
-  RailwayZoneCollection,
-  RailwayZoneLabel,
-  RailwayZoneProperties,
-} from "./railwayZones";
+import type { RailwayZoneCollection, RailwayZoneLabel } from "./railwayZones";
 
 const SUPPLY_COLOR: [number, number, number, number] = [46, 125, 50, 220];
 const DEMAND_COLOR: [number, number, number, number] = [211, 47, 47, 220];
@@ -95,13 +91,8 @@ export function buildNodeLayer(
   });
 }
 
-function rwLineColor(rw: string): [number, number, number, number] {
-  let h = 0;
-  for (let i = 0; i < rw.length; i++) {
-    h = (Math.imul(31, h) + rw.charCodeAt(i)) >>> 0;
-  }
-  return [(h & 0x9f) + 80, ((h >> 8) & 0x9f) + 80, ((h >> 16) & 0x9f) + 80, 200];
-}
+/** Единый цвет контуров зон; различие дорог — только в подписи rw. */
+const ZONE_OUTLINE_COLOR: [number, number, number, number] = [55, 71, 95, 220];
 
 export function buildRailwayZoneLayers(
   collection: RailwayZoneCollection,
@@ -119,8 +110,7 @@ export function buildRailwayZoneLayers(
     getLineWidth: 3,
     lineCapRounded: true,
     lineJointRounded: true,
-    getLineColor: (f: { properties?: RailwayZoneProperties }) =>
-      rwLineColor(f.properties?.rw ?? ""),
+    getLineColor: ZONE_OUTLINE_COLOR,
     _subLayerProps: {
       line: { parameters: { depthTest: false } },
     },

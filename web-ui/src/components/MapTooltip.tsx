@@ -1,3 +1,4 @@
+import { isDislocationPeriod } from "../map/filterArcs";
 import type { HoverInfo } from "../types/map";
 
 interface MapTooltipProps {
@@ -27,6 +28,12 @@ export function MapTooltip({ info }: MapTooltipProps) {
         </div>
         <div>
           {a.from_esr6} → {a.to_esr6}
+        </div>
+        <div>
+          Предложение:{" "}
+          {isDislocationPeriod(a.supply_period)
+            ? "2–10 суток (дислокация)"
+            : "1-е сутки"}
         </div>
         <div>Вагонов: {a.cars}</div>
         <div>Расстояние: {a.distance_km} км</div>

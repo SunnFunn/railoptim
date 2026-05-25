@@ -16,6 +16,10 @@ use super::model::TaskArc;
 // Структуры отчёта
 // ---------------------------------------------------------------------------
 
+fn default_supply_period_one() -> u8 {
+    1
+}
+
 /// Одна строка плана назначения: конкретный вагон (или группа) → узел спроса.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AssignmentRecord {
@@ -25,6 +29,9 @@ pub struct AssignmentRecord {
     // --- Предложение ---
     pub supply_id:           usize,
     pub supply_kind:         String,
+    /// `1` — предложение 1-х суток (АПИ); `10` — дислокация 2–10 суток.
+    #[serde(default = "default_supply_period_one")]
+    pub supply_period:       u8,
     /// Номера вагонов в группе (пусто для NoNumber).
     pub car_numbers:         Vec<u64>,
     pub supply_station:      String,
@@ -83,6 +90,7 @@ pub fn build_report(
                 cars,
                 supply_id:           s.s_id,
                 supply_kind:         car_kind_str(&s.kind).to_string(),
+                supply_period:       s.supply_period,
                 car_numbers:         s.car_numbers.clone(),
                 supply_station:      s.station_to.clone(),
                 supply_station_code: arc.supply_station_code.clone(),

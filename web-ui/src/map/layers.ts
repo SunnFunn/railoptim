@@ -1,6 +1,7 @@
 import { ArcLayer, GeoJsonLayer, ScatterplotLayer, TextLayer } from "@deck.gl/layers";
 import type { Layer } from "@deck.gl/core";
 import type { FeatureCollection } from "geojson";
+import { isDislocationPeriod } from "./filterArcs";
 import type { ArcDatum, HoverInfo, NodeDatum } from "../types/map";
 import {
   zoneLabelCharacterSet,
@@ -9,6 +10,8 @@ import {
 } from "./railwayZones";
 
 const SUPPLY_COLOR: [number, number, number, number] = [46, 125, 50, 220];
+/** Дуги дислокации (2–10 суток, supply_period=10). */
+const DISLOCATION_ARC_COLOR: [number, number, number, number] = [230, 126, 34, 210];
 const DEMAND_COLOR: [number, number, number, number] = [211, 47, 47, 220];
 const BOTH_COLOR: [number, number, number, number] = [123, 31, 162, 220];
 
@@ -42,7 +45,8 @@ export function buildArcLayer(
     autoHighlight: true,
     getSourcePosition: (d) => d.sourcePosition,
     getTargetPosition: (d) => d.targetPosition,
-    getSourceColor: SUPPLY_COLOR,
+    getSourceColor: (d) =>
+      isDislocationPeriod(d.supply_period) ? DISLOCATION_ARC_COLOR : SUPPLY_COLOR,
     getTargetColor: DEMAND_COLOR,
     getWidth: (d) => arcWidth(d.cars),
     getTilt: 0,

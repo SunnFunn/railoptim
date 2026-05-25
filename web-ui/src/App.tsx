@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { fetchPlanMap, reloadPlan } from "./api/client";
 import { RailwayFilter } from "./components/RailwayFilter";
 import { MapTooltip } from "./components/MapTooltip";
-import { filterArcs } from "./map/filterArcs";
+import { filterArcs, isDislocationPeriod } from "./map/filterArcs";
 import { MapView } from "./map/MapView";
 import type { HoverInfo, PlanMapResponse } from "./types/map";
 
@@ -28,6 +28,13 @@ export default function App() {
       return v !== "0";
     } catch {
       return true;
+    }
+  });
+  const [showDislocationArcs, setShowDislocationArcs] = useState(() => {
+    try {
+      return sessionStorage.getItem("railoptim.showDislocationArcs") === "1";
+    } catch {
+      return false;
     }
   });
   const [hover, setHover] = useState<HoverInfo | null>(null);
@@ -58,12 +65,36 @@ export default function App() {
     if (!data) {
       return { arcs: [], nodes: [], visibleArcCount: 0, visibleCars: 0 };
     }
-    return filterArcs(data.arcs, selectedSupply, selectedDemand);
-  }, [data, selectedSupply, selectedDemand]);
+    return filterArcs(
+      data.arcs,
+      selectedSupply,
+      selectedDemand,
+      showDislocationArcs,
+    );
+  }, [data, selectedSupply, selectedDemand, showDislocationArcs]);
+
+  const arcCounts = useMemo(() => {
+    if (!data) return { day1: 0, dislocation: 0, day1Cars: 0, dislocationCars: 0 };
+    let day1 = 0;
+    let dislocation = 0;
+    let day1Cars = 0;
+    let dislocationCars = 0;
+    for (const arc of data.arcs) {
+      if (arc.geo_status !== "ok") continue;
+      if (isDislocationPeriod(arc.supply_period ?? 1)) {
+        dislocation += 1;
+        dislocationCars += arc.cars;
+      } else {
+        day1 += 1;
+        day1Cars += arc.cars;
+      }
+    }
+    return { day1, dislocation, day1Cars, dislocationCars };
+  }, [data]);
 
   useEffect(() => {
     setFitToken((t) => t + 1);
-  }, [selectedSupply, selectedDemand]);
+  }, [selectedSupply, selectedDemand, showDislocationArcs]);
 
   const onReload = async () => {
     setLoading(true);
@@ -79,6 +110,12 @@ export default function App() {
   const resetFilters = () => {
     setSelectedSupply(new Set());
     setSelectedDemand(new Set());
+    setShowDislocationArcs(false);
+    try {
+      sessionStorage.setItem("railoptim.showDislocationArcs", "0");
+    } catch {
+      /* ignore */
+    }
   };
 
   return (
@@ -136,6 +173,14 @@ export default function App() {
                 <dd>
                   {filtered.visibleArcCount} / {data.stats.arcs_resolved} (geo ok)
                 </dd>
+                <dt>1-е сутки</dt>
+                <dd>
+                  {arcCounts.day1} дуг, {arcCounts.day1Cars} ваг.
+                </dd>
+                <dt>2–10 суток</dt>
+                <dd>
+                  {arcCounts.dislocation} дуг, {arcCounts.dislocationCars} ваг.
+                </dd>
                 <dt>Вагонов</dt>
                 <dd>{filtered.visibleCars}</dd>
                 <dt>Узлов</dt>
@@ -143,6 +188,25 @@ export default function App() {
                 <dt>Без geo</dt>
                 <dd>{data.stats.arcs_missing_geo}</dd>
               </dl>
+              <label className="checkbox">
+                <input
+                  type="checkbox"
+                  checked={showDislocationArcs}
+                  onChange={(e) => {
+                    const on = e.target.checked;
+                    setShowDislocationArcs(on);
+                    try {
+                      sessionStorage.setItem(
+                        "railoptim.showDislocationArcs",
+                        on ? "1" : "0",
+                      );
+                    } catch {
+                      /* ignore */
+                    }
+                  }}
+                />
+                Вагоны 2–10 суток (дислокация)
+              </label>
               <label className="checkbox">
                 <input
                   type="checkbox"
@@ -191,7 +255,10 @@ export default function App() {
             <section className="panel legend">
               <h2>Легенда</h2>
               <div className="legend-row">
-                <span className="dot supply" /> Образование
+                <span className="dot supply" /> 1-е сутки
+              </div>
+              <div className="legend-row">
+                <span className="dot dislocation" /> 2–10 суток
               </div>
               <div className="legend-row">
                 <span className="dot demand" /> Погрузка

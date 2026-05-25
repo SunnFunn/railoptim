@@ -195,6 +195,7 @@ mod tests {
                 cars: 2.0,
                 supply_id: 1,
                 supply_kind: "Free".into(),
+                supply_period: 1,
                 car_numbers: vec![123],
                 supply_station: "A".into(),
                 supply_station_code: "111111".into(),

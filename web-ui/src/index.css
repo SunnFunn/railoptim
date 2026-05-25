@@ -159,6 +159,10 @@ body,
   background: rgb(46, 125, 50);
 }
 
+.dot.dislocation {
+  background: rgb(230, 126, 34);
+}
+
 .dot.demand {
   background: rgb(211, 47, 47);
 }

@@ -18,6 +18,8 @@ export interface MapArc {
   supply_kind: string;
   supply_railway: string;
   demand_railway: string;
+  /** 1 — 1-е сутки; 10 — дислокация 2–10 суток (в старых ответах может отсутствовать) */
+  supply_period?: number;
   demand_period: number;
   geo_status: GeoStatus;
 }
@@ -86,6 +88,7 @@ export interface ArcDatum {
   supply_kind: string;
   supply_railway: string;
   demand_railway: string;
+  supply_period: number;
   from_name: string;
   to_name: string;
   from_esr6: string;

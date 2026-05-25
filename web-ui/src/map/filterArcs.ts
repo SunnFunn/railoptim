@@ -27,6 +27,7 @@ function arcToDatum(arc: MapArc): ArcDatum | null {
     supply_kind: arc.supply_kind,
     supply_railway: arc.supply_railway,
     demand_railway: arc.demand_railway,
+    supply_period: arc.supply_period ?? 1,
     from_name: from.name,
     to_name: to.name,
     from_esr6: from.esr6,
@@ -92,13 +93,22 @@ function aggregateNodes(arcs: ArcDatum[]): NodeDatum[] {
   return nodes;
 }
 
+/** Предложение 2–10 суток (дислокация). */
+export function isDislocationPeriod(supplyPeriod: number): boolean {
+  return supplyPeriod === 10;
+}
+
 export function filterArcs(
   arcs: MapArc[],
   selectedSupply: ReadonlySet<string>,
   selectedDemand: ReadonlySet<string>,
+  showDislocationArcs: boolean,
 ): FilteredMapData {
   const visible = arcs
     .filter((arc) => {
+      if (isDislocationPeriod(arc.supply_period ?? 1) && !showDislocationArcs) {
+        return false;
+      }
       const okSupply =
         selectedSupply.size === 0 || selectedSupply.has(arc.supply_railway);
       const okDemand =

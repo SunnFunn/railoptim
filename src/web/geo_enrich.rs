@@ -38,6 +38,7 @@ pub fn build_map_response(
             supply_kind: assignment.supply_kind.clone(),
             supply_railway: assignment.supply_railway.clone(),
             demand_railway: assignment.demand_railway.clone(),
+            supply_period: assignment.supply_period,
             demand_period: assignment.demand_period,
             geo_status,
         });
@@ -204,6 +205,7 @@ mod tests {
             cars: 1.0,
             supply_id: 1,
             supply_kind: "Free".into(),
+            supply_period: 1,
             car_numbers: vec![],
             supply_station: "From".into(),
             supply_station_code: from.into(),

@@ -72,6 +72,8 @@ pub struct MapArc {
     pub supply_kind: String,
     pub supply_railway: String,
     pub demand_railway: String,
+    /// `1` — 1-е сутки; `10` — дислокация 2–10 суток.
+    pub supply_period: u8,
     pub demand_period: u8,
     pub geo_status: &'static str,
 }

@@ -113,10 +113,17 @@ export function buildRailwayZoneLayers(
     pickable: false,
     filled: false,
     stroked: true,
+    extruded: false,
     lineWidthUnits: "pixels",
-    getLineWidth: 2,
+    lineWidthMinPixels: 2,
+    getLineWidth: 3,
+    lineCapRounded: true,
+    lineJointRounded: true,
     getLineColor: (f: { properties?: RailwayZoneProperties }) =>
       rwLineColor(f.properties?.rw ?? ""),
+    _subLayerProps: {
+      line: { parameters: { depthTest: false } },
+    },
   });
 
   const text = new TextLayer<RailwayZoneLabel>({

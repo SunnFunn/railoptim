@@ -21,9 +21,13 @@ const INITIAL_VIEW = {
   zoom: 3.5,
 };
 
-function DeckGLOverlay(props: DeckProps) {
-  const overlay = useControl<MapboxOverlay>(() => new MapboxOverlay(props));
-  overlay.setProps(props);
+type DeckOverlayProps = DeckProps & { interleaved?: boolean };
+
+function DeckGLOverlay({ interleaved = false, ...deckProps }: DeckOverlayProps) {
+  const overlay = useControl<MapboxOverlay>(
+    () => new MapboxOverlay({ ...deckProps, interleaved }),
+  );
+  overlay.setProps({ ...deckProps, interleaved });
   return null;
 }
 
@@ -51,6 +55,7 @@ export function MapView({
     null,
   );
   const [zonesError, setZonesError] = useState<string | null>(null);
+  const [zonesLoaded, setZonesLoaded] = useState(false);
 
   useEffect(() => {
     ensurePmtilesProtocol();
@@ -61,39 +66,44 @@ export function MapView({
       );
   }, []);
 
+  // GeoJSON грузим сразу (не только при включённом чекбоксе), чтобы не зависеть от кэша toggle.
   useEffect(() => {
-    if (!showRailwayZones) {
-      return;
-    }
     let cancelled = false;
     loadRailwayZones()
       .then((data) => {
         if (!cancelled) {
           setRailwayZones(data);
-          setZonesError(data ? null : "Файл зон не найден");
+          setZonesLoaded(true);
+          if (!data || data.features.length === 0) {
+            setZonesError("Файл зон пуст или не найден");
+          } else {
+            setZonesError(null);
+          }
         }
       })
       .catch((e) => {
         if (!cancelled) {
           setRailwayZones(null);
+          setZonesLoaded(true);
           setZonesError(e instanceof Error ? e.message : String(e));
         }
       });
     return () => {
       cancelled = true;
     };
-  }, [showRailwayZones]);
+  }, []);
 
   const layers = useMemo(() => {
     const result: Layer[] = [];
+    result.push(buildArcLayer(arcs, onHover));
+    if (showNodes) {
+      result.push(buildNodeLayer(nodes, onHover));
+    }
+    // Контуры поверх дуг (overlay, не interleaved — иначе линии под тайлами).
     if (showRailwayZones && railwayZones && railwayZones.features.length > 0) {
       result.push(
         ...buildRailwayZoneLayers(railwayZones, labelsFromZones(railwayZones)),
       );
-    }
-    result.push(buildArcLayer(arcs, onHover));
-    if (showNodes) {
-      result.push(buildNodeLayer(nodes, onHover));
     }
     return result;
   }, [arcs, nodes, showNodes, showRailwayZones, railwayZones, onHover]);
@@ -120,9 +130,14 @@ export function MapView({
 
   return (
     <>
-      {zonesError && showRailwayZones && (
+      {showRailwayZones && zonesLoaded && zonesError && (
         <div className="map-zones-warn" role="status">
           Зоны дорог: {zonesError}
+        </div>
+      )}
+      {showRailwayZones && zonesLoaded && !zonesError && railwayZones && (
+        <div className="map-zones-ok" role="status">
+          Зоны дорог: {railwayZones.features.length} сетей
         </div>
       )}
       <Map
@@ -131,9 +146,9 @@ export function MapView({
         initialViewState={INITIAL_VIEW}
         mapStyle={mapStyle}
         style={{ width: "100%", height: "100%" }}
-        attributionControl={true}
+        attributionControl={{}}
       >
-        <DeckGLOverlay layers={layers} interleaved />
+        <DeckGLOverlay layers={layers} interleaved={false} />
       </Map>
     </>
   );

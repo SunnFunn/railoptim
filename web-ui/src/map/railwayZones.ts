@@ -25,7 +25,7 @@ export interface RailwayZoneLabel {
 }
 
 export async function loadRailwayZones(): Promise<RailwayZoneCollection | null> {
-  const res = await fetch("/map/railways_voronoi.geojson");
+  const res = await fetch("/map/railways_voronoi.geojson", { cache: "no-store" });
   if (!res.ok) {
     if (res.status === 404) {
       return null;

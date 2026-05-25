@@ -231,17 +231,27 @@ code {
   font-size: 0.8rem;
 }
 
-.map-zones-warn {
+.map-zones-warn,
+.map-zones-ok {
   position: absolute;
   top: 0.5rem;
   left: 50%;
   transform: translateX(-50%);
   z-index: 5;
   padding: 0.35rem 0.65rem;
-  background: rgba(255, 243, 224, 0.95);
-  border: 1px solid #ffb74d;
   border-radius: 4px;
   font-size: 0.82rem;
-  color: #5d4037;
   pointer-events: none;
+}
+
+.map-zones-warn {
+  background: rgba(255, 243, 224, 0.95);
+  border: 1px solid #ffb74d;
+  color: #5d4037;
+}
+
+.map-zones-ok {
+  background: rgba(232, 245, 233, 0.95);
+  border: 1px solid #81c784;
+  color: #2e7d32;
 }

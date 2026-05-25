@@ -22,7 +22,14 @@ export default function App() {
   const [selectedSupply, setSelectedSupply] = useState<Set<string>>(new Set());
   const [selectedDemand, setSelectedDemand] = useState<Set<string>>(new Set());
   const [showNodes, setShowNodes] = useState(true);
-  const [showRailwayZones, setShowRailwayZones] = useState(false);
+  const [showRailwayZones, setShowRailwayZones] = useState(() => {
+    try {
+      const v = sessionStorage.getItem("railoptim.showRailwayZones");
+      return v !== "0";
+    } catch {
+      return true;
+    }
+  });
   const [hover, setHover] = useState<HoverInfo | null>(null);
   const [fitToken, setFitToken] = useState(0);
 
@@ -148,7 +155,15 @@ export default function App() {
                 <input
                   type="checkbox"
                   checked={showRailwayZones}
-                  onChange={(e) => setShowRailwayZones(e.target.checked)}
+                  onChange={(e) => {
+                    const on = e.target.checked;
+                    setShowRailwayZones(on);
+                    try {
+                      sessionStorage.setItem("railoptim.showRailwayZones", on ? "1" : "0");
+                    } catch {
+                      /* ignore */
+                    }
+                  }}
                 />
                 Зоны дорог (пилот, Voronoi)
               </label>

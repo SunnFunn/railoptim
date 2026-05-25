@@ -134,6 +134,43 @@ def assign_railway_rw(
     return assigned, {"stats": dict(stats), "skipped_sample": skipped[:100], "skipped_count": len(skipped)}
 
 
+def _dedupe_coords(
+    points: list[dict],
+) -> tuple[list[tuple[float, float]], list[int], int]:
+    """Уникальные (lon, lat) для Voronoi; индекс rep-точки на каждую станцию."""
+    rep_coords: list[tuple[float, float]] = []
+    key_to_rep: dict[tuple[float, float], int] = {}
+    point_to_rep: list[int] = []
+
+    for p in points:
+        key = (p["lon"], p["lat"])
+        if key not in key_to_rep:
+            key_to_rep[key] = len(rep_coords)
+            rep_coords.append(key)
+        point_to_rep.append(key_to_rep[key])
+
+    duplicate_coord_stations = len(points) - len(rep_coords)
+    return rep_coords, point_to_rep, duplicate_coord_stations
+
+
+def _voronoi_cell_for_coord(
+    coord: tuple[float, float],
+    geoms: list,
+    envelope,
+) -> object | None:
+    from shapely.geometry import Point
+
+    pt = Point(coord)
+    for g in geoms:
+        if g.is_empty:
+            continue
+        if g.contains(pt) or g.boundary.distance(pt) < 1e-9:
+            return g
+    if not geoms:
+        return None
+    return min(geoms, key=lambda g: g.distance(pt))
+
+
 def build_voronoi_geojson(
     points: list[dict],
     bbox: tuple[float, float, float, float],
@@ -146,22 +183,36 @@ def build_voronoi_geojson(
     min_lon, min_lat, max_lon, max_lat = bbox
     envelope = box(min_lon, min_lat, max_lon, max_lat)
 
-    coords = [(p["lon"], p["lat"]) for p in points]
-    mp = MultiPoint(coords)
+    rep_coords, point_to_rep, duplicate_coord_stations = _dedupe_coords(points)
+    mp = MultiPoint(rep_coords)
     diagram = voronoi_diagram(mp, envelope=envelope)
+    diagram_geoms = list(diagram.geoms)
 
-    if len(diagram.geoms) != len(points):
+    if len(diagram_geoms) == len(rep_coords):
+        rep_geoms = diagram_geoms
+    elif len(diagram_geoms) < len(rep_coords):
+        # Редко: точки на границе envelope / вырожденная конфигурация
+        rep_geoms = [
+            _voronoi_cell_for_coord(c, diagram_geoms, envelope) for c in rep_coords
+        ]
+        if any(g is None for g in rep_geoms):
+            raise RuntimeError(
+                f"Voronoi: {len(rep_coords)} уникальных координат, "
+                f"{len(diagram_geoms)} ячеек — не удалось сопоставить все точки"
+            )
+    else:
         raise RuntimeError(
-            f"Voronoi: ожидали {len(points)} ячеек, получили {len(diagram.geoms)}"
+            f"Voronoi: неожиданно {len(diagram_geoms)} ячеек при {len(rep_coords)} точках"
         )
 
     by_rw: dict[str, list] = defaultdict(list)
     rw_station_count: Counter[str] = Counter()
 
-    for i, geom in enumerate(diagram.geoms):
-        if geom.is_empty:
+    for i, p in enumerate(points):
+        geom = rep_geoms[point_to_rep[i]]
+        if geom is None or geom.is_empty:
             continue
-        rw = points[i]["railway_rw"]
+        rw = p["railway_rw"]
         clipped = geom.intersection(envelope)
         if clipped.is_empty:
             continue
@@ -193,6 +244,8 @@ def build_voronoi_geojson(
     meta = {
         "zone_count": len(features),
         "station_count": len(points),
+        "unique_coord_count": len(rep_coords),
+        "duplicate_coord_stations": duplicate_coord_stations,
         "railways": dict(sorted(rw_station_count.items())),
     }
     return collection, meta

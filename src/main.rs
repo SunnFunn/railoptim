@@ -4,9 +4,8 @@ use anyhow::Result;
 use railoptim::config::Config;
 use railoptim::data::{self, ApiClient, StationRef};
 use railoptim::node::{CarKind, DemandNode, DemandPurpose, RepairStatus, TariffNode};
-use railoptim::solver;
+use railoptim::{debug,solver};
 
-mod solver;
 
 #[tokio::main]
 async fn main() -> Result<()> {

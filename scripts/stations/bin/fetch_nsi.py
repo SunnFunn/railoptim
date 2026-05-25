@@ -7,7 +7,7 @@ MSSQL (те же секреты Infisical, что dislocations.py / wash.py):
 
 Загрузка env: ./scripts/stations/run.sh prod fetch-nsi
 
-Для теста без БД: --input-csv path/to/sample.csv (колонки Code6,Name).
+Для теста без БД: --input-csv path/to/sample.csv (колонки Code6, Name; опционально ShortName).
 """
 
 from __future__ import annotations

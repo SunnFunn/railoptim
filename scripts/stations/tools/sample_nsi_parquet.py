@@ -22,6 +22,7 @@ DEFAULT_INPUT = NSI_PARQUET
 DISPLAY_COLS = (
     "esr6",
     "name_nsi",
+    "railway_rw",
     "country_hint",
     "region_group",
     "network_district",

@@ -9,8 +9,8 @@ from typing import Any
 from stations_etl.nsi.process import NsiStationRecord
 
 
-def load_csv_rows(path: Path) -> list[tuple[str, str]]:
-    rows: list[tuple[str, str]] = []
+def load_csv_rows(path: Path) -> list[tuple[Any, ...]]:
+    rows: list[tuple[Any, ...]] = []
     with path.open(encoding="utf-8-sig", newline="") as f:
         reader = csv.DictReader(f)
         if not reader.fieldnames:
@@ -20,8 +20,14 @@ def load_csv_rows(path: Path) -> list[tuple[str, str]]:
         name_key = fields.get("name")
         if not code_key or not name_key:
             raise SystemExit(f"CSV {path}: нужны колонки Code6 и Name")
+        rw_key = fields.get("shortname") or fields.get("railway_rw") or fields.get("railway")
         for row in reader:
-            rows.append((row.get(code_key, ""), row.get(name_key, "")))
+            code = row.get(code_key, "")
+            name = row.get(name_key, "")
+            if rw_key:
+                rows.append((code, name, row.get(rw_key, "")))
+            else:
+                rows.append((code, name))
     return rows
 
 

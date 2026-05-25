@@ -22,6 +22,7 @@ export default function App() {
   const [selectedSupply, setSelectedSupply] = useState<Set<string>>(new Set());
   const [selectedDemand, setSelectedDemand] = useState<Set<string>>(new Set());
   const [showNodes, setShowNodes] = useState(true);
+  const [showRailwayZones, setShowRailwayZones] = useState(false);
   const [hover, setHover] = useState<HoverInfo | null>(null);
   const [fitToken, setFitToken] = useState(0);
 
@@ -143,6 +144,14 @@ export default function App() {
                 />
                 Показывать узлы станций
               </label>
+              <label className="checkbox">
+                <input
+                  type="checkbox"
+                  checked={showRailwayZones}
+                  onChange={(e) => setShowRailwayZones(e.target.checked)}
+                />
+                Зоны дорог (пилот, Voronoi)
+              </label>
             </section>
 
             <section className="panel">
@@ -186,6 +195,7 @@ export default function App() {
             arcs={filtered.arcs}
             nodes={filtered.nodes}
             showNodes={showNodes}
+            showRailwayZones={showRailwayZones}
             onHover={setHover}
             fitToken={fitToken}
           />

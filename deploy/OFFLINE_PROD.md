@@ -315,17 +315,76 @@ REBUILD_WEB_UI=1 ./deploy/install_web_service.sh
 
 ---
 
-## Чеклист «полный проект на prod»
+## Чеклист
 
-- [ ] `git clone` / `git pull` с веткой, где есть `web-ui/dist/`
-- [ ] `data/stations/stations_geo.sqlite` на месте
-- [ ] Пути в `deploy/systemd/railoptim-web.service` под пользователя и каталог
-- [ ] `./deploy/install_web_service.sh` успешен
-- [ ] `systemctl status railoptim-web` — active
-- [ ] `curl /health` — ok
-- [ ] `data/map/ru_cis.pmtiles` на prod (rsync)
-- [ ] `curl /map/style.json` и `Accept-Ranges` на pmtiles
-- [ ] После batch: `POST /api/v1/plans/reload`
-- [ ] Карта в браузере отображает дуги
+### A. Dev-машина (перед prod)
 
-См. также: [`deploy/README.md`](README.md), [`web-ui/README.md`](../web-ui/README.md).
+- [ ] Node.js 20+, npm, git, доступ к GitHub
+- [ ] `./scripts/build_web_ui.sh` — без ошибок
+- [ ] `web-ui/dist/index.html` и `web-ui/dist/build-info.json` созданы
+- [ ] `data/map/style.json` (подписи **`lang: ru`**), `maplibre-gl.css`, `glyphs/`, `sprites/`
+- [ ] `./scripts/map/verify_offline_downloads.sh` — итог `go` или `go-assets` + pmtiles на диске
+- [ ] `data/map/ru_cis.pmtiles` собран (~8 GB): `./scripts/map/download_ru_cis_pmtiles.sh`
+- [ ] `.tools/pmtiles show data/map/ru_cis.pmtiles` — валидный архив, bounds RU+СНГ, max zoom 13
+- [ ] `git add web-ui/dist data/map/` (без `*.pmtiles`, `node_modules/`)
+- [ ] `git push` в ветку для prod
+
+### B. Оффлайн prod — установка
+
+- [ ] `git clone` / `git pull` — в репозитории есть `web-ui/dist/index.html`
+- [ ] `deploy/systemd/railoptim-web.service`: `User`, `WorkingDirectory`, пути `Environment=`
+- [ ] `WEB_MAP_DIR` → `.../data/map` (в unit или `start_web.sh`)
+- [ ] `data/stations/stations_geo.sqlite` на месте (`build-geo` или копия)
+- [ ] `data/map/ru_cis.pmtiles` скопирован (rsync / USB / Google Drive) — **не из git**
+- [ ] `ls data/map/style.json data/map/maplibre-gl.css` — из git после pull
+- [ ] `./deploy/install_web_service.sh` — успешно (`app/bin/railoptim-web` собран)
+- [ ] `systemctl status railoptim-web` — **active (running)**
+
+### C. Smoke API (на prod, curl)
+
+- [ ] `curl -s http://127.0.0.1:8080/health` → `{"status":"ok"}`
+- [ ] `curl -sI http://127.0.0.1:8080/` → HTTP 200 (SPA)
+- [ ] `curl -sI http://127.0.0.1:8080/map/style.json` → HTTP 200
+- [ ] `curl -sI http://127.0.0.1:8080/map/ru_cis.pmtiles` → HTTP 200, заголовок `Accept-Ranges: bytes`
+- [ ] `curl -s http://127.0.0.1:8080/api/v1/meta | jq .` — пути к sqlite и result dir корректны
+
+### D. Данные для дуг на карте
+
+- [ ] `./run.sh prod` (или копия `tmp/result_*.json`)
+- [ ] `curl -X POST http://127.0.0.1:8080/api/v1/plans/reload`
+- [ ] `curl -s http://127.0.0.1:8080/api/v1/plans/latest/map | jq '.stats'` — `arcs_resolved` > 0, `arcs_missing_geo` = 0
+- [ ] При обновлении geo: `build-geo` → `POST /api/v1/stations/reload`
+
+### E. Браузер (приёмка)
+
+- [ ] Карта открывается по `:8080/` (или через ваш reverse proxy)
+- [ ] Подложка видна (не серая пустая область)
+- [ ] Подписи городов в основном **на русском** (где есть `name:ru` в OSM)
+- [ ] Дуги назначений отображаются
+- [ ] F12 → Network: **нет** запросов к `openfreemap.org`, `unpkg.com`
+- [ ] Тайлы и стиль только с `:8080/map/...`
+- [ ] Опционально: «Зоны дорог (пилот)» — контуры RW3, `GET /map/railways_voronoi.geojson` → 200
+
+### F. Логи при старте
+
+```bash
+journalctl -u railoptim-web -n 30 --no-pager
+```
+
+- [ ] `serving_spa=true`
+- [ ] `map_style=true` (или в логах `serving map assets at /map/`)
+- [ ] Нет `WEB_MAP_DIR: style.json missing`
+
+### G. Обновления (без полной переустановки)
+
+| Что менялось | Dev | Prod |
+|--------------|-----|------|
+| UI / `lang` стиля | `build_web_ui.sh` → push | `git pull` → `systemctl restart` |
+| Rust API | — | `git pull` → `install_web_service.sh` |
+| Только pmtiles | `download_ru_cis_pmtiles.sh` | rsync файла → `restart` |
+| План batch | — | `run.sh prod` → `POST …/plans/reload` |
+| Станции geo | — | `build-geo` → `POST …/stations/reload` |
+
+---
+
+См. также: [`deploy/README.md`](README.md), [`data/map/README.md`](../data/map/README.md), [`web-ui/README.md`](../web-ui/README.md).

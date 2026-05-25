@@ -30,4 +30,17 @@ else
   echo "WARN: data/map/ru_cis.pmtiles отсутствует — см. data/map/README.md"
 fi
 
+if [ -f "$ROOT/data/stations/stations_geo.sqlite" ] && [ -s "$ROOT/data/stations/stations_geo.sqlite" ]; then
+  if [ -x "$ROOT/scripts/map/build_railway_voronoi.py" ] || [ -f "$ROOT/scripts/map/build_railway_voronoi.py" ]; then
+    echo "==> railways_voronoi.geojson (если есть venv и зависимости)"
+    if [ -x "$ROOT/.venv-map/bin/python" ]; then
+      "$ROOT/.venv-map/bin/python" "$ROOT/scripts/map/build_railway_voronoi.py" || echo "WARN: build_railway_voronoi failed"
+    else
+      echo "SKIP: создайте .venv-map (pip install -r scripts/map/requirements-map.txt) и запустите build_railway_voronoi.py"
+    fi
+  fi
+else
+  echo "SKIP: railways_voronoi — нужен непустой data/stations/stations_geo.sqlite"
+fi
+
 echo "Готово: $MAP_DIR"

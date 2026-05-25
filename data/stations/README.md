@@ -210,7 +210,7 @@ cat data/stations/build_report.json | head -40
 | **Сеть** | proxy-trap (`127.0.0.1:1`) + Infisical localhost:9000 |
 | **Infisical** | да (`dev` / `prod` / `staging`) |
 
-**Запрос:** `SELECT Code6, Name FROM NSI.Station (NOLOCK)`
+**Запрос:** `SELECT S.Code6, S.Name, R.ShortName FROM NSI.Station S JOIN NSI.RailWay R ON S.RailWayId = R.RailWayId` — в parquet поле **`railway_rw`** (3-буквенный код дороги).
 
 **Секреты Infisical** (те же имена, что для `dislocations.py`):
 
@@ -532,6 +532,7 @@ Code6,Name
   "country_hint": "RU",
   "region_group": "ru",
   "network_district": "19",
+  "railway_rw": "МСК",
   "checksum_valid": true
 }
 ```
@@ -544,6 +545,7 @@ Code6,Name
   "country_hint": "RU",
   "region_group": "ru",
   "network_district": "06",
+  "railway_rw": "КБШ",
   "checksum_valid": true
 }
 ```

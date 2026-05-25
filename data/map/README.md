@@ -11,6 +11,8 @@
 | `glyphs/` | да | Шрифты `.pbf` |
 | `sprites/v4/light/` | да | Спрайты POI |
 | `ru_cis.pmtiles` | **нет** | Тайлы Россия+СНГ (большой файл) |
+| `railways_voronoi.geojson` | да | Пилот: контуры зон ж/д (Voronoi, 3-букв. коды) |
+| `railways_voronoi_report.json` | нет | Отчёт сборки зон |
 | `download_manifest.json` | опционально | Результат verify |
 | `verify_report.txt` | нет | Лог проверки |
 
@@ -69,11 +71,29 @@ DOWNLOAD_SAMPLE=1 ./scripts/map/verify_offline_downloads.sh
 - `ru_cis.pmtiles` > 50 MB (или sample для dev)
 - `glyphs/` не пустой
 
+## Зоны ж/д дорог (Voronoi, пилот)
+
+Условные границы сетей по станциям (не официальные полигоны РЖД). Подписи — **3-буквенные коды**
+(КБШ, СКВ, ПРВ…) из `NSI.RailWay.ShortName`, fallback — [`data/stations/esr_district_to_rw.csv`](../stations/esr_district_to_rw.csv).
+
+```bash
+python3 -m venv .venv-map
+.venv-map/bin/pip install -r scripts/map/requirements-map.txt
+
+# после build-geo и fetch-nsi:
+.venv-map/bin/python scripts/map/build_railway_voronoi.py
+# отчёт: data/map/railways_voronoi_report.json
+```
+
+Параметры: `--region ru` (по умолчанию), `--bbox 19,35,180,82`, `--region all` для теста.
+
+В UI: чекбокс «Зоны дорог (пилот)» — контуры без заливки, подпись в левом верхнем углу bbox зоны.
+
 ## Подготовка артефактов в git
 
 ```bash
 ./scripts/map/copy_map_assets.sh
-git add data/map/style.json data/map/maplibre-gl.css data/map/glyphs data/map/sprites
+git add data/map/style.json data/map/maplibre-gl.css data/map/glyphs data/map/sprites data/map/railways_voronoi.geojson
 ```
 
 ## Доставка на оффлайн prod
@@ -89,6 +109,7 @@ rsync -avP data/map/ru_cis.pmtiles user@prod:~/railoptim/data/map/
 ```bash
 curl -sI http://127.0.0.1:8080/map/style.json
 curl -sI http://127.0.0.1:8080/map/ru_cis.pmtiles | grep -i accept-ranges
+curl -sI http://127.0.0.1:8080/map/railways_voronoi.geojson
 ```
 
 В браузере F12 → Network: **нет** запросов к openfreemap.org, unpkg.com.

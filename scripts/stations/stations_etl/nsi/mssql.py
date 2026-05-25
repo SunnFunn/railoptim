@@ -57,10 +57,14 @@ def mssql_connect() -> Any:
     )
 
 
-NSI_STATION_SQL = "SELECT Code6, Name FROM NSI.Station (NOLOCK)"
+NSI_STATION_SQL = """
+SELECT S.Code6, S.Name, R.ShortName
+FROM NSI.Station S (NOLOCK)
+JOIN NSI.RailWay R (NOLOCK) ON S.RailWayId = R.RailWayId
+"""
 
 
-def fetch_nsi_station_rows() -> list[tuple[Any, Any]]:
+def fetch_nsi_station_rows() -> list[tuple[Any, Any, Any]]:
     conn = mssql_connect()
     cur = conn.cursor()
     try:

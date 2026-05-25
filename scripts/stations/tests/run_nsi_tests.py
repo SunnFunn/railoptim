@@ -35,6 +35,9 @@ def main() -> int:
     assert by_esr["570001"].region_group == "south_caucasus"
     assert by_esr["063000"].esr6 == "063000"
     assert by_esr["001234"].esr6 == "001234"
+    assert by_esr["194013"].railway_rw == "МСК"
+    assert by_esr["063000"].railway_rw == "КБШ"
+    assert by_esr["160001"].railway_rw == "БЕЛ"
 
     with tempfile.TemporaryDirectory() as td:
         pq = Path(td) / "out.parquet"

@@ -8,6 +8,7 @@ prefix_len,prefix,country_iso,region_group,note
 2,16,BY,cis,Белорусская ж/д
 2,09,LV,baltic,Latvijas dzelzceļš
 2,11,LV,baltic,Latvijas dzelzceļš
+2,21,LV,baltic,Latvijas dzelzceļš (район 21)
 2,39,MD,cis,Молдова
 2,10,LT,baltic,Lietuvos geležinkeliai
 2,12,LT,baltic,Lietuvos geležinkeliai

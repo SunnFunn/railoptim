@@ -1,0 +1,10 @@
+[project]
+name = "railoptim-map"
+version = "0.1.0"
+description = "Сборка артефактов карты (Voronoi зон ж/д) для railoptim"
+requires-python = ">=3.10"
+dependencies = [
+    "shapely>=2.0.0",
+    "scipy>=1.11.0",
+    "pyarrow>=15.0.0",
+]

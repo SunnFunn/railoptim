@@ -32,11 +32,12 @@ fi
 
 if [ -f "$ROOT/data/stations/stations_geo.sqlite" ] && [ -s "$ROOT/data/stations/stations_geo.sqlite" ]; then
   if [ -x "$ROOT/scripts/map/build_railway_voronoi.py" ] || [ -f "$ROOT/scripts/map/build_railway_voronoi.py" ]; then
-    echo "==> railways_voronoi.geojson (если есть venv и зависимости)"
-    if [ -x "$ROOT/.venv-map/bin/python" ]; then
-      "$ROOT/.venv-map/bin/python" "$ROOT/scripts/map/build_railway_voronoi.py" || echo "WARN: build_railway_voronoi failed"
+    echo "==> railways_voronoi.geojson (если установлен uv и зависимости)"
+    if command -v uv >/dev/null 2>&1 && [ -f "$ROOT/scripts/map/pyproject.toml" ]; then
+      (cd "$ROOT/scripts/map" && uv run python build_railway_voronoi.py) \
+        || echo "WARN: build_railway_voronoi failed (попробуйте: cd scripts/map && uv sync)"
     else
-      echo "SKIP: создайте .venv-map (pip install -r scripts/map/requirements-map.txt) и запустите build_railway_voronoi.py"
+      echo "SKIP: нужен uv и cd scripts/map && uv sync; затем ./scripts/map/run.sh build-voronoi"
     fi
   fi
 else

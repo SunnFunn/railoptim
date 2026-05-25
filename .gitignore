@@ -26,4 +26,5 @@ data/map/*.partial
 data/map/ru_cis_download.log
 data/map/verify_report.txt
 data/map/railways_voronoi_report.json
-.venv-map/
+scripts/map/.venv/
+scripts/map/.uv-cache/

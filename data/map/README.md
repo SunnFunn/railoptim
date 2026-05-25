@@ -76,13 +76,29 @@ DOWNLOAD_SAMPLE=1 ./scripts/map/verify_offline_downloads.sh
 Условные границы сетей по станциям (не официальные полигоны РЖД). Подписи — **3-буквенные коды**
 (КБШ, СКВ, ПРВ…) из `NSI.RailWay.ShortName`, fallback — [`data/stations/esr_district_to_rw.csv`](../stations/esr_district_to_rw.csv).
 
-```bash
-python3 -m venv .venv-map
-.venv-map/bin/pip install -r scripts/map/requirements-map.txt
+Зависимости — [uv](https://docs.astral.sh/uv/) (`scripts/map/pyproject.toml`, `uv.lock` в git).
+Виртуальное окружение создаёт `uv` в `scripts/map/.venv/` (не `python -m venv`).
 
+```bash
 # после build-geo и fetch-nsi:
-.venv-map/bin/python scripts/map/build_railway_voronoi.py
+cd scripts/map
+uv sync
+./run.sh build-voronoi
 # отчёт: data/map/railways_voronoi_report.json
+```
+
+**Оффлайн prod** (uv есть, сети нет): один раз на онлайн-машине `uv sync`, закоммитьте `uv.lock`;
+на prod — `uv sync --frozen --offline` (нужен локальный кэш пакетов uv, см. ниже) или
+собирайте `railways_voronoi.geojson` на dev и доставляйте через `git pull`.
+
+Кэш для `--offline` (опционально, если пересборка на prod):
+
+```bash
+# онлайн: заполнить переносимый кэш
+UV_CACHE_DIR=scripts/map/.uv-cache uv sync
+# скопировать scripts/map/.uv-cache на prod (не в git)
+# prod:
+cd scripts/map && UV_CACHE_DIR=.uv-cache uv sync --frozen --offline
 ```
 
 Параметры: `--region ru` (по умолчанию), `--bbox 19,35,180,82`, `--region all` для теста.

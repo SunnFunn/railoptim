@@ -243,7 +243,7 @@ def main() -> int:
         )
     except ImportError as e:
         print(
-            "Установите shapely и scipy: pip install -r scripts/map/requirements-map.txt",
+            "Установите зависимости: cd scripts/map && uv sync && ./run.sh build-voronoi",
             file=sys.stderr,
         )
         raise SystemExit(1) from e

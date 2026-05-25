@@ -67,6 +67,16 @@ rsync -avP data/map/ru_cis.pmtiles user@prod:~/railoptim/data/map/
 
 Подробно: [`data/map/README.md`](../data/map/README.md).
 
+**Пересборка зон Voronoi** (опционально, на prod нужен **uv**, не `python -m venv`):
+
+```bash
+cd scripts/map
+uv sync --frozen          # онлайн; на оффлайн: --offline + локальный UV_CACHE_DIR (см. data/map/README.md)
+./run.sh build-voronoi
+```
+
+Обычно достаточно `railways_voronoi.geojson` из git после `git pull`.
+
 ### 1.2 Коммит и push
 
 ```bash
@@ -384,6 +394,7 @@ journalctl -u railoptim-web -n 30 --no-pager
 | Только pmtiles | `download_ru_cis_pmtiles.sh` | rsync файла → `restart` |
 | План batch | — | `run.sh prod` → `POST …/plans/reload` |
 | Станции geo | — | `build-geo` → `POST …/stations/reload` |
+| Зоны Voronoi | `scripts/map/run.sh` (uv) | `git pull` или `cd scripts/map && uv sync --frozen --offline && ./run.sh` |
 
 ---
 

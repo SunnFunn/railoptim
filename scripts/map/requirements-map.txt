@@ -1,4 +1,6 @@
-# Зависимости для scripts/map/build_railway_voronoi.py
+# Устарело: зависимости в scripts/map/pyproject.toml + uv.lock.
+# Установка: cd scripts/map && uv sync
+# Справка: uv export --format requirements.txt -o requirements-map.txt
 shapely>=2.0.0
 scipy>=1.11.0
 pyarrow>=15.0.0

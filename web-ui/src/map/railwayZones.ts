@@ -1,8 +1,10 @@
 export interface RailwayZoneProperties {
   rw: string;
-  station_count: number;
   label_lon: number;
   label_lat: number;
+  name_supermap?: string;
+  name_eng?: string;
+  station_count?: number;
 }
 
 export interface RailwayZoneFeature {
@@ -24,13 +26,15 @@ export interface RailwayZoneLabel {
   text: string;
 }
 
+const ZONE_GEOJSON = "/map/railways_zones.geojson";
+
 export async function loadRailwayZones(): Promise<RailwayZoneCollection | null> {
-  const res = await fetch("/map/railways_voronoi.geojson", { cache: "no-store" });
+  const res = await fetch(ZONE_GEOJSON, { cache: "no-store" });
   if (!res.ok) {
     if (res.status === 404) {
       return null;
     }
-    throw new Error(`railways_voronoi.geojson: HTTP ${res.status}`);
+    throw new Error(`${ZONE_GEOJSON}: HTTP ${res.status}`);
   }
   return (await res.json()) as RailwayZoneCollection;
 }

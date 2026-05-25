@@ -26,5 +26,7 @@ data/map/*.partial
 data/map/ru_cis_download.log
 data/map/verify_report.txt
 # data/map/railways_voronoi_report.json
+data/map/railways_zones_report.json
+data/map/supermap_rworgs_raw.geojson
 scripts/map/.venv/
 scripts/map/.uv-cache/

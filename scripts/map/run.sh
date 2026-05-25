@@ -1,10 +1,9 @@
 #!/bin/bash
 # Python-скрипты карты через uv (без python -m venv).
 #
-#   ./run.sh sync              — uv sync (зависимости в scripts/map/.venv)
-#   ./run.sh sync --offline    — только из локального кэша uv (оффлайн prod)
-#   ./run.sh build-voronoi     — railways_voronoi.geojson
-#   ./run.sh python -c '...'   — произвольная команда в окружении проекта
+#   ./run.sh fetch-zones        — Supermap WFS → railways_zones.geojson (рекомендуется)
+#   ./run.sh build-voronoi      — устаревший Voronoi (не использовать для prod)
+#   ./run.sh sync               — uv sync
 
 set -euo pipefail
 
@@ -19,18 +18,17 @@ fi
 usage() {
     cat <<'EOF'
 Usage:
-  run.sh sync [--frozen] [--offline]   — установить зависимости (uv.lock)
-  run.sh build-voronoi [args…]         — build_railway_voronoi.py
-  run.sh [args…]                       — то же, что build-voronoi по умолчанию
+  run.sh sync [--frozen] [--offline]     — uv sync
+  run.sh fetch-zones [args…]               — Supermap WFS → data/map/railways_zones.geojson
+  run.sh build-voronoi [args…]             — Voronoi (legacy)
 
 Примеры:
-  ./scripts/map/run.sh sync
-  ./scripts/map/run.sh build-voronoi --region ru,cis
-  cd scripts/map && uv sync --frozen --offline && ./run.sh
+  ./scripts/map/run.sh fetch-zones
+  ./scripts/map/run.sh fetch-zones --skip-download   # из supermap_rworgs_raw.geojson
 EOF
 }
 
-cmd="${1:-build-voronoi}"
+cmd="${1:-fetch-zones}"
 case "$cmd" in
     -h|--help|help)
         usage
@@ -39,6 +37,10 @@ case "$cmd" in
     sync)
         shift
         exec uv sync "$@"
+        ;;
+    fetch-zones|zones|supermap)
+        shift
+        exec uv run python fetch_supermap_rworgs.py "$@"
         ;;
     build-voronoi|voronoi)
         shift

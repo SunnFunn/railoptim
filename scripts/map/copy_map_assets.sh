@@ -30,18 +30,19 @@ else
   echo "WARN: data/map/ru_cis.pmtiles отсутствует — см. data/map/README.md"
 fi
 
-if [ -f "$ROOT/data/stations/stations_geo.sqlite" ] && [ -s "$ROOT/data/stations/stations_geo.sqlite" ]; then
-  if [ -x "$ROOT/scripts/map/build_railway_voronoi.py" ] || [ -f "$ROOT/scripts/map/build_railway_voronoi.py" ]; then
-    echo "==> railways_voronoi.geojson (если установлен uv и зависимости)"
-    if command -v uv >/dev/null 2>&1 && [ -f "$ROOT/scripts/map/pyproject.toml" ]; then
-      (cd "$ROOT/scripts/map" && uv run python build_railway_voronoi.py) \
-        || echo "WARN: build_railway_voronoi failed (попробуйте: cd scripts/map && uv sync)"
-    else
-      echo "SKIP: нужен uv и cd scripts/map && uv sync; затем ./scripts/map/run.sh build-voronoi"
-    fi
+if [ -f "$ROOT/scripts/map/fetch_supermap_rworgs.py" ]; then
+  echo "==> railways_zones.geojson (Supermap WFS, нужен интернет)"
+  if command -v uv >/dev/null 2>&1 && [ -f "$ROOT/scripts/map/pyproject.toml" ]; then
+    (cd "$ROOT/scripts/map" && uv run python fetch_supermap_rworgs.py) \
+      || echo "WARN: fetch_supermap_rworgs failed (см. data/map/README.md)"
+  else
+    echo "SKIP: нужен uv; ./scripts/map/run.sh fetch-zones"
   fi
+fi
+if [ -f "$MAP_DIR/railways_zones.geojson" ]; then
+  echo "OK: railways_zones.geojson"
 else
-  echo "SKIP: railways_voronoi — нужен непустой data/stations/stations_geo.sqlite"
+  echo "WARN: data/map/railways_zones.geojson отсутствует — git pull или run.sh fetch-zones"
 fi
 
 echo "Готово: $MAP_DIR"

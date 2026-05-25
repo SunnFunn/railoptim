@@ -165,7 +165,7 @@ export default function App() {
                     }
                   }}
                 />
-                Зоны дорог (пилот, Voronoi)
+                Зоны дорог (Supermap)
               </label>
             </section>
 

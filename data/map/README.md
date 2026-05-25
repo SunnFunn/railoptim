@@ -11,8 +11,11 @@
 | `glyphs/` | да | Шрифты `.pbf` |
 | `sprites/v4/light/` | да | Спрайты POI |
 | `ru_cis.pmtiles` | **нет** | Тайлы Россия+СНГ (большой файл) |
-| `railways_voronoi.geojson` | да | Пилот: контуры зон ж/д (Voronoi, 3-букв. коды) |
-| `railways_voronoi_report.json` | нет | Отчёт сборки зон |
+| `railways_zones.geojson` | да | Контуры зон ж/д (Supermap WFS `rworgs`, коды NSI) |
+| `railways_zones_report.json` | нет | Отчёт импорта Supermap |
+| `supermap_rw_name_to_rw.csv` | да | Маппинг «Октябрьская ЖД» → `ОКТ` |
+| `supermap_rworgs_raw.geojson` | нет | Сырой WFS (опционально, после fetch) |
+| `railways_voronoi.geojson` | устар. | Legacy Voronoi — не использовать |
 | `download_manifest.json` | опционально | Результат verify |
 | `verify_report.txt` | нет | Лог проверки |
 
@@ -71,83 +74,40 @@ DOWNLOAD_SAMPLE=1 ./scripts/map/verify_offline_downloads.sh
 - `ru_cis.pmtiles` > 50 MB (или sample для dev)
 - `glyphs/` не пустой
 
-## Зоны ж/д дорог (Voronoi, пилот)
+## Зоны ж/д дорог (Supermap)
 
-Условные границы сетей (не официальные полигоны РЖД): **Voronoi по центроидам дорог**
-(одна опорная точка на код `railway_rw`, не union ячеек всех станций). Подписи — 3-буквенные коды
-из `NSI.RailWay.ShortName`.
-
-| Файл | Назначение |
-|------|------------|
-| [`railway_rw_allowlist.txt`](railway_rw_allowlist.txt) | Какие коды дорог рисовать (РЖД + СНГ из `references.json`) |
-| [`railway_rw_aliases.csv`](railway_rw_aliases.csv) | Синонимы NSI → канон (`БЖД` → `БЕЛ`) |
-| [`../stations/esr_district_to_rw.csv`](../stations/esr_district_to_rw.csv) | Fallback **только** для `region_group=ru`, если в NSI нет кода |
-
-На карту **не попадают** зарубежные/служебные коды из NSI (`CFR`, `PKP`, `---`, `КЖД` …) — они
-отсекаются allowlist’ом; в отчёте: `allowlist_filter.excluded_by_rw`.
-
-Зависимости — [uv](https://docs.astral.sh/uv/) (`scripts/map/pyproject.toml`, `uv.lock` в git).
+Полигоны сетей с [Суперкарты 2.0](https://supermap.zatramvaj.su/) (WFS `Supermap_GeoServer:rworgs`),
+фильтр по [`railway_rw_allowlist.txt`](railway_rw_allowlist.txt), коды — из
+[`supermap_rw_name_to_rw.csv`](supermap_rw_name_to_rw.csv) (маппинг «Московская ЖД» → `МСК`).
 
 ```bash
-# после fetch-nsi и build-geo:
 cd scripts/map
-uv sync
-./run.sh build-voronoi
-# по умолчанию: --region ru,cis --allowlist ../../data/map/railway_rw_allowlist.txt
-# отчёт: data/map/railways_voronoi_report.json
+uv sync   # опционально; fetch использует stdlib
+./run.sh fetch-zones
+# → data/map/railways_zones.geojson
+# → data/map/railways_zones_report.json
 ```
 
-**Параметры сборки:**
+Оффлайн prod: **`git pull`** готового `railways_zones.geojson` (интернет на prod не нужен).
 
-| Параметр | По умолчанию | Смысл |
-|----------|--------------|--------|
-| `--region` | `ru,cis` | Станции из `stations_geo.region_group` (`all`, `ru`, `cis`, `ru,cis`) |
-| `--allowlist` | `data/map/railway_rw_allowlist.txt` | Белый список кодов `railway_rw` |
-| `--no-allowlist` | — | Все коды из NSI (отладка) |
-| `--bbox` | `19,35,180,82` | Ограничивающий прямоугольник Voronoi |
-| `--mode` | `centroids` | `centroids` — зона на дорогу; `stations` — старый «фрактальный» режим |
-| `--simplify` | `0.35` (centroids) | Сглаживание контура (градусы) |
+Добавить дорогу: строка в `supermap_rw_name_to_rw.csv` + код в allowlist → пересборка `fetch-zones`.
 
-Для кодов СНГ в allowlist центроид считается только по станциям `region_group=cis`
-(чтобы `БЕЛ` не тянула контур на всю Россию из-за ошибочных NSI-кодов на `ru`-станциях).
-
-Примеры:
+**UI:** чекбокс «Зоны дорог (Supermap)», контуры одного цвета, подпись **3-буквенного кода** (`rw`).
 
 ```bash
-# только магистрали РЖД (без СНГ)
-./run.sh build-voronoi --region ru
-
-# все группы из geo (включая baltic, caucasus — если есть координаты)
-./run.sh build-voronoi --region all
-
-# без фильтра дорог (как на старом prod — будут CFR, PKP, ---)
-./run.sh build-voronoi --no-allowlist --region ru
+curl -sI http://127.0.0.1:8080/map/railways_zones.geojson
 ```
 
-**Оффлайн prod** (uv есть, сети нет): `uv sync --frozen --offline` (см. кэш ниже) или `git pull` готового `railways_voronoi.geojson`.
+### Legacy: Voronoi
 
-```bash
-UV_CACHE_DIR=scripts/map/.uv-cache uv sync   # онлайн, кэш не в git
-cd scripts/map && UV_CACHE_DIR=.uv-cache uv sync --frozen --offline && ./run.sh build-voronoi
-```
-
-**Отчёт:** `rw_aliases.by_from`, `allowlist_filter.excluded_by_rw`, `voronoi.railways`.
-
-Синонимы дорог (одна сеть — один код на карте): правьте `railway_rw_aliases.csv` (`from,to`).
-В allowlist указывайте только **канонический** код (`БЕЛ`, не `БЖД`).
-
-В UI: чекбокс **«Зоны дорог (пилот, Voronoi)»** (по умолчанию включён). Контуры **одного цвета**,
-без заливки; различие сетей — только подпись **3-буквенного кода** в углу зоны.
-После обновления `railways_voronoi.geojson` на prod: `git pull` нового `web-ui/dist` (если менялся UI),
-проверка `curl -sI http://127.0.0.1:8080/map/railways_voronoi.geojson`, в браузере включить чекбокс
-(состояние сохраняется в `sessionStorage`). Плашка «N сетей» вверху карты — файл загружен.
+`./run.sh build-voronoi` — устаревший расчёт по станциям; для prod не использовать.
 
 ## Подготовка артефактов в git
 
 ```bash
 ./scripts/map/copy_map_assets.sh
 git add data/map/style.json data/map/maplibre-gl.css data/map/glyphs data/map/sprites \
-  data/map/railway_rw_allowlist.txt data/map/railway_rw_aliases.csv data/map/railways_voronoi.geojson
+  data/map/railway_rw_allowlist.txt data/map/supermap_rw_name_to_rw.csv data/map/railways_zones.geojson
 ```
 
 ## Доставка на оффлайн prod
@@ -163,7 +123,7 @@ rsync -avP data/map/ru_cis.pmtiles user@prod:~/railoptim/data/map/
 ```bash
 curl -sI http://127.0.0.1:8080/map/style.json
 curl -sI http://127.0.0.1:8080/map/ru_cis.pmtiles | grep -i accept-ranges
-curl -sI http://127.0.0.1:8080/map/railways_voronoi.geojson
+curl -sI http://127.0.0.1:8080/map/railways_zones.geojson
 ```
 
 В браузере F12 → Network: **нет** запросов к openfreemap.org, unpkg.com.

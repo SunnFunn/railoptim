@@ -1,0 +1,61 @@
+{
+  "built_at": "2026-05-25T14:28:28.550204+00:00",
+  "region_filter": "ru",
+  "bbox": [
+    19.0,
+    35.0,
+    180.0,
+    82.0
+  ],
+  "inputs": {
+    "geo": "/home/atretyakov/railoptim/data/stations/stations_geo.sqlite",
+    "nsi": "/home/atretyakov/railoptim/data/stations/stations_nsi_raw.parquet",
+    "fallback": "/home/atretyakov/railoptim/data/stations/esr_district_to_rw.csv"
+  },
+  "output": "/home/atretyakov/railoptim/data/map/railways_voronoi.geojson",
+  "assignment": {
+    "stats": {
+      "nsi": 11848
+    },
+    "skipped_sample": [],
+    "skipped_count": 0
+  },
+  "voronoi": {
+    "zone_count": 29,
+    "station_count": 11848,
+    "unique_coord_count": 11827,
+    "duplicate_coord_stations": 21,
+    "railways": {
+      "---": 13,
+      "CFR": 2,
+      "FIN": 6,
+      "PKP": 18,
+      "RAI": 24,
+      "БЖД": 1,
+      "ВСБ": 560,
+      "ГОР": 888,
+      "ДВС": 520,
+      "ДОН": 1,
+      "ЖДЯ": 20,
+      "ЗАБ": 153,
+      "ЗСБ": 926,
+      "КБШ": 505,
+      "КЖД": 10,
+      "КЗХ": 230,
+      "КРМ": 120,
+      "КРС": 532,
+      "МАВ": 14,
+      "МНГ": 2,
+      "МСК": 1412,
+      "ОКТ": 1574,
+      "ПРВ": 507,
+      "САХ": 2,
+      "СВР": 956,
+      "СЕВ": 807,
+      "СКВ": 791,
+      "ЮВС": 592,
+      "ЮУР": 662
+    }
+  },
+  "disclaimer": "Условные границы (Voronoi по станциям), не официальные границы РЖД"
+}

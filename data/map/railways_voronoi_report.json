@@ -1,5 +1,20 @@
 {
-  "built_at": "2026-05-25T14:52:57.114551+00:00",
+  "built_at": "2026-05-25T15:22:56.361227+00:00",
+  "voronoi_mode": "centroids",
+  "simplify_tol": 0.35,
+  "cis_rw_codes": [
+    "АЗР",
+    "БЕЛ",
+    "ГРЗ",
+    "КЗХ",
+    "КРГ",
+    "ЛАТ",
+    "ЛИТ",
+    "ТДЖ",
+    "УЗБ",
+    "ЭСТ",
+    "ЮКЖ"
+  ],
   "region_filter": "ru,cis",
   "region_groups_resolved": [
     "cis",
@@ -371,10 +386,32 @@
     ]
   },
   "voronoi": {
+    "mode": "centroids",
     "zone_count": 20,
     "station_count": 14098,
-    "unique_coord_count": 14055,
-    "duplicate_coord_stations": 43,
+    "railway_count": 20,
+    "centroid_source": {
+      "БЕЛ": "cis_filtered",
+      "ВСБ": "ru_filtered",
+      "ГОР": "ru_filtered",
+      "ДВС": "ru_filtered",
+      "ЗАБ": "ru_filtered",
+      "ЗСБ": "ru_filtered",
+      "КБШ": "ru_filtered",
+      "КЗХ": "cis_filtered",
+      "КРГ": "cis_filtered",
+      "КРС": "ru_filtered",
+      "МСК": "ru_filtered",
+      "ОКТ": "ru_filtered",
+      "ПРВ": "ru_filtered",
+      "СВР": "ru_filtered",
+      "СЕВ": "ru_filtered",
+      "СКВ": "ru_filtered",
+      "ТДЖ": "cis_filtered",
+      "УЗБ": "cis_filtered",
+      "ЮВС": "ru_filtered",
+      "ЮУР": "ru_filtered"
+    },
     "railways": {
       "БЕЛ": 941,
       "ВСБ": 561,

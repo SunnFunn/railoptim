@@ -26,7 +26,15 @@ data/map/*.partial
 data/map/ru_cis_download.log
 data/map/verify_report.txt
 # data/map/railways_voronoi_report.json
-data/map/railways_zones_report.json
+
+# Supermap (https://supermap.zatramvaj.su, WFS wms.zatramvaj.su) — сырьё с сайта, не коммитить.
+# В git только отфильтованный data/map/railways_zones.geojson (см. scripts/map/fetch_supermap_rworgs.py).
 data/map/supermap_rworgs_raw.geojson
+data/map/supermap_*_raw.geojson
+data/map/supermap_*_raw.json
+data/map/railways_zones_report.json
+# прочие возможные скачивания с Суперкарты (stations.geojson и т.п.), если появятся локально:
+data/map/supermap_stations*.geojson
+data/map/supermap_wfs_*.geojson
 scripts/map/.venv/
 scripts/map/.uv-cache/

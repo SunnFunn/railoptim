@@ -17,6 +17,7 @@ export WEB_BIND_ADDR="${WEB_BIND_ADDR:-0.0.0.0:8080}"
 export STATIONS_GEO_DB="${STATIONS_GEO_DB:-$ROOT/data/stations/stations_geo.sqlite}"
 export OPTIM_RESULT_DIR="${OPTIM_RESULT_DIR:-$ROOT/tmp}"
 export WEB_STATIC_DIR="${WEB_STATIC_DIR:-$ROOT/web-ui/dist}"
+export WEB_MAP_DIR="${WEB_MAP_DIR:-$ROOT/data/map}"
 export WEB_CORS_ORIGINS="${WEB_CORS_ORIGINS:-*}"
 export RUST_LOG="${RUST_LOG:-railoptim_web=info,tower_http=info,axum=info}"
 

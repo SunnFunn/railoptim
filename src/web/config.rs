@@ -31,6 +31,7 @@ pub struct WebConfig {
     pub optim_result_file: Option<PathBuf>,
     pub cors_origins: Vec<String>,
     pub static_dir: Option<PathBuf>,
+    pub map_dir: PathBuf,
 }
 
 impl WebConfig {
@@ -65,6 +66,10 @@ impl WebConfig {
             .map(PathBuf::from)
             .filter(|p| !p.as_os_str().is_empty());
 
+        let map_dir = std::env::var("WEB_MAP_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("data/map"));
+
         Ok(Self {
             bind_addr,
             stations_geo_db,
@@ -72,6 +77,7 @@ impl WebConfig {
             optim_result_file,
             cors_origins,
             static_dir,
+            map_dir,
         })
     }
 }

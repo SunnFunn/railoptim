@@ -1,0 +1,10 @@
+{
+  "verified_at": "2026-05-25T11:16:53Z",
+  "decision": "go",
+  "pmtiles_path": "data/map/ru_cis.pmtiles",
+  "pmtiles_bytes":  8670197484,
+  "maplibre_css": true,
+  "style_json": true,
+  "sprite_json": true,
+  "glyph_pbf_count": 10
+}

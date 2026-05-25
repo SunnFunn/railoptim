@@ -12,6 +12,9 @@ if ! command -v npm >/dev/null 2>&1; then
   exit 1
 fi
 
+echo "==> map assets (style, css, glyphs)"
+"$ROOT/scripts/map/copy_map_assets.sh"
+
 echo "==> web-ui: npm ci + build"
 cd "$UI"
 if [ -f package-lock.json ]; then
@@ -44,7 +47,7 @@ echo ""
 echo "Сборка завершена: $UI/dist"
 echo ""
 echo "Дальше закоммитьте и отправьте в GitHub:"
-echo "  git add web-ui/dist web-ui/package-lock.json"
+echo "  git add web-ui/dist web-ui/package-lock.json data/map/"
 echo "  git commit -m \"build(web-ui): обновить dist для оффлайн prod\""
 echo "  git push"
 echo ""

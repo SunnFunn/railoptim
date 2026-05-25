@@ -33,12 +33,45 @@ chmod +x scripts/build_web_ui.sh
 ```
 
 Скрипт создаёт/обновляет `web-ui/dist/` и `web-ui/dist/build-info.json` (дата, версия node, git rev).
+Также готовит **оффлайн-подложку** в `data/map/` (style, css, glyphs, sprites) — см. ниже.
+
+### 1.1a Оффлайн-подложка карты (без openfreemap / unpkg)
+
+```bash
+chmod +x scripts/map/*.sh
+./scripts/map/verify_offline_downloads.sh
+```
+
+Проверяет CDN, качает glyphs/sprites, копирует `maplibre-gl.css`, генерирует `style.json` (**подписи: `lang: ru`**).
+
+**PMTiles RU+СНГ (обязательно для prod-карты, один раз ~8 GB):**
+
+На dev-машине с интернетом:
+
+```bash
+chmod +x scripts/map/download_ru_cis_pmtiles.sh
+./scripts/map/download_ru_cis_pmtiles.sh
+# оценка без скачивания: ./scripts/map/download_ru_cis_pmtiles.sh --dry-run
+```
+
+Или вручную с [build.protomaps.com](https://build.protomaps.com) → `data/map/ru_cis.pmtiles`.
+
+Доставка на prod (не в git):
+
+```bash
+rsync -avP data/map/ru_cis.pmtiles user@prod:~/railoptim/data/map/
+# или Google Drive / USB
+```
+
+**Смена языка подписей (ru/en)** — только `style.json` в git, pmtiles не трогать.
+
+Подробно: [`data/map/README.md`](../data/map/README.md).
 
 ### 1.2 Коммит и push
 
 ```bash
-git add web-ui/dist web-ui/package-lock.json
-git status   # убедитесь, что dist/*.js, dist/index.html в индексе
+git add web-ui/dist web-ui/package-lock.json data/map/
+git status   # dist + data/map/style.json, glyphs, sprites (не *.pmtiles)
 git commit -m "build(web-ui): обновить dist для оффлайн prod"
 git push origin <ваша-ветка>
 ```
@@ -103,7 +136,16 @@ Environment="WEB_STATIC_DIR=/home/atretyakov/railoptim/web-ui/dist"
 Environment="OPTIM_RESULT_DIR=/home/atretyakov/railoptim/tmp"
 ```
 
-### 2.3 Справочник станций (geo)
+### 2.3a Оффлайн-подложка на prod
+
+```bash
+ls -la data/map/style.json data/map/maplibre-gl.css
+ls -lh data/map/ru_cis.pmtiles   # должен быть на диске (не в git)
+```
+
+Если `ru_cis.pmtiles` нет — скопируйте с онлайн-машины (`rsync`, см. 1.1a).
+
+### 2.4 Справочник станций (geo)
 
 `data/stations/stations_geo.sqlite` **не в git** — создаётся ETL на prod или копируется с другой машины:
 
@@ -113,7 +155,7 @@ Environment="OPTIM_RESULT_DIR=/home/atretyakov/railoptim/tmp"
 # или скопировать готовый файл в data/stations/stations_geo.sqlite
 ```
 
-### 2.4 Установка web-сервиса
+### 2.5 Установка web-сервиса
 
 ```bash
 cd ~/railoptim
@@ -128,7 +170,7 @@ cd ~/railoptim
 
 **npm не вызывается**, если dist уже в репозитории.
 
-### 2.5 План назначений для карты
+### 2.6 План назначений для карты
 
 Web читает последний `tmp/result_*.json` после batch-оптимизации.
 
@@ -144,16 +186,17 @@ Web читает последний `tmp/result_*.json` после batch-опт�
 curl -X POST http://127.0.0.1:8080/api/v1/plans/reload
 ```
 
-### 2.6 Проверка
+### 2.7 Проверка
 
 ```bash
 curl -s http://127.0.0.1:8080/health
+curl -sI http://127.0.0.1:8080/map/style.json
+curl -sI http://127.0.0.1:8080/map/ru_cis.pmtiles | grep -i accept-ranges
 curl -s http://127.0.0.1:8080/api/v1/meta | jq .
-curl -s http://127.0.0.1:8080/api/v1/plans/latest/map | jq '.stats, .filters'
 curl -s -o /dev/null -w 'SPA HTTP %{http_code}\n' http://127.0.0.1:8080/
 ```
 
-В браузере: `http://<IP-сервера>:8080/` — карта с дугами назначений.
+В браузере F12 → Network: **нет** запросов к `openfreemap.org`, `unpkg.com`. Тайлы с `:8080/map/`.
 
 Логи:
 
@@ -162,6 +205,30 @@ journalctl -u railoptim-web -f
 ```
 
 Ожидается строка `serving_spa=true` при старте.
+
+---
+
+## Часть 2.8 Локальный smoke (dev, две тестовые дуги)
+
+На машине с `ru_cis.pmtiles` и npm:
+
+```bash
+cd ~/railoptim
+./scripts/build_web_ui.sh
+
+export STATIONS_GEO_DB=tmp/test_stations_geo.sqlite
+export OPTIM_RESULT_FILE=tests/fixtures/optim_report_sample.json
+export WEB_STATIC_DIR=web-ui/dist
+export WEB_MAP_DIR=data/map
+export WEB_BIND_ADDR=127.0.0.1:8080
+
+cargo build --release --bin railoptim-web   # если бинарник старый
+./target/release/railoptim-web
+```
+
+Браузер: **http://127.0.0.1:8080** — 2 дуги (Москва→СПб, Екатеринбург→Самара), подложка с `/map/`.
+
+Остановка: `lsof -ti :8080 | xargs kill`
 
 ---
 
@@ -177,9 +244,9 @@ git pull
 
 `web-ui/dist` не менился — пересборка npm не нужна.
 
-### Только frontend (карта)
+### Только frontend (карта / язык подписей)
 
-На **dev-машине**: `./scripts/build_web_ui.sh` → commit → push.
+На **dev-машине**: `./scripts/build_web_ui.sh` → commit → push (`web-ui/dist`, `data/map/style.json`).
 
 На **prod**:
 
@@ -189,7 +256,30 @@ git pull
 sudo systemctl restart railoptim-web
 ```
 
-Пересборка `cargo` не обязательна, если менялся только `web-ui/dist`.
+Пересборка `cargo` не обязательна, если менялся только `web-ui/dist` и `data/map/*` (кроме pmtiles).
+
+### Первичная доставка PMTiles (~8 GB, один раз)
+
+**На dev с интернетом** (не в git):
+
+```bash
+./scripts/map/download_ru_cis_pmtiles.sh
+# проверка: .tools/pmtiles show data/map/ru_cis.pmtiles
+```
+
+**На prod** (оффлайн, USB / Google Drive / rsync с другой машины):
+
+```bash
+# с dev-машины:
+rsync -avP data/map/ru_cis.pmtiles user@prod:~/railoptim/data/map/
+
+# на prod:
+ls -lh ~/railoptim/data/map/ru_cis.pmtiles
+curl -sI http://127.0.0.1:8080/map/ru_cis.pmtiles | grep -i accept-ranges
+sudo systemctl restart railoptim-web
+```
+
+Обновление **только языка подписей** (ru/en): достаточно `git pull` нового `style.json` — **pmtiles не перекачивать**.
 
 ### Данные geo или план
 
@@ -208,7 +298,9 @@ curl -X POST http://127.0.0.1:8080/api/v1/plans/reload
 | Симптом | Причина | Решение |
 |---------|---------|---------|
 | `ERROR: нет web-ui/dist/index.html` | dist не в git / не сделали pull | Часть 1 → `git pull` |
-| `:8080/` 404, API работает | нет dist или `WEB_STATIC_DIR` неверный | Проверить путь в unit и `ls web-ui/dist/` |
+| `:8080/` 404, API работает | нет dist | `git pull` web-ui/dist |
+| Подложка пустая, дуги есть | нет `ru_cis.pmtiles` | `rsync` pmtiles, проверить `/map/` |
+| F12: openfreemap/unpkg | старый dist | `./scripts/build_web_ui.sh` + push |
 | Карта пустая | нет `tmp/result_*.json` | `./run.sh prod` + `POST …/plans/reload` |
 | Нет дуг на карте | нет координат в sqlite | `build-geo`, `POST …/stations/reload` |
 | `serving_spa=false` в логах | нет index.html в `WEB_STATIC_DIR` | `git pull`, проверить dist |
@@ -231,7 +323,8 @@ REBUILD_WEB_UI=1 ./deploy/install_web_service.sh
 - [ ] `./deploy/install_web_service.sh` успешен
 - [ ] `systemctl status railoptim-web` — active
 - [ ] `curl /health` — ok
-- [ ] `curl /` — HTTP 200
+- [ ] `data/map/ru_cis.pmtiles` на prod (rsync)
+- [ ] `curl /map/style.json` и `Accept-Ranges` на pmtiles
 - [ ] После batch: `POST /api/v1/plans/reload`
 - [ ] Карта в браузере отображает дуги
 

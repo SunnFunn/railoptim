@@ -41,6 +41,7 @@ mod api_tests {
             optim_result_file: None,
             cors_origins: vec!["*".into()],
             static_dir: None,
+            map_dir: PathBuf::from("data/map"),
         };
         let stations = StationGeoCatalog::load(&db).unwrap();
         AppState::new(config, stations).unwrap()

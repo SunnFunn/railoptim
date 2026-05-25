@@ -41,6 +41,8 @@ fn info_startup(config: &WebConfig, stations: &StationGeoCatalog) {
         result_dir = %config.optim_result_dir.display(),
         result_file = config.optim_result_file.as_ref().map(|p| p.display().to_string()),
         static_dir = config.static_dir.as_ref().map(|p| p.display().to_string()),
+        map_dir = %config.map_dir.display(),
+        map_style = config.map_dir.join("style.json").is_file(),
         serving_spa,
         "starting railoptim-web"
     );

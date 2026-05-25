@@ -247,6 +247,7 @@ mod tests {
             optim_result_file: Some(path),
             cors_origins: vec!["*".into()],
             static_dir: None,
+            map_dir: PathBuf::from("data/map"),
         };
 
         let mut store = PlanStore::new(&config);

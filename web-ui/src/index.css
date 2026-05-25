@@ -180,6 +180,21 @@ body,
   color: #78909c;
 }
 
+.map-style-loading,
+.map-style-error {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  padding: 1rem;
+  text-align: center;
+  color: #546e7a;
+}
+
+.map-style-error {
+  color: #c62828;
+  background: #ffebee;
+}
+
 .map-tooltip {
   position: absolute;
   z-index: 10;

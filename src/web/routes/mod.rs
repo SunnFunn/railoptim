@@ -33,12 +33,25 @@ pub fn router(state: AppState) -> Router {
         .layer(TraceLayer::new_for_http())
         .with_state(state.clone());
 
+    let mut app = Router::new().merge(api);
+
+    let map_dir = &state.config.map_dir;
+    if map_dir.join("style.json").is_file() {
+        app = app.nest_service("/map", ServeDir::new(map_dir));
+        tracing::info!(path = %map_dir.display(), "serving map assets at /map/");
+    } else {
+        tracing::warn!(
+            path = %map_dir.display(),
+            "WEB_MAP_DIR: style.json missing — offline basemap disabled"
+        );
+    }
+
     if let Some(static_dir) = &state.config.static_dir {
         let index = static_dir.join("index.html");
         if index.is_file() {
             let serve = ServeDir::new(static_dir)
                 .not_found_service(ServeFile::new(index));
-            return Router::new().merge(api).fallback_service(serve);
+            return app.fallback_service(serve);
         }
         tracing::warn!(
             path = %static_dir.display(),
@@ -46,7 +59,7 @@ pub fn router(state: AppState) -> Router {
         );
     }
 
-    api
+    app
 }
 
 fn build_cors(origins: &[String]) -> CorsLayer {

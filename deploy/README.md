@@ -51,7 +51,8 @@ Wrapper [`start_web.sh`](start_web.sh) запускает `app/bin/railoptim-web
 | `OPTIM_RESULT_DIR` | `tmp` | Каталог с `result_*.json` |
 | `OPTIM_RESULT_FILE` | — | Явный путь к JSON (override latest) |
 | `WEB_CORS_ORIGINS` | `*` | CORS origins через запятую |
-| `WEB_STATIC_DIR` | `web-ui/dist` | Каталог SPA (deck.gl); если нет `index.html` — только API |
+| `WEB_STATIC_DIR` | `web-ui/dist` | SPA (deck.gl) |
+| `WEB_MAP_DIR` | `data/map` | Оффлайн подложка: style, pmtiles, css |
 | `RUST_LOG` | см. код | Фильтр tracing |
 
 Web-сервер **не требует** `API_BASE_URL` / `API_TOKEN`.

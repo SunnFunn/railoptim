@@ -21,3 +21,7 @@ data/stations/sbin_esr_index.parquet
 data/stations/sbin_index_report.json
 data/stations/stations_geo.sqlite
 data/stations/cross_border_esr6_conflicts.csv
+data/map/*.pmtiles
+data/map/*.partial
+data/map/ru_cis_download.log
+data/map/verify_report.txt

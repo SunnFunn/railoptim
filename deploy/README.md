@@ -2,6 +2,22 @@
 
 Отдельный long-running сервис. Batch-оптимизация (`railoptim` + `run.sh`) работает независимо.
 
+## Оффлайн prod (без npm)
+
+На сервере **не нужен Node.js**: фронтенд `web-ui/dist` коммитится из dev-машины.
+
+**Полная инструкция:** [`OFFLINE_PROD.md`](OFFLINE_PROD.md)
+
+Кратко:
+
+```bash
+# Dev-машина (с npm):
+./scripts/build_web_ui.sh && git add web-ui/dist && git push
+
+# Оффлайн prod:
+git pull && ./deploy/install_web_service.sh
+```
+
 ## Prod: одна команда
 
 Из корня репозитория на Ubuntu prod (пути в unit — см. [`systemd/railoptim-web.service`](systemd/railoptim-web.service)):
@@ -12,10 +28,11 @@
 
 Скрипт:
 
-1. `cargo build --release --bin railoptim --bin railoptim-web`
-2. копирует бинарники в [`app/bin/`](../app/bin/) (`railoptim`, `railoptim-web`)
-3. `ln -sf deploy/systemd/railoptim-web.service` → `/etc/systemd/system/`
-4. `systemctl daemon-reload`, `enable`, `restart`
+1. Проверяет `web-ui/dist/index.html` из git (или собирает через npm, если `REBUILD_WEB_UI=1`)
+2. `cargo build --release --bin railoptim --bin railoptim-web`
+3. копирует бинарники в [`app/bin/`](../app/bin/) (`railoptim`, `railoptim-web`)
+4. `ln -sf deploy/systemd/railoptim-web.service` → `/etc/systemd/system/`
+5. `systemctl daemon-reload`, `enable`, `restart`
 
 Prod batch (`./run.sh prod`) использует `app/bin/railoptim`.
 
@@ -34,11 +51,39 @@ Wrapper [`start_web.sh`](start_web.sh) запускает `app/bin/railoptim-web
 | `OPTIM_RESULT_DIR` | `tmp` | Каталог с `result_*.json` |
 | `OPTIM_RESULT_FILE` | — | Явный путь к JSON (override latest) |
 | `WEB_CORS_ORIGINS` | `*` | CORS origins через запятую |
+| `WEB_STATIC_DIR` | `web-ui/dist` | Каталог SPA (deck.gl); если нет `index.html` — только API |
 | `RUST_LOG` | см. код | Фильтр tracing |
 
 Web-сервер **не требует** `API_BASE_URL` / `API_TOKEN`.
 
-## Запуск (dev)
+## Frontend (web-ui)
+
+SPA на React + deck.gl + MapLibre. В prod раздаётся с `:8080/` (тот же порт, что API).
+
+**Dev** (два терминала):
+
+```bash
+# 1 — API
+export STATIONS_GEO_DB=data/stations/stations_geo.sqlite
+export OPTIM_RESULT_FILE=tests/fixtures/optim_report_sample.json
+cargo run --bin railoptim-web
+
+# 2 — Vite (proxy /api → :8080)
+cd web-ui && npm install && npm run dev
+```
+
+Открыть http://localhost:5173
+
+**Prod:** `./deploy/install_web_service.sh` собирает `web-ui/dist`. Smoke:
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8080/
+curl -s http://127.0.0.1:8080/api/v1/plans/latest/map | jq '.stats, .filters'
+```
+
+Фильтры на карте: multi-select «дороги образования» / «дороги погрузки» — дуги между выбранными дорогами.
+
+## Запуск API (dev, без frontend)
 
 ```bash
 export STATIONS_GEO_DB=data/stations/stations_geo.sqlite
@@ -98,5 +143,6 @@ sudo systemctl enable --now railoptim-web
 ```bash
 curl -s localhost:8080/health
 curl -s localhost:8080/api/v1/meta | jq .
-curl -s localhost:8080/api/v1/plans/latest/map | jq '.stats'
+curl -s localhost:8080/api/v1/plans/latest/map | jq '.stats, .filters'
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8080/
 ```

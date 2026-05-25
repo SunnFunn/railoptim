@@ -1,10 +1,10 @@
 //! Обогащение назначений координатами из StationGeoCatalog.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::data::StationGeoCatalog;
 use crate::solver::AssignmentRecord;
-use crate::web::dto::{MapArc, MapGeoEndpoint, MapNode, MapStats, PlanMapResponse};
+use crate::web::dto::{MapArc, MapFiltersMeta, MapGeoEndpoint, MapNode, MapStats, PlanMapResponse};
 use crate::web::plan_store::{LoadedPlan, PlanSummary};
 
 pub fn build_map_response(
@@ -15,8 +15,13 @@ pub fn build_map_response(
     let mut arcs = Vec::with_capacity(plan.report.assignments.len());
     let mut arcs_resolved = 0usize;
     let mut arcs_missing_geo = 0usize;
+    let mut supply_railways = HashSet::new();
+    let mut demand_railways = HashSet::new();
 
     for (id, assignment) in plan.report.assignments.iter().enumerate() {
+        supply_railways.insert(assignment.supply_railway.clone());
+        demand_railways.insert(assignment.demand_railway.clone());
+
         let (from, to, geo_status) = map_arc_endpoints(assignment, catalog);
         if geo_status == "ok" {
             arcs_resolved += 1;
@@ -31,10 +36,17 @@ pub fn build_map_response(
             distance_km: assignment.distance_km,
             cost_rub: assignment.cost_rub,
             supply_kind: assignment.supply_kind.clone(),
+            supply_railway: assignment.supply_railway.clone(),
+            demand_railway: assignment.demand_railway.clone(),
             demand_period: assignment.demand_period,
             geo_status,
         });
     }
+
+    let mut supply_list: Vec<_> = supply_railways.into_iter().collect();
+    supply_list.sort();
+    let mut demand_list: Vec<_> = demand_railways.into_iter().collect();
+    demand_list.sort();
 
     let nodes = aggregate_nodes(&plan.report.assignments, catalog);
     let stats = MapStats {
@@ -48,6 +60,10 @@ pub fn build_map_response(
         plan_id: plan.plan_id.clone(),
         summary,
         stats,
+        filters: MapFiltersMeta {
+            supply_railways: supply_list,
+            demand_railways: demand_list,
+        },
         arcs,
         nodes,
     }
@@ -183,7 +199,7 @@ mod tests {
     use chrono::Utc;
     use std::path::PathBuf;
 
-    fn sample_assignment(from: &str, to: &str) -> AssignmentRecord {
+    fn sample_assignment(from: &str, to: &str, supply_rw: &str, demand_rw: &str) -> AssignmentRecord {
         AssignmentRecord {
             cars: 1.0,
             supply_id: 1,
@@ -191,11 +207,11 @@ mod tests {
             car_numbers: vec![],
             supply_station: "From".into(),
             supply_station_code: from.into(),
-            supply_railway: "RW".into(),
+            supply_railway: supply_rw.into(),
             demand_id: 1,
             demand_station: "To".into(),
             demand_station_code: to.into(),
-            demand_railway: "RW".into(),
+            demand_railway: demand_rw.into(),
             demand_period: 1,
             cost_rub: 100.0,
             distance_km: 50,
@@ -236,7 +252,7 @@ mod tests {
             supply_count: 1,
             demand_count: 1,
             arc_count: 1,
-            assignments: vec![sample_assignment("111111", "222222")],
+            assignments: vec![sample_assignment("111111", "222222", "Московская", "Октябрьская")],
         };
         let plan = LoadedPlan {
             plan_id: "test.json".into(),
@@ -259,6 +275,10 @@ mod tests {
         assert_eq!(map.stats.arcs_resolved, 1);
         assert_eq!(map.stats.arcs_missing_geo, 0);
         assert_eq!(map.nodes.len(), 2);
+        assert_eq!(map.arcs[0].supply_railway, "Московская");
+        assert_eq!(map.arcs[0].demand_railway, "Октябрьская");
+        assert_eq!(map.filters.supply_railways, vec!["Московская"]);
+        assert_eq!(map.filters.demand_railways, vec!["Октябрьская"]);
 
         let _ = fs::remove_dir_all(&dir);
     }

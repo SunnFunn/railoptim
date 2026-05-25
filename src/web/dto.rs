@@ -70,6 +70,8 @@ pub struct MapArc {
     pub distance_km: i32,
     pub cost_rub: f64,
     pub supply_kind: String,
+    pub supply_railway: String,
+    pub demand_railway: String,
     pub demand_period: u8,
     pub geo_status: &'static str,
 }
@@ -93,10 +95,17 @@ pub struct MapStats {
 }
 
 #[derive(Debug, Serialize)]
+pub struct MapFiltersMeta {
+    pub supply_railways: Vec<String>,
+    pub demand_railways: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
 pub struct PlanMapResponse {
     pub plan_id: String,
     pub summary: PlanSummary,
     pub stats: MapStats,
+    pub filters: MapFiltersMeta,
     pub arcs: Vec<MapArc>,
     pub nodes: Vec<MapNode>,
 }

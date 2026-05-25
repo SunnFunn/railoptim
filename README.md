@@ -25,7 +25,9 @@ railoptim/
 ├── Cargo.toml              — зависимости (highs, tokio, reqwest, axum, …)
 ├── run.sh                  — batch-запуск оптимизации с секретами из Infisical
 ├── auth-infisical.sh       — аутентификация в Infisical
-├── deploy/                 — deploy web: install_web_service.sh, systemd/, start_web.sh
+├── deploy/                 — deploy: install_web_service.sh, OFFLINE_PROD.md, systemd/
+├── web-ui/                 — SPA deck.gl; dist/ в git для оффлайн prod
+├── scripts/build_web_ui.sh — сборка dist на машине с npm
 ├── app/bin/                — prod-бинарники (railoptim, railoptim-web), gitignored
 ├── data/                   — входные JSON-референсы (references.json, …)
 │   └── stations/           — ETL справочника ЕСР + координаты ([README](data/stations/README.md))
@@ -287,7 +289,7 @@ export OPTIM_RESULT_FILE=tests/fixtures/optim_report_sample.json   # dev
 cargo run --bin railoptim-web
 ```
 
-Подробнее: [`deploy/README.md`](deploy/README.md).
+Подробнее: [`deploy/README.md`](deploy/README.md). Оффлайн prod (без npm): [`deploy/OFFLINE_PROD.md`](deploy/OFFLINE_PROD.md).
 
 ### Переменные окружения
 
@@ -311,7 +313,7 @@ Web-сервер **не требует** `API_BASE_URL` / `API_TOKEN`.
 | GET | `/api/v1/stations/{esr6}` | Lookup станции по ЕСР-6 |
 | GET | `/api/v1/plans` | Список `result_*.json` в `OPTIM_RESULT_DIR` |
 | GET | `/api/v1/plans/latest` | Последний план + `OptimReport` |
-| GET | `/api/v1/plans/latest/map` | Данные для карты: arcs + nodes (deck.gl) |
+| GET | `/api/v1/plans/latest/map` | Данные для карты: arcs + nodes + filters (deck.gl) |
 | POST | `/api/v1/plans/reload` | Перечитать JSON с диска после batch |
 
 После успешного cron `./run.sh`:
@@ -337,7 +339,8 @@ Unit — симлинк на [`deploy/systemd/railoptim-web.service`](deploy/sys
 
 - **Язык**: Rust 2024, async runtime — `tokio`.
 - **Solver**: [HiGHS](https://highs.dev/) 2.0 — LP (simplex) и MIP (branch-and-cut).
-- **Web API**: [Axum](https://github.com/tokio-rs/axum) — бинарник `railoptim-web`; frontend (deck.gl + MapLibre) — отдельный этап.
+- **Web API**: [Axum](https://github.com/tokio-rs/axum) — бинарник `railoptim-web`
+- **Frontend**: [`web-ui/`](web-ui/) — React + deck.gl + MapLibre; `dist/` в git; [`deploy/OFFLINE_PROD.md`](deploy/OFFLINE_PROD.md)
 - **Источники данных**: REST API (через `reqwest` + `serde`), MSSQL, справочник станций [`data/stations/`](data/stations/README.md) (SQLite).
 - **Ошибки**: `anyhow` на верхнем уровне, `thiserror` в модулях.
 - **Выходные данные**: JSON-отчёт (`tmp/result_*.json`) и xlsx (через `rust_xlsxwriter`); финальные

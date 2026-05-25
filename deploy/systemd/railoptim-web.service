@@ -19,6 +19,7 @@ StandardError=journal
 Environment="WEB_BIND_ADDR=0.0.0.0:8080"
 Environment="STATIONS_GEO_DB=/home/atretyakov/railoptim/data/stations/stations_geo.sqlite"
 Environment="OPTIM_RESULT_DIR=/home/atretyakov/railoptim/tmp"
+Environment="WEB_STATIC_DIR=/home/atretyakov/railoptim/web-ui/dist"
 Environment="WEB_CORS_ORIGINS=*"
 Environment="RUST_LOG=railoptim_web=info,tower_http=info,axum=info"
 Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"

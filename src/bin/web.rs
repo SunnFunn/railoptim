@@ -28,12 +28,20 @@ async fn main() -> anyhow::Result<()> {
 }
 
 fn info_startup(config: &WebConfig, stations: &StationGeoCatalog) {
+    let serving_spa = config
+        .static_dir
+        .as_ref()
+        .map(|d| d.join("index.html").is_file())
+        .unwrap_or(false);
+
     tracing::info!(
         bind = %config.bind_addr,
         stations = stations.len(),
         stations_db = %stations.path().display(),
         result_dir = %config.optim_result_dir.display(),
         result_file = config.optim_result_file.as_ref().map(|p| p.display().to_string()),
+        static_dir = config.static_dir.as_ref().map(|p| p.display().to_string()),
+        serving_spa,
         "starting railoptim-web"
     );
 }

@@ -2,6 +2,9 @@
 /tmp
 /app/bin/*
 !/app/bin/.gitkeep
+web-ui/node_modules/
+# dist собирается на машине с npm и коммитится в git (оффлайн prod без Node)
+web-ui/dist/**/*.map
 __pycache__/
 *.py[cod]
 # /logs

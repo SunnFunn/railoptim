@@ -246,6 +246,7 @@ mod tests {
             optim_result_dir: dir.clone(),
             optim_result_file: Some(path),
             cors_origins: vec!["*".into()],
+            static_dir: None,
         };
 
         let mut store = PlanStore::new(&config);

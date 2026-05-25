@@ -40,6 +40,7 @@ mod api_tests {
             optim_result_dir: PathBuf::from("tmp"),
             optim_result_file: None,
             cors_origins: vec!["*".into()],
+            static_dir: None,
         };
         let stations = StationGeoCatalog::load(&db).unwrap();
         AppState::new(config, stations).unwrap()

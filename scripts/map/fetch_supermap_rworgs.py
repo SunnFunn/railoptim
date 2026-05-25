@@ -21,6 +21,8 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
+from shapely.geometry import shape
+
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_WFS = "https://wms.zatramvaj.su/geoserver/ows"
 DEFAULT_RAW = ROOT / "data/map/supermap_rworgs_raw.geojson"
@@ -98,6 +100,16 @@ def _bounds_from_geometry(geom: dict) -> tuple[float, float, float, float]:
     return min_lon, min_lat, max_lon, max_lat
 
 
+def _label_point_from_geometry(geom: dict) -> tuple[float, float]:
+    """Точка подписи внутри полигона (центр зоны, не угол bbox)."""
+    g = shape(geom)
+    if g.is_empty:
+        min_lon, min_lat, max_lon, max_lat = _bounds_from_geometry(geom)
+        return (min_lon + max_lon) / 2, (min_lat + max_lat) / 2
+    p = g.representative_point()
+    return float(p.x), float(p.y)
+
+
 def transform_collection(
     raw: dict,
     *,
@@ -124,7 +136,7 @@ def transform_collection(
         geom = feat.get("geometry")
         if not geom:
             continue
-        min_lon, min_lat, max_lon, max_lat = _bounds_from_geometry(geom)
+        label_lon, label_lat = _label_point_from_geometry(geom)
         kept.append(
             {
                 "type": "Feature",
@@ -132,8 +144,8 @@ def transform_collection(
                     "rw": rw,
                     "name_supermap": sname,
                     "name_eng": props.get("nameENG"),
-                    "label_lon": min_lon,
-                    "label_lat": max_lat,
+                    "label_lon": label_lon,
+                    "label_lat": label_lat,
                 },
                 "geometry": geom,
             }

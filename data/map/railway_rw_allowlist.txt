@@ -1,0 +1,32 @@
+# Дороги для Voronoi на карте (NSI.RailWay.ShortName, верхний регистр).
+# Станции с другим кодом исключаются; см. railways_voronoi_report.json → excluded_by_rw.
+#
+# Сети РЖД (магистрали)
+ОКТ
+МСК
+ГОР
+КБШ
+ЮУР
+СВР
+ЗСБ
+КРС
+ВСБ
+ЗАБ
+ДВС
+ПРВ
+ЮВС
+СКВ
+СЕВ
+КЛГ
+# СНГ и соседи (data/references.json → NoCleaningRoads); БЖД → БЕЛ см. railway_rw_aliases.csv
+БЕЛ
+КЗХ
+УЗБ
+АЗР
+ГРЗ
+ЮКЖ
+ЛИТ
+ЛАТ
+КРГ
+ТДЖ
+ЭСТ

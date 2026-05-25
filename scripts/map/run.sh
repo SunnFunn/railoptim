@@ -25,7 +25,7 @@ Usage:
 
 Примеры:
   ./scripts/map/run.sh sync
-  ./scripts/map/run.sh build-voronoi --region ru
+  ./scripts/map/run.sh build-voronoi --region ru,cis
   cd scripts/map && uv sync --frozen --offline && ./run.sh
 EOF
 }

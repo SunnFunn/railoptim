@@ -72,7 +72,7 @@ rsync -avP data/map/ru_cis.pmtiles user@prod:~/railoptim/data/map/
 ```bash
 cd scripts/map
 uv sync --frozen          # онлайн; на оффлайн: --offline + локальный UV_CACHE_DIR (см. data/map/README.md)
-./run.sh build-voronoi
+./run.sh build-voronoi    # по умолчанию --region ru,cis + railway_rw_allowlist.txt
 ```
 
 Обычно достаточно `railways_voronoi.geojson` из git после `git pull`.

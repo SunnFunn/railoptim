@@ -5,17 +5,17 @@
 Вход:
   - data/stations/stations_geo.sqlite
   - data/stations/stations_nsi_raw.parquet (railway_rw из NSI.RailWay.ShortName)
-  - data/stations/esr_district_to_rw.csv (fallback по esr6[:2])
+  - data/stations/esr_district_to_rw.csv (fallback только для region_group=ru)
+  - data/map/railway_rw_allowlist.txt (какие коды рисовать на карте)
 
 Пример:
-  python3 scripts/map/build_railway_voronoi.py
-  python3 scripts/map/build_railway_voronoi.py --region ru --bbox 19,35,180,82
+  ./scripts/map/run.sh build-voronoi
+  ./scripts/map/run.sh build-voronoi --region ru,cis --allowlist data/map/railway_rw_allowlist.txt
 """
 
 from __future__ import annotations
 
 import argparse
-import csv
 import json
 import sqlite3
 import sys
@@ -27,9 +27,76 @@ ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_GEO = ROOT / "data/stations/stations_geo.sqlite"
 DEFAULT_NSI = ROOT / "data/stations/stations_nsi_raw.parquet"
 DEFAULT_FALLBACK = ROOT / "data/stations/esr_district_to_rw.csv"
+DEFAULT_ALLOWLIST = ROOT / "data/map/railway_rw_allowlist.txt"
+DEFAULT_ALIASES = ROOT / "data/map/railway_rw_aliases.csv"
 DEFAULT_OUT = ROOT / "data/map/railways_voronoi.geojson"
 DEFAULT_REPORT = ROOT / "data/map/railways_voronoi_report.json"
 DEFAULT_BBOX = (19.0, 35.0, 180.0, 82.0)
+DEFAULT_REGION = "ru,cis"
+
+
+def parse_region_filter(raw: str) -> set[str] | None:
+    """all → без фильтра; ru,cis → множество region_group."""
+    s = (raw or "").strip().lower()
+    if not s or s == "all":
+        return None
+    return {p.strip() for p in s.split(",") if p.strip()}
+
+
+def load_rw_aliases(path: Path | None) -> dict[str, str]:
+    """Синоним → канонический код (например БЖД → БЕЛ)."""
+    if path is None or not path.is_file():
+        return {}
+    aliases: dict[str, str] = {}
+    with path.open(encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("from,"):
+                continue
+            parts = [p.strip().upper() for p in line.split(",")]
+            if len(parts) < 2 or not parts[0] or not parts[1]:
+                continue
+            aliases[parts[0]] = parts[1]
+    return aliases
+
+
+def apply_rw_aliases(
+    assigned: list[dict],
+    aliases: dict[str, str],
+) -> tuple[list[dict], dict]:
+    if not aliases:
+        return assigned, {"aliases_file": None, "renamed_count": 0, "by_from": {}}
+
+    renamed: Counter[str] = Counter()
+    for p in assigned:
+        rw = p["railway_rw"]
+        canonical = aliases.get(rw)
+        if canonical and canonical != rw:
+            p["railway_rw_original"] = rw
+            p["railway_rw"] = canonical
+            renamed[rw] += 1
+
+    by_from = {src: {"to": aliases[src], "count": cnt} for src, cnt in renamed.items()}
+    return assigned, {
+        "aliases_file": None,
+        "renamed_count": sum(renamed.values()),
+        "by_from": by_from,
+    }
+
+
+def load_allowlist(path: Path | None) -> set[str] | None:
+    if path is None or not path.is_file():
+        return None
+    codes: set[str] = set()
+    with path.open(encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            codes.add(line.upper())
+    return codes
 
 
 def load_esr_fallback(path: Path) -> dict[str, str]:
@@ -67,14 +134,16 @@ def load_nsi_rw(path: Path) -> dict[str, str | None]:
         if not esr6:
             continue
         rw_s = str(rw).strip().upper() if rw else None
-        out[esr6] = rw_s or None
+        if rw_s in ("", "---"):
+            rw_s = None
+        out[esr6] = rw_s
     return out
 
 
 def load_geo_points(
     geo_path: Path,
     *,
-    region: str | None,
+    region_groups: set[str] | None,
 ) -> list[dict]:
     conn = sqlite3.connect(geo_path)
     try:
@@ -93,15 +162,16 @@ def load_geo_points(
     for esr6, lat, lon, region_group, country_hint in rows:
         if lat is None or lon is None:
             continue
-        if region and region != "all" and (region_group or "") != region:
+        rg = (region_group or "").strip()
+        if region_groups is not None and rg not in region_groups:
             continue
         points.append(
             {
                 "esr6": str(esr6).strip(),
                 "lat": float(lat),
                 "lon": float(lon),
-                "region_group": region_group,
-                "country_hint": country_hint,
+                "region_group": rg,
+                "country_hint": (country_hint or "").strip(),
             }
         )
     return points
@@ -112,7 +182,7 @@ def assign_railway_rw(
     nsi_rw: dict[str, str | None],
     fallback: dict[str, str],
 ) -> tuple[list[dict], dict]:
-    stats = Counter()
+    stats: Counter[str] = Counter()
     skipped: list[dict] = []
     assigned: list[dict] = []
 
@@ -120,18 +190,54 @@ def assign_railway_rw(
         esr6 = p["esr6"]
         rw = nsi_rw.get(esr6) if nsi_rw else None
         source = "nsi"
-        if not rw and len(esr6) >= 2:
+        rg = p.get("region_group") or ""
+        country = (p.get("country_hint") or "").upper()
+        use_csv = rg == "ru" or (not rg and country in ("", "RU"))
+
+        if not rw and use_csv and len(esr6) >= 2:
             rw = fallback.get(esr6[:2])
             source = "csv_fallback" if rw else "none"
         if not rw:
             stats["no_rw"] += 1
-            skipped.append({"esr6": esr6, "reason": "no_railway_rw"})
+            skipped.append({"esr6": esr6, "reason": "no_railway_rw", "region_group": rg})
             continue
         rw = rw.upper()
+        if rw == "---":
+            stats["no_rw"] += 1
+            skipped.append({"esr6": esr6, "reason": "invalid_rw", "region_group": rg})
+            continue
         stats[source] += 1
         assigned.append({**p, "railway_rw": rw, "rw_source": source})
 
     return assigned, {"stats": dict(stats), "skipped_sample": skipped[:100], "skipped_count": len(skipped)}
+
+
+def filter_allowlist(
+    assigned: list[dict],
+    allowlist: set[str] | None,
+) -> tuple[list[dict], dict]:
+    if allowlist is None:
+        return assigned, {"allowlist": None, "excluded_count": 0, "excluded_by_rw": {}}
+
+    kept: list[dict] = []
+    excluded: Counter[str] = Counter()
+    for p in assigned:
+        rw = p["railway_rw"]
+        if rw in allowlist:
+            kept.append(p)
+        else:
+            excluded[rw] += 1
+
+    return kept, {
+        "allowlist": sorted(allowlist),
+        "excluded_count": sum(excluded.values()),
+        "excluded_by_rw": dict(sorted(excluded.items(), key=lambda x: -x[1])),
+        "excluded_sample": [
+            {"esr6": p["esr6"], "railway_rw": p["railway_rw"], "region_group": p.get("region_group")}
+            for p in assigned
+            if p["railway_rw"] not in allowlist
+        ][:50],
+    }
 
 
 def _dedupe_coords(
@@ -191,7 +297,6 @@ def build_voronoi_geojson(
     if len(diagram_geoms) == len(rep_coords):
         rep_geoms = diagram_geoms
     elif len(diagram_geoms) < len(rep_coords):
-        # Редко: точки на границе envelope / вырожденная конфигурация
         rep_geoms = [
             _voronoi_cell_for_coord(c, diagram_geoms, envelope) for c in rep_coords
         ]
@@ -260,8 +365,30 @@ def main() -> int:
     parser.add_argument("--report", type=Path, default=DEFAULT_REPORT)
     parser.add_argument(
         "--region",
-        default="ru",
-        help="фильтр stations_geo.region_group (all — без фильтра)",
+        default=DEFAULT_REGION,
+        help="фильтр region_group: all | ru | cis | ru,cis (по умолчанию ru,cis)",
+    )
+    parser.add_argument(
+        "--allowlist",
+        type=Path,
+        default=DEFAULT_ALLOWLIST,
+        help="файл допустимых кодов railway_rw (пустой путь + --no-allowlist)",
+    )
+    parser.add_argument(
+        "--no-allowlist",
+        action="store_true",
+        help="не фильтровать по allowlist (все коды из NSI)",
+    )
+    parser.add_argument(
+        "--aliases",
+        type=Path,
+        default=DEFAULT_ALIASES,
+        help="CSV синонимов railway_rw (from,to); пустой путь отключает",
+    )
+    parser.add_argument(
+        "--no-aliases",
+        action="store_true",
+        help="не применять railway_rw_aliases.csv",
     )
     parser.add_argument(
         "--bbox",
@@ -281,18 +408,36 @@ def main() -> int:
         print(f"Нет файла: {args.geo}", file=sys.stderr)
         return 1
 
+    region_groups = parse_region_filter(args.region)
+    allowlist = None if args.no_allowlist else load_allowlist(args.allowlist)
+    if allowlist is not None and not allowlist:
+        print(f"WARN: пустой allowlist {args.allowlist}", file=sys.stderr)
+
     fallback = load_esr_fallback(args.fallback) if args.fallback.is_file() else {}
     nsi_rw = load_nsi_rw(args.nsi)
-    geo_points = load_geo_points(args.geo, region=args.region or None)
+    aliases = (
+        {}
+        if args.no_aliases
+        else load_rw_aliases(args.aliases if str(args.aliases) else None)
+    )
+    geo_points = load_geo_points(args.geo, region_groups=region_groups)
     assigned, assign_report = assign_railway_rw(geo_points, nsi_rw, fallback)
+    assigned, alias_report = apply_rw_aliases(assigned, aliases)
+    if not args.no_aliases and args.aliases.is_file():
+        alias_report["aliases_file"] = str(args.aliases)
+    filtered, filter_report = filter_allowlist(assigned, allowlist)
 
-    if len(assigned) < 3:
-        print(f"Слишком мало станций с railway_rw: {len(assigned)}", file=sys.stderr)
+    if len(filtered) < 3:
+        print(
+            f"Слишком мало станций после фильтров: {len(filtered)} "
+            f"(geo={len(geo_points)}, assigned={len(assigned)})",
+            file=sys.stderr,
+        )
         return 1
 
     try:
         collection, voronoi_meta = build_voronoi_geojson(
-            assigned, bbox, simplify_tol=args.simplify
+            filtered, bbox, simplify_tol=args.simplify
         )
     except ImportError as e:
         print(
@@ -305,24 +450,40 @@ def main() -> int:
     with args.out.open("w", encoding="utf-8") as f:
         json.dump(collection, f, ensure_ascii=False, separators=(",", ":"))
 
+    by_region = Counter(p.get("region_group", "") for p in filtered)
     report = {
         "built_at": datetime.now(timezone.utc).isoformat(),
         "region_filter": args.region,
+        "region_groups_resolved": sorted(region_groups) if region_groups else "all",
         "bbox": list(bbox),
         "inputs": {
             "geo": str(args.geo),
             "nsi": str(args.nsi) if args.nsi.is_file() else None,
-            "fallback": str(args.fallback),
+            "fallback": str(args.fallback) if args.fallback.is_file() else None,
+            "allowlist": None if args.no_allowlist else str(args.allowlist),
+            "aliases": None if args.no_aliases else str(args.aliases),
+        },
+        "counts": {
+            "geo_points": len(geo_points),
+            "assigned": len(assigned),
+            "after_allowlist": len(filtered),
+            "by_region_group": dict(sorted(by_region.items())),
         },
         "output": str(args.out),
         "assignment": assign_report,
+        "rw_aliases": alias_report,
+        "allowlist_filter": filter_report,
         "voronoi": voronoi_meta,
         "disclaimer": "Условные границы (Voronoi по станциям), не официальные границы РЖД",
     }
     with args.report.open("w", encoding="utf-8") as f:
         json.dump(report, f, ensure_ascii=False, indent=2)
 
-    print(f"OK: {args.out} ({len(collection['features'])} zones, {len(assigned)} stations)")
+    excl = filter_report.get("excluded_count", 0)
+    print(
+        f"OK: {args.out} ({len(collection['features'])} zones, "
+        f"{len(filtered)} stations, excluded={excl})"
+    )
     print(f"report: {args.report}")
     return 0
 

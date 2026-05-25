@@ -74,34 +74,61 @@ DOWNLOAD_SAMPLE=1 ./scripts/map/verify_offline_downloads.sh
 ## Зоны ж/д дорог (Voronoi, пилот)
 
 Условные границы сетей по станциям (не официальные полигоны РЖД). Подписи — **3-буквенные коды**
-(КБШ, СКВ, ПРВ…) из `NSI.RailWay.ShortName`, fallback — [`data/stations/esr_district_to_rw.csv`](../stations/esr_district_to_rw.csv).
+из `NSI.RailWay.ShortName` (`railway_rw` в parquet).
+
+| Файл | Назначение |
+|------|------------|
+| [`railway_rw_allowlist.txt`](railway_rw_allowlist.txt) | Какие коды дорог рисовать (РЖД + СНГ из `references.json`) |
+| [`railway_rw_aliases.csv`](railway_rw_aliases.csv) | Синонимы NSI → канон (`БЖД` → `БЕЛ`) |
+| [`../stations/esr_district_to_rw.csv`](../stations/esr_district_to_rw.csv) | Fallback **только** для `region_group=ru`, если в NSI нет кода |
+
+На карту **не попадают** зарубежные/служебные коды из NSI (`CFR`, `PKP`, `---`, `КЖД` …) — они
+отсекаются allowlist’ом; в отчёте: `allowlist_filter.excluded_by_rw`.
 
 Зависимости — [uv](https://docs.astral.sh/uv/) (`scripts/map/pyproject.toml`, `uv.lock` в git).
-Виртуальное окружение создаёт `uv` в `scripts/map/.venv/` (не `python -m venv`).
 
 ```bash
-# после build-geo и fetch-nsi:
+# после fetch-nsi и build-geo:
 cd scripts/map
 uv sync
 ./run.sh build-voronoi
+# по умолчанию: --region ru,cis --allowlist ../../data/map/railway_rw_allowlist.txt
 # отчёт: data/map/railways_voronoi_report.json
 ```
 
-**Оффлайн prod** (uv есть, сети нет): один раз на онлайн-машине `uv sync`, закоммитьте `uv.lock`;
-на prod — `uv sync --frozen --offline` (нужен локальный кэш пакетов uv, см. ниже) или
-собирайте `railways_voronoi.geojson` на dev и доставляйте через `git pull`.
+**Параметры сборки:**
 
-Кэш для `--offline` (опционально, если пересборка на prod):
+| Параметр | По умолчанию | Смысл |
+|----------|--------------|--------|
+| `--region` | `ru,cis` | Станции из `stations_geo.region_group` (`all`, `ru`, `cis`, `ru,cis`) |
+| `--allowlist` | `data/map/railway_rw_allowlist.txt` | Белый список кодов `railway_rw` |
+| `--no-allowlist` | — | Все коды из NSI (отладка) |
+| `--bbox` | `19,35,180,82` | Ограничивающий прямоугольник Voronoi |
+
+Примеры:
 
 ```bash
-# онлайн: заполнить переносимый кэш
-UV_CACHE_DIR=scripts/map/.uv-cache uv sync
-# скопировать scripts/map/.uv-cache на prod (не в git)
-# prod:
-cd scripts/map && UV_CACHE_DIR=.uv-cache uv sync --frozen --offline
+# только магистрали РЖД (без СНГ)
+./run.sh build-voronoi --region ru
+
+# все группы из geo (включая baltic, caucasus — если есть координаты)
+./run.sh build-voronoi --region all
+
+# без фильтра дорог (как на старом prod — будут CFR, PKP, ---)
+./run.sh build-voronoi --no-allowlist --region ru
 ```
 
-Параметры: `--region ru` (по умолчанию), `--bbox 19,35,180,82`, `--region all` для теста.
+**Оффлайн prod** (uv есть, сети нет): `uv sync --frozen --offline` (см. кэш ниже) или `git pull` готового `railways_voronoi.geojson`.
+
+```bash
+UV_CACHE_DIR=scripts/map/.uv-cache uv sync   # онлайн, кэш не в git
+cd scripts/map && UV_CACHE_DIR=.uv-cache uv sync --frozen --offline && ./run.sh build-voronoi
+```
+
+**Отчёт:** `rw_aliases.by_from`, `allowlist_filter.excluded_by_rw`, `voronoi.railways`.
+
+Синонимы дорог (одна сеть — один код на карте): правьте `railway_rw_aliases.csv` (`from,to`).
+В allowlist указывайте только **канонический** код (`БЕЛ`, не `БЖД`).
 
 В UI: чекбокс «Зоны дорог (пилот)» — контуры без заливки, подпись в левом верхнем углу bbox зоны.
 
@@ -109,7 +136,8 @@ cd scripts/map && UV_CACHE_DIR=.uv-cache uv sync --frozen --offline
 
 ```bash
 ./scripts/map/copy_map_assets.sh
-git add data/map/style.json data/map/maplibre-gl.css data/map/glyphs data/map/sprites data/map/railways_voronoi.geojson
+git add data/map/style.json data/map/maplibre-gl.css data/map/glyphs data/map/sprites \
+  data/map/railway_rw_allowlist.txt data/map/railway_rw_aliases.csv data/map/railways_voronoi.geojson
 ```
 
 ## Доставка на оффлайн prod

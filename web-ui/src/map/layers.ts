@@ -2,7 +2,11 @@ import { ArcLayer, GeoJsonLayer, ScatterplotLayer, TextLayer } from "@deck.gl/la
 import type { Layer } from "@deck.gl/core";
 import type { FeatureCollection } from "geojson";
 import type { ArcDatum, HoverInfo, NodeDatum } from "../types/map";
-import type { RailwayZoneCollection, RailwayZoneLabel } from "./railwayZones";
+import {
+  zoneLabelCharacterSet,
+  type RailwayZoneCollection,
+  type RailwayZoneLabel,
+} from "./railwayZones";
 
 const SUPPLY_COLOR: [number, number, number, number] = [46, 125, 50, 220];
 const DEMAND_COLOR: [number, number, number, number] = [211, 47, 47, 220];
@@ -120,15 +124,27 @@ export function buildRailwayZoneLayers(
     id: "railway-zones-labels",
     data: labels,
     pickable: false,
+    billboard: true,
+    sizeUnits: "pixels",
+    characterSet: zoneLabelCharacterSet(labels),
     getPosition: (d) => d.position,
     getText: (d) => d.text,
-    getSize: 14,
-    getColor: [40, 40, 40, 230],
+    getSize: 22,
+    sizeMinPixels: 16,
+    sizeMaxPixels: 36,
+    getColor: [30, 40, 55, 255],
     getTextAnchor: "start",
     getAlignmentBaseline: "top",
-    fontFamily: "Noto Sans Regular, sans-serif",
-    outlineWidth: 2,
-    outlineColor: [255, 255, 255, 200],
+    getPixelOffset: [8, 6],
+    fontFamily: 'Arial, "DejaVu Sans", "Noto Sans", sans-serif',
+    fontWeight: "bold",
+    outlineWidth: 3,
+    outlineColor: [255, 255, 255, 240],
+    fontSettings: {
+      sdf: true,
+      fontSize: 96,
+      buffer: 8,
+    },
   });
 
   return [outline, text];

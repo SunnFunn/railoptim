@@ -1,6 +1,10 @@
 {
-  "built_at": "2026-05-25T14:28:28.550204+00:00",
-  "region_filter": "ru",
+  "built_at": "2026-05-25T14:52:57.114551+00:00",
+  "region_filter": "ru,cis",
+  "region_groups_resolved": [
+    "cis",
+    "ru"
+  ],
   "bbox": [
     19.0,
     35.0,
@@ -10,50 +14,387 @@
   "inputs": {
     "geo": "/home/atretyakov/railoptim/data/stations/stations_geo.sqlite",
     "nsi": "/home/atretyakov/railoptim/data/stations/stations_nsi_raw.parquet",
-    "fallback": "/home/atretyakov/railoptim/data/stations/esr_district_to_rw.csv"
+    "fallback": "/home/atretyakov/railoptim/data/stations/esr_district_to_rw.csv",
+    "allowlist": "/home/atretyakov/railoptim/data/map/railway_rw_allowlist.txt",
+    "aliases": "/home/atretyakov/railoptim/data/map/railway_rw_aliases.csv"
+  },
+  "counts": {
+    "geo_points": 18111,
+    "assigned": 18108,
+    "after_allowlist": 14098,
+    "by_region_group": {
+      "cis": 2472,
+      "ru": 11626
+    }
   },
   "output": "/home/atretyakov/railoptim/data/map/railways_voronoi.geojson",
   "assignment": {
     "stats": {
-      "nsi": 11848
+      "nsi": 18098,
+      "no_rw": 3,
+      "csv_fallback": 10
     },
-    "skipped_sample": [],
-    "skipped_count": 0
+    "skipped_sample": [
+      {
+        "esr6": "000022",
+        "reason": "no_railway_rw",
+        "region_group": "ru"
+      },
+      {
+        "esr6": "000114",
+        "reason": "no_railway_rw",
+        "region_group": "ru"
+      },
+      {
+        "esr6": "000220",
+        "reason": "no_railway_rw",
+        "region_group": "ru"
+      }
+    ],
+    "skipped_count": 3
+  },
+  "rw_aliases": {
+    "aliases_file": "/home/atretyakov/railoptim/data/map/railway_rw_aliases.csv",
+    "renamed_count": 1,
+    "by_from": {
+      "БЖД": {
+        "to": "БЕЛ",
+        "count": 1
+      }
+    }
+  },
+  "allowlist_filter": {
+    "allowlist": [
+      "АЗР",
+      "БЕЛ",
+      "ВСБ",
+      "ГОР",
+      "ГРЗ",
+      "ДВС",
+      "ЗАБ",
+      "ЗСБ",
+      "КБШ",
+      "КЗХ",
+      "КЛГ",
+      "КРГ",
+      "КРС",
+      "ЛАТ",
+      "ЛИТ",
+      "МСК",
+      "ОКТ",
+      "ПРВ",
+      "СВР",
+      "СЕВ",
+      "СКВ",
+      "ТДЖ",
+      "УЗБ",
+      "ЭСТ",
+      "ЮВС",
+      "ЮКЖ",
+      "ЮУР"
+    ],
+    "excluded_count": 4010,
+    "excluded_by_rw": {
+      "ЛЬВ": 742,
+      "ЮЗП": 718,
+      "ЮЖН": 592,
+      "ДОН": 572,
+      "ОДС": 501,
+      "ПДН": 425,
+      "МЛД": 125,
+      "КРМ": 120,
+      "ТРК": 107,
+      "RAI": 24,
+      "ЖДЯ": 20,
+      "PKP": 18,
+      "МАВ": 16,
+      "КЖД": 14,
+      "FIN": 6,
+      "МНГ": 2,
+      "ЗКЗ": 2,
+      "CFR": 2,
+      "САХ": 2,
+      "ЧД": 1,
+      "АЛМ": 1
+    },
+    "excluded_sample": [
+      {
+        "esr6": "000010",
+        "railway_rw": "FIN",
+        "region_group": "ru"
+      },
+      {
+        "esr6": "000015",
+        "railway_rw": "МНГ",
+        "region_group": "ru"
+      },
+      {
+        "esr6": "000101",
+        "railway_rw": "RAI",
+        "region_group": "ru"
+      },
+      {
+        "esr6": "000102",
+        "railway_rw": "RAI",
+        "region_group": "ru"
+      },
+      {
+        "esr6": "000103",
+        "railway_rw": "RAI",
+        "region_group": "ru"
+      },
+      {
+        "esr6": "000108",
+        "railway_rw": "RAI",
+        "region_group": "ru"
+      },
+      {
+        "esr6": "000109",
+        "railway_rw": "RAI",
+        "region_group": "ru"
+      },
+      {
+        "esr6": "000110",
+        "railway_rw": "FIN",
+        "region_group": "ru"
+      },
+      {
+        "esr6": "000111",
+        "railway_rw": "RAI",
+        "region_group": "ru"
+      },
+      {
+        "esr6": "000115",
+        "railway_rw": "RAI",
+        "region_group": "ru"
+      },
+      {
+        "esr6": "000116",
+        "railway_rw": "RAI",
+        "region_group": "ru"
+      },
+      {
+        "esr6": "000117",
+        "railway_rw": "RAI",
+        "region_group": "ru"
+      },
+      {
+        "esr6": "000118",
+        "railway_rw": "RAI",
+        "region_group": "ru"
+      },
+      {
+        "esr6": "000120",
+        "railway_rw": "FIN",
+        "region_group": "ru"
+      },
+      {
+        "esr6": "000124",
+        "railway_rw": "RAI",
+        "region_group": "ru"
+      },
+      {
+        "esr6": "000125",
+        "railway_rw": "RAI",
+        "region_group": "ru"
+      },
+      {
+        "esr6": "000126",
+        "railway_rw": "RAI",
+        "region_group": "ru"
+      },
+      {
+        "esr6": "000127",
+        "railway_rw": "RAI",
+        "region_group": "ru"
+      },
+      {
+        "esr6": "000210",
+        "railway_rw": "RAI",
+        "region_group": "ru"
+      },
+      {
+        "esr6": "000211",
+        "railway_rw": "RAI",
+        "region_group": "ru"
+      },
+      {
+        "esr6": "000212",
+        "railway_rw": "RAI",
+        "region_group": "ru"
+      },
+      {
+        "esr6": "000213",
+        "railway_rw": "RAI",
+        "region_group": "ru"
+      },
+      {
+        "esr6": "000214",
+        "railway_rw": "RAI",
+        "region_group": "ru"
+      },
+      {
+        "esr6": "000215",
+        "railway_rw": "RAI",
+        "region_group": "ru"
+      },
+      {
+        "esr6": "000224",
+        "railway_rw": "PKP",
+        "region_group": "ru"
+      },
+      {
+        "esr6": "000227",
+        "railway_rw": "FIN",
+        "region_group": "ru"
+      },
+      {
+        "esr6": "000310",
+        "railway_rw": "RAI",
+        "region_group": "ru"
+      },
+      {
+        "esr6": "000314",
+        "railway_rw": "RAI",
+        "region_group": "ru"
+      },
+      {
+        "esr6": "000315",
+        "railway_rw": "PKP",
+        "region_group": "ru"
+      },
+      {
+        "esr6": "000316",
+        "railway_rw": "RAI",
+        "region_group": "ru"
+      },
+      {
+        "esr6": "000317",
+        "railway_rw": "RAI",
+        "region_group": "ru"
+      },
+      {
+        "esr6": "010843",
+        "railway_rw": "МНГ",
+        "region_group": "ru"
+      },
+      {
+        "esr6": "011957",
+        "railway_rw": "PKP",
+        "region_group": "ru"
+      },
+      {
+        "esr6": "012120",
+        "railway_rw": "FIN",
+        "region_group": "ru"
+      },
+      {
+        "esr6": "013230",
+        "railway_rw": "FIN",
+        "region_group": "ru"
+      },
+      {
+        "esr6": "015608",
+        "railway_rw": "МАВ",
+        "region_group": "ru"
+      },
+      {
+        "esr6": "016121",
+        "railway_rw": "PKP",
+        "region_group": "ru"
+      },
+      {
+        "esr6": "032365",
+        "railway_rw": "МАВ",
+        "region_group": "ru"
+      },
+      {
+        "esr6": "051322",
+        "railway_rw": "МАВ",
+        "region_group": "ru"
+      },
+      {
+        "esr6": "052100",
+        "railway_rw": "PKP",
+        "region_group": "ru"
+      },
+      {
+        "esr6": "052490",
+        "railway_rw": "МАВ",
+        "region_group": "ru"
+      },
+      {
+        "esr6": "054825",
+        "railway_rw": "PKP",
+        "region_group": "ru"
+      },
+      {
+        "esr6": "054908",
+        "railway_rw": "PKP",
+        "region_group": "ru"
+      },
+      {
+        "esr6": "055380",
+        "railway_rw": "МАВ",
+        "region_group": "ru"
+      },
+      {
+        "esr6": "056408",
+        "railway_rw": "PKP",
+        "region_group": "ru"
+      },
+      {
+        "esr6": "056606",
+        "railway_rw": "PKP",
+        "region_group": "ru"
+      },
+      {
+        "esr6": "057398",
+        "railway_rw": "PKP",
+        "region_group": "ru"
+      },
+      {
+        "esr6": "058764",
+        "railway_rw": "МАВ",
+        "region_group": "ru"
+      },
+      {
+        "esr6": "058784",
+        "railway_rw": "PKP",
+        "region_group": "ru"
+      },
+      {
+        "esr6": "058923",
+        "railway_rw": "МАВ",
+        "region_group": "ru"
+      }
+    ]
   },
   "voronoi": {
-    "zone_count": 29,
-    "station_count": 11848,
-    "unique_coord_count": 11827,
-    "duplicate_coord_stations": 21,
+    "zone_count": 20,
+    "station_count": 14098,
+    "unique_coord_count": 14055,
+    "duplicate_coord_stations": 43,
     "railways": {
-      "---": 13,
-      "CFR": 2,
-      "FIN": 6,
-      "PKP": 18,
-      "RAI": 24,
-      "БЖД": 1,
-      "ВСБ": 560,
-      "ГОР": 888,
+      "БЕЛ": 941,
+      "ВСБ": 561,
+      "ГОР": 889,
       "ДВС": 520,
-      "ДОН": 1,
-      "ЖДЯ": 20,
       "ЗАБ": 153,
-      "ЗСБ": 926,
-      "КБШ": 505,
-      "КЖД": 10,
-      "КЗХ": 230,
-      "КРМ": 120,
+      "ЗСБ": 927,
+      "КБШ": 826,
+      "КЗХ": 865,
+      "КРГ": 29,
       "КРС": 532,
-      "МАВ": 14,
-      "МНГ": 2,
-      "МСК": 1412,
-      "ОКТ": 1574,
+      "МСК": 1415,
+      "ОКТ": 1576,
       "ПРВ": 507,
-      "САХ": 2,
       "СВР": 956,
       "СЕВ": 807,
       "СКВ": 791,
-      "ЮВС": 592,
+      "ТДЖ": 32,
+      "УЗБ": 352,
+      "ЮВС": 757,
       "ЮУР": 662
     }
   },

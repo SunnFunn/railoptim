@@ -99,3 +99,9 @@ MIP нашёл глобальный оптимум (gap=0.0000%) — фаза AL
 
 Результат сохранён:          tmp/result_20260525_113238.json
 [SUCCESS] railoptim завершил работу успешно.
+[Пн 25 мая 2026 17:52:24 MSK] Запуск: /home/atretyakov/railoptim/target/release/railoptim (env=build-voronoi, MIP_WARM_START=on)
+Error: Переменная окружения API_BASE_URL не задана: environment variable not found
+
+Caused by:
+    environment variable not found
+[ERROR] railoptim завершился с ошибкой!

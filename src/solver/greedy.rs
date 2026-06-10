@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::node::{DemandNode, DemandPurpose, SupplyNode};
-use super::model::TaskArc;
+use super::model::{PairKey, TaskArc};
 
 // ---------------------------------------------------------------------------
 // Результат жадного решения
@@ -297,8 +297,8 @@ fn merge_flows_by_arc(mut flows: Vec<(usize, i32)>) -> Vec<(usize, i32)> {
 fn record_assignments_for_mass_pair_flows(
     flows: &[(usize, i32)],
     arcs: &[TaskArc],
-    mass_pair_totals: &mut HashMap<(String, String), i32>,
-    key: &(String, String),
+    mass_pair_totals: &mut HashMap<PairKey, i32>,
+    key: &PairKey,
     assignments: &mut Vec<Assignment>,
     total_cost: &mut f64,
     assigned_cars: &mut i32,
@@ -328,14 +328,14 @@ fn record_assignments_for_mass_pair_flows(
 /// ≥ `min_target` (порог пары из `TaskArc::pair_min_batch`) или пара запрещается.
 #[allow(clippy::too_many_arguments)]
 fn try_activate_mass_pair(
-    key: &(String, String),
+    key: &PairKey,
     pair_arc_indices: &[usize],
     arcs: &[TaskArc],
     min_target: i32,
     remaining_supply: &mut Vec<i32>,
     remaining_demand: &mut Vec<i32>,
-    mass_pair_totals: &mut HashMap<(String, String), i32>,
-    forbidden_pairs: &mut HashSet<(String, String)>,
+    mass_pair_totals: &mut HashMap<PairKey, i32>,
+    forbidden_pairs: &mut HashSet<PairKey>,
     assignments: &mut Vec<Assignment>,
     total_cost: &mut f64,
     assigned_cars: &mut i32,
@@ -443,14 +443,11 @@ pub fn greedy_initial_solution(
             .then_with(|| arc_a.distance.cmp(&arc_b.distance))
     });
 
-    // Пары станций с ограничением минимальной партии: только допустимые по типу дуги.
-    let mut mass_pair_arc_indices: HashMap<(String, String), Vec<usize>> = HashMap::new();
+    // Группы дуг с ограничением минимальной партии: только допустимые по типу дуги.
+    let mut mass_pair_arc_indices: HashMap<PairKey, Vec<usize>> = HashMap::new();
     for (i, arc) in arcs.iter().enumerate() {
         if arc.has_pair_min_batch() && arc.car_type_ok {
-            mass_pair_arc_indices
-                .entry((arc.supply_station_code.clone(), arc.demand_station_code.clone()))
-                .or_default()
-                .push(i);
+            mass_pair_arc_indices.entry(arc.pair_key()).or_default().push(i);
         }
     }
     for v in mass_pair_arc_indices.values_mut() {
@@ -469,8 +466,8 @@ pub fn greedy_initial_solution(
     let mut total_cost: f64 = 0.0;
     let mut assigned_cars: i32 = 0;
 
-    let mut mass_pair_totals: HashMap<(String, String), i32> = HashMap::new();
-    let mut forbidden_pairs: HashSet<(String, String)> = HashSet::new();
+    let mut mass_pair_totals: HashMap<PairKey, i32> = HashMap::new();
+    let mut forbidden_pairs: HashSet<PairKey> = HashSet::new();
 
     for arc_i in feasible_arc_indices {
         let arc = &arcs[arc_i];
@@ -483,10 +480,7 @@ pub fn greedy_initial_solution(
         }
 
         if arc.has_pair_min_batch() {
-            let key = (
-                arc.supply_station_code.clone(),
-                arc.demand_station_code.clone(),
-            );
+            let key = arc.pair_key();
             if forbidden_pairs.contains(&key) {
                 continue;
             }
@@ -844,6 +838,68 @@ mod tests {
         let r = greedy_initial_solution(&arcs, &supply, &demand);
         assert_eq!(r.assignments.len(), 0);
         assert_eq!(r.unmet_demand, 2);
+    }
+
+    /// Маршрутная пара (pair_min_batch=10): спрос 12, предложение 12 —
+    /// поток 0 или ≥ 10.
+    #[test]
+    fn route_pair_flow_zero_or_ge_min_batch() {
+        let b = crate::solver::model::MIN_BATCH_TO_ROUTE_DEMAND_STATION;
+        let supply = vec![dummy_supply(12, "M", 0, false)];
+        let demand = vec![dummy_demand(12, "D", 0)];
+        let arcs = vec![arc_b(0, 0, 0, "M", "D", 100.0, b)];
+        let r = greedy_initial_solution(&arcs, &supply, &demand);
+        let sum_d: i32 = r.assignments.iter().map(|a| a.quantity).sum();
+        assert!(sum_d == 0 || sum_d >= b, "поток маршрутной пары {} нарушает порог {}", sum_d, b);
+        assert_eq!(r.unmet_demand, 0);
+    }
+
+    /// Маршрутная пара: спрос 7 < порога 10 — партия недостижима, поток 0.
+    #[test]
+    fn route_pair_forbidden_when_demand_below_min_batch() {
+        let b = crate::solver::model::MIN_BATCH_TO_ROUTE_DEMAND_STATION;
+        let supply = vec![dummy_supply(12, "M", 0, false)];
+        let demand = vec![dummy_demand(7, "D", 0)];
+        let arcs = vec![arc_b(0, 0, 0, "M", "D", 100.0, b)];
+        let r = greedy_initial_solution(&arcs, &supply, &demand);
+        assert_eq!(r.assignments.len(), 0);
+        assert_eq!(r.unmet_demand, 7);
+    }
+
+    /// MIP: маршрутная (B=10) и средняя (B=3) группы на одной станции погрузки.
+    /// Предложение 12: оптимум — маршрутная партия 10, средней группе остаётся 2 < 3,
+    /// поэтому её поток обязан быть 0 (а не 1–2).
+    #[test]
+    fn mip_separates_route_and_regular_groups_on_same_station() {
+        use std::time::Duration;
+        let b_route = crate::solver::model::MIN_BATCH_TO_ROUTE_DEMAND_STATION;
+        let b_mid = crate::solver::model::MIN_BATCH_TO_MIDDLE_DEMAND_STATION;
+        let supply = vec![dummy_supply(12, "M", 0, false)];
+        let demand = vec![
+            dummy_demand(10, "D", 0), // маршрутные узлы станции D
+            dummy_demand(5, "D", 1),  // обычные узлы той же станции D
+        ];
+        let arcs = vec![
+            arc_b(0, 0, 0, "M", "D", 100.0, b_route),
+            arc_b(1, 0, 1, "M", "D", 100.0, b_mid),
+        ];
+        let outcome = crate::solver::mip::solve_mip(
+            &arcs,
+            &supply,
+            &demand,
+            Duration::from_secs(10),
+            None,
+            None,
+            None,
+        );
+        assert!(outcome.has_feasible_solution());
+        let flow_route = outcome.arc_vals[0].round() as i32;
+        let flow_mid = outcome.arc_vals[1].round() as i32;
+        assert!(flow_route == 0 || flow_route >= b_route);
+        assert!(flow_mid == 0 || flow_mid >= b_mid);
+        // PENALTY_UNMET доминирует: выгоднее закрыть маршрутные 10, чем обычные 5.
+        assert_eq!(flow_route, 10);
+        assert_eq!(flow_mid, 0);
     }
 
     /// MIP: средняя пара со спросом 5 и дешёвой альтернативой на 2 ваг. — поток

@@ -341,18 +341,28 @@ async fn main() -> Result<()> {
     );
 
     // --- Статистика ограничений минимальной партии (MIN_BATCH) по классам пар ---
-    // Класс определяем по узлу предложения: массовая выгрузка ↔ средняя станция.
+    // Маршрутные дуги отличаем по порогу (B=10); остальные по узлу предложения:
+    // массовая выгрузка ↔ средняя станция.
     {
         use std::collections::HashSet;
         let mut mass_arcs = 0_usize;
         let mut mid_arcs = 0_usize;
+        let mut route_arcs = 0_usize;
         let mut mass_pairs: HashSet<(&str, &str)> = HashSet::new();
         let mut mid_pairs: HashSet<(&str, &str)> = HashSet::new();
+        let mut route_pairs: HashSet<(&str, &str)> = HashSet::new();
         let mut mid_supply_stations: HashSet<&str> = HashSet::new();
         let mut mid_demand_stations: HashSet<&str> = HashSet::new();
+        let mut route_supply_stations: HashSet<&str> = HashSet::new();
+        let mut route_demand_stations: HashSet<&str> = HashSet::new();
         for arc in arcs.iter().filter(|a| a.has_pair_min_batch()) {
             let pair = (arc.supply_station_code.as_str(), arc.demand_station_code.as_str());
-            if opt_supply[arc.s_idx].is_mass_unloading {
+            if arc.pair_min_batch == solver::MIN_BATCH_TO_ROUTE_DEMAND_STATION {
+                route_arcs += 1;
+                route_pairs.insert(pair);
+                route_supply_stations.insert(pair.0);
+                route_demand_stations.insert(pair.1);
+            } else if opt_supply[arc.s_idx].is_mass_unloading {
                 mass_arcs += 1;
                 mass_pairs.insert(pair);
             } else {
@@ -371,6 +381,14 @@ async fn main() -> Result<()> {
             mid_pairs.len(),
             mid_supply_stations.len(),
             mid_demand_stations.len(),
+        );
+        println!(
+            "  маршрутные отправки (B={}): {} дуг / {} пар (станций образования: {}, маршрутных станций погрузки: {})",
+            solver::MIN_BATCH_TO_ROUTE_DEMAND_STATION,
+            route_arcs,
+            route_pairs.len(),
+            route_supply_stations.len(),
+            route_demand_stations.len(),
         );
     }
 

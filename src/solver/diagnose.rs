@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, HashMap};
 use crate::node::{DemandNode, DemandPurpose, SupplyNode};
 
 use super::lp::PENALTY_UNMET;
-use super::model::TaskArc;
+use super::model::{PairKey, TaskArc};
 
 /// Категория причины, по которой вагоны узла предложения остались нераспределёнными.
 ///
@@ -106,15 +106,13 @@ pub fn diagnose_excess_supply(
         .map(|(i, d)| d.car_count - recv[i])
         .collect();
 
-    // 2. Текущий поток по парам с ограничением минимальной партии (ss, ds).
-    let mut pair_flow: HashMap<(String, String), i32> = HashMap::new();
+    // 2. Текущий поток по группам с ограничением минимальной партии (pair_key).
+    let mut pair_flow: HashMap<PairKey, i32> = HashMap::new();
     for (arc, &q) in arcs.iter().zip(arc_vals.iter()) {
         if !arc.has_pair_min_batch() { continue; }
         let qi = q.round() as i32;
         if qi <= 0 { continue; }
-        *pair_flow
-            .entry((arc.supply_station_code.clone(), arc.demand_station_code.clone()))
-            .or_insert(0) += qi;
+        *pair_flow.entry(arc.pair_key()).or_insert(0) += qi;
     }
 
     // 3. Узлы с excess.
@@ -170,8 +168,8 @@ pub fn diagnose_excess_supply(
 
         let mut min_arc_cost_load = f64::INFINITY;
         let mut min_arc_cost_wash = f64::INFINITY;
-        // (пара) → (текущий поток, макс. потенциал добавления, порог партии).
-        let mut min_batch_pairs: HashMap<(String, String), (i32, i32, i32)> = HashMap::new();
+        // pair_key (порог — третий элемент) → (текущий поток, макс. потенциал добавления).
+        let mut min_batch_pairs: HashMap<PairKey, (i32, i32)> = HashMap::new();
 
         for &arc_id in node_arcs {
             let arc = &arcs[arc_id];
@@ -193,7 +191,7 @@ pub fn diagnose_excess_supply(
             // Load-дуга с rem>0: проверяем ограничение минимальной партии (pair_min_batch > 0).
             if arc.has_pair_min_batch() {
                 let b = arc.pair_min_batch;
-                let key = (arc.supply_station_code.clone(), arc.demand_station_code.clone());
+                let key = arc.pair_key();
                 let flow = pair_flow.get(&key).copied().unwrap_or(0);
                 let add_potential = rem.min(d_rem);
                 let blocked = if flow == 0 {
@@ -206,7 +204,7 @@ pub fn diagnose_excess_supply(
                     min_batch_pairs
                         .entry(key)
                         .and_modify(|e| { e.0 = flow; e.1 = e.1.max(add_potential); })
-                        .or_insert((flow, add_potential, b));
+                        .or_insert((flow, add_potential));
                     continue;
                 }
             }
@@ -236,7 +234,7 @@ pub fn diagnose_excess_supply(
             ExcessCause::MinBatchDeadlock {
                 pairs: min_batch_pairs
                     .into_iter()
-                    .map(|((ss, ds), (f, p, b))| (ss, ds, f, p, b))
+                    .map(|((ss, ds, b), (f, p))| (ss, ds, f, p, b))
                     .collect(),
             }
         } else if min_arc_cost_load >= PENALTY_UNMET {

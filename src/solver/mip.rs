@@ -29,19 +29,25 @@ use highs::{ColProblem, HighsModelStatus, Row, Sense};
 
 use super::greedy::{Assignment, GreedyResult};
 use super::lp::{OptimResult, PENALTY_EXCESS, PENALTY_UNMET};
-use super::model::TaskArc;
+use super::model::{PairKey, TaskArc};
 use crate::node::{DemandNode, DemandPurpose, SupplyNode};
 
-/// Ограничение минимальной партии для одной пары станций
-/// `(supply_station_code, demand_station_code)`.
+/// Ограничение минимальной партии для одной группы дуг [`TaskArc::pair_key`].
 struct PairConstraint {
-    /// Индексы дуг пары в срезе `arcs`.
+    /// Индексы дуг группы в срезе `arcs`.
     arc_ids: Vec<usize>,
-    /// Базовый порог партии (из `TaskArc::pair_min_batch`; одинаков внутри пары).
+    /// Порог партии группы (третий элемент `pair_key`).
     min_batch: i32,
-    /// Суммарное предложение уникальных узлов пары — тонкая верхняя оценка потока
-    /// (big-M) и клиппинг порога.
+    /// Суммарное предложение уникальных узлов группы — тонкая верхняя оценка потока
+    /// (big-M); для массовых пар также клиппинг порога.
     supply_cap: i32,
+    /// Клиппить ли `B_pair` по `supply_cap`.
+    ///
+    /// `true` только для пар массовой выгрузки — example.py использует
+    /// `min(_ASSIGN_BULK_BOUND_, station_supply)` в bulk-секции, но **не** клиппит
+    /// пороги dml- и route-секций: если станция не может собрать партию для средней
+    /// или маршрутной пары, поток обязан быть 0, а не уменьшенной партией.
+    clip_to_supply_cap: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -132,8 +138,8 @@ impl MipOutcome {
 ///   заметно теряет покрытие на больших задачах).
 /// - `rel_gap` — целевой относительный разрыв остановки; при `None` используется
 ///   [`DEFAULT_MIP_REL_GAP`].
-/// - `pair_min_batch_override` — карта `(supply_station, demand_station) → B_pair`,
-///   переопределяющая порог MIN_BATCH для отдельных пар. Используется в MIP-LNS
+/// - `pair_min_batch_override` — карта [`PairKey`]` → B_pair`,
+///   переопределяющая порог MIN_BATCH для отдельных групп. Используется в MIP-LNS
 ///   ([`super::alns::repair_mip`]): если во внешнем state уже есть поток `≥ MIN_BATCH`
 ///   по паре, подзадача вправе добавить **любое** количество (в т.ч. `1..B_pair-1`)
 ///   — для таких пар в карту кладётся `B_pair = 0`. Для пар вне карты используется
@@ -149,23 +155,17 @@ pub fn solve_mip(
     time_limit: Duration,
     warm_start: Option<&[f64]>,
     rel_gap: Option<f64>,
-    pair_min_batch_override: Option<&HashMap<(String, String), i32>>,
+    pair_min_batch_override: Option<&HashMap<PairKey, i32>>,
 ) -> MipOutcome {
     // -----------------------------------------------------------------------
-    // 1. Сбор пар станций с ограничением минимальной партии (pair_min_batch > 0).
+    // 1. Сбор групп дуг с ограничением минимальной партии (pair_min_batch > 0).
+    //    Ключ — pair_key: маршрутные и немаршрутные узлы одной станции погрузки
+    //    образуют разные группы с разными порогами.
     // -----------------------------------------------------------------------
-    let mut pair_arcs: HashMap<(String, String), (Vec<usize>, i32)> = HashMap::new();
+    let mut pair_arcs: HashMap<PairKey, Vec<usize>> = HashMap::new();
     for (i, arc) in arcs.iter().enumerate() {
         if arc.has_pair_min_batch() {
-            let entry = pair_arcs
-                .entry((
-                    arc.supply_station_code.clone(),
-                    arc.demand_station_code.clone(),
-                ))
-                .or_insert((Vec::new(), arc.pair_min_batch));
-            entry.0.push(i);
-            // Внутри пары порог одинаков по построению (build_task_arcs).
-            debug_assert_eq!(entry.1, arc.pair_min_batch);
+            pair_arcs.entry(arc.pair_key()).or_default().push(i);
         }
     }
 
@@ -173,14 +173,22 @@ pub fn solve_mip(
     // и, как следствие, правильность выравнивания warm-start по этим столбцам.
     //
     // supply_cap пары — сумма car_count по уникальным s_idx её дуг (используется для
-    // тонкой оценки M_pair и для клиппинга B_pair — см. аналогичный трюк в example.py,
-    // `min(_ASSIGN_BULK_BOUND_, station_supply)`).
-    let mut pair_list: Vec<((String, String), PairConstraint)> = pair_arcs
+    // тонкой оценки M_pair; для массовых пар также клиппинг B_pair — см. аналогичный
+    // трюк в example.py, `min(_ASSIGN_BULK_BOUND_, station_supply)`).
+    let mut pair_list: Vec<(PairKey, PairConstraint)> = pair_arcs
         .into_iter()
-        .map(|(key, (arc_ids, min_batch))| {
+        .map(|(key, arc_ids)| {
             let s_idxs: HashSet<usize> = arc_ids.iter().map(|&i| arcs[i].s_idx).collect();
             let supply_cap: i32 = s_idxs.iter().map(|&si| supply[si].car_count).sum();
-            (key, PairConstraint { arc_ids, min_batch, supply_cap })
+            // Массовая пара: узлы предложения станции помечены is_mass_unloading,
+            // а порог — массовый (маршрутные дуги с массовых станций имеют B=10).
+            let clip_to_supply_cap = arc_ids
+                .first()
+                .map(|&i| supply[arcs[i].s_idx].is_mass_unloading)
+                .unwrap_or(false)
+                && key.2 == super::model::MIN_BATCH_FROM_MASS_STATION;
+            let min_batch = key.2;
+            (key, PairConstraint { arc_ids, min_batch, supply_cap, clip_to_supply_cap })
         })
         .collect();
     pair_list.sort_by(|a, b| a.0.cmp(&b.0));
@@ -288,13 +296,18 @@ pub fn solve_mip(
     }
 
     // Вычисление эффективного B_pair для пары: override, если задан; иначе порог пары
-    // из дуг (pair_min_batch). Также клиппится supply_cap пары — нет смысла требовать
-    // больше, чем вообще может уйти с узлов пары.
-    let b_pair_effective = |key: &(String, String), pc: &PairConstraint| -> i32 {
+    // из дуг (pair_min_batch). Для массовых пар клиппится supply_cap (example.py:
+    // `min(_ASSIGN_BULK_BOUND_, station_supply)`); для средних и маршрутных порог не
+    // снижается — если станция не может собрать партию, поток группы обязан быть 0.
+    let b_pair_effective = |key: &PairKey, pc: &PairConstraint| -> i32 {
         let base = pair_min_batch_override
             .and_then(|m| m.get(key).copied())
             .unwrap_or(pc.min_batch);
-        base.min(pc.supply_cap).max(0)
+        if pc.clip_to_supply_cap {
+            base.min(pc.supply_cap).max(0)
+        } else {
+            base.max(0)
+        }
     };
 
     // Бинарные y_pair ∈ {0,1} с двумя ограничениями: B*y ≤ Σx, Σx ≤ M*y.

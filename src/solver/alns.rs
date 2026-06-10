@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 use rand::prelude::*;
 
 use crate::node::{DemandNode, DemandPurpose, SupplyNode};
-use super::model::{collect_pair_min_batch_violations, TaskArc};
+use super::model::{collect_pair_min_batch_violations, PairKey, TaskArc};
 use super::greedy::{Assignment, GreedyResult, greedy_to_arc_vals};
 use super::lp::{solve, OptimResult, PENALTY_EXCESS, PENALTY_UNMET};
 use super::mip::solve_mip;
@@ -234,7 +234,7 @@ fn destroy_random(
 // ---------------------------------------------------------------------------
 
 /// Проверяет все назначения в `state` на соответствие ограничению минимальной партии
-/// для пар станций с `pair_min_batch > 0` (массовая выгрузка, средние станции).
+/// для групп с `pair_min_batch > 0` (массовая выгрузка, средние станции, маршрутные).
 ///
 /// Удаляет нарушающие назначения, возвращает вагоны в остатки предложения/спроса
 /// и **возвращает список освобождённых назначений**, чтобы оператор ремонта
@@ -243,7 +243,7 @@ fn destroy_random(
 /// Вызывается **после `destroy`** (не после repair): к моменту ремонта
 /// состояние уже валидно, и ремонт строит новые назначения с inline-проверкой.
 fn drain_violated_mass_pairs(state: &mut AlnsState, arcs: &[TaskArc]) -> Vec<Assignment> {
-    let violations: HashSet<(String, String)> = collect_pair_min_batch_violations(
+    let violations: HashSet<PairKey> = collect_pair_min_batch_violations(
         state.assignments.iter().map(|a| (a.arc_id, a.quantity)),
         arcs,
     )
@@ -261,7 +261,7 @@ fn drain_violated_mass_pairs(state: &mut AlnsState, arcs: &[TaskArc]) -> Vec<Ass
         let a = &state.assignments[i];
         let arc = &arcs[a.arc_id];
         if arc.has_pair_min_batch() {
-            let pair = (arc.supply_station_code.clone(), arc.demand_station_code.clone());
+            let pair = arc.pair_key();
             if violations.contains(&pair) {
                 let removed = state.assignments.swap_remove(i);
                 state.remaining_supply[removed.s_idx] += removed.quantity;
@@ -294,24 +294,22 @@ fn repair_greedy(
 ) {
     use std::collections::HashMap;
 
-    // Индекс узлов предложения по парам (supply_station, demand_station)
-    // для дуг с pair_min_batch > 0. Позволяет быстро считать station_remaining.
-    let mut mass_pair_supply_idx: HashMap<(String, String), HashSet<usize>> = HashMap::new();
+    // Индекс узлов предложения по группам pair_key для дуг с pair_min_batch > 0.
+    // Позволяет быстро считать station_remaining.
+    let mut mass_pair_supply_idx: HashMap<PairKey, HashSet<usize>> = HashMap::new();
     for arc in arcs.iter().filter(|a| a.has_pair_min_batch()) {
         mass_pair_supply_idx
-            .entry((arc.supply_station_code.clone(), arc.demand_station_code.clone()))
+            .entry(arc.pair_key())
             .or_default()
             .insert(arc.s_idx);
     }
 
-    // Текущий суммарный поток по парам (из уже активных назначений в state).
-    let mut mass_pair_totals: HashMap<(String, String), i32> = HashMap::new();
+    // Текущий суммарный поток по группам (из уже активных назначений в state).
+    let mut mass_pair_totals: HashMap<PairKey, i32> = HashMap::new();
     for a in &state.assignments {
         let arc = &arcs[a.arc_id];
         if arc.has_pair_min_batch() {
-            *mass_pair_totals
-                .entry((arc.supply_station_code.clone(), arc.demand_station_code.clone()))
-                .or_insert(0) += a.quantity;
+            *mass_pair_totals.entry(arc.pair_key()).or_insert(0) += a.quantity;
         }
     }
 
@@ -334,7 +332,7 @@ fn repair_greedy(
 
                 if arc.has_pair_min_batch() {
                     let b = arc.pair_min_batch;
-                    let key = (arc.supply_station_code.clone(), arc.demand_station_code.clone());
+                    let key = arc.pair_key();
                     let existing = mass_pair_totals.get(&key).copied().unwrap_or(0);
                     let station_remaining: i32 = mass_pair_supply_idx
                         .get(&key)
@@ -372,8 +370,7 @@ fn repair_greedy(
             state.total_cost += arc_cost;
 
             if arc.has_pair_min_batch() {
-                let key = (arc.supply_station_code.clone(), arc.demand_station_code.clone());
-                *mass_pair_totals.entry(key).or_insert(0) += qty;
+                *mass_pair_totals.entry(arc.pair_key()).or_insert(0) += qty;
             }
 
             state.assignments.push(Assignment {
@@ -532,24 +529,22 @@ fn repair_lp(
 
     // Пред-вычисление для inline-проверки минимальной партии.
     //
-    // mass_pair_supply_idx: (supply_station, demand_station) → множество s_idx.
-    let mut mass_pair_supply_idx: HashMap<(String, String), HashSet<usize>> = HashMap::new();
+    // mass_pair_supply_idx: pair_key → множество s_idx группы.
+    let mut mass_pair_supply_idx: HashMap<PairKey, HashSet<usize>> = HashMap::new();
     for arc in arcs.iter().filter(|a| a.has_pair_min_batch()) {
         mass_pair_supply_idx
-            .entry((arc.supply_station_code.clone(), arc.demand_station_code.clone()))
+            .entry(arc.pair_key())
             .or_default()
             .insert(arc.s_idx);
     }
 
-    // mass_pair_totals: суммарный поток по парам из уже активных назначений.
+    // mass_pair_totals: суммарный поток по группам из уже активных назначений.
     // Обновляется по мере применения LP-результата.
-    let mut mass_pair_totals: HashMap<(String, String), i32> = HashMap::new();
+    let mut mass_pair_totals: HashMap<PairKey, i32> = HashMap::new();
     for a in &state.assignments {
         let arc = &arcs[a.arc_id];
         if arc.has_pair_min_batch() {
-            *mass_pair_totals
-                .entry((arc.supply_station_code.clone(), arc.demand_station_code.clone()))
-                .or_insert(0) += a.quantity;
+            *mass_pair_totals.entry(arc.pair_key()).or_insert(0) += a.quantity;
         }
     }
 
@@ -572,13 +567,9 @@ fn repair_lp(
         if qty <= 0 { continue; }
 
         if pair_b > 0 {
-            let supply_code = orig_arc
-                .map(|a| a.supply_station_code.clone())
-                .unwrap_or_else(|| arc.supply_station_code.clone());
-            let demand_code = orig_arc
-                .map(|a| a.demand_station_code.clone())
-                .unwrap_or_else(|| arc.demand_station_code.clone());
-            let key = (supply_code, demand_code);
+            let key: PairKey = orig_arc
+                .map(|a| a.pair_key())
+                .unwrap_or_else(|| arc.pair_key());
 
             let existing = mass_pair_totals.get(&key).copied().unwrap_or(0);
             let station_remaining: i32 = mass_pair_supply_idx
@@ -670,26 +661,23 @@ fn repair_mip(
 ) -> bool {
     use std::collections::HashMap;
 
-    // Суммарный поток по каждой паре с pair_min_batch > 0 во внешнем state
-    // (до подзадачи) вместе с порогом партии пары. Нужен, чтобы не навязывать
-    // подзадаче минимальную партию на парах, где state уже обеспечил её
-    // внешними назначениями.
-    let mut state_flow: HashMap<(String, String), (i32, i32)> = HashMap::new();
+    // Суммарный поток по каждой группе с pair_min_batch > 0 во внешнем state
+    // (до подзадачи). Порог группы — третий элемент ключа. Нужен, чтобы не
+    // навязывать подзадаче минимальную партию на группах, где state уже
+    // обеспечил её внешними назначениями.
+    let mut state_flow: HashMap<PairKey, i32> = HashMap::new();
     for a in &state.assignments {
         let arc = &arcs[a.arc_id];
         if arc.has_pair_min_batch() {
-            let entry = state_flow
-                .entry((arc.supply_station_code.clone(), arc.demand_station_code.clone()))
-                .or_insert((0, arc.pair_min_batch));
-            entry.0 += a.quantity;
+            *state_flow.entry(arc.pair_key()).or_insert(0) += a.quantity;
         }
     }
 
-    // Override для solve_mip: B_pair = 0 для пар, где state_flow ≥ порога пары.
-    let pair_override: HashMap<(String, String), i32> = state_flow
+    // Override для solve_mip: B_pair = 0 для групп, где state_flow ≥ порога группы.
+    let pair_override: HashMap<PairKey, i32> = state_flow
         .iter()
-        .filter(|&(_, &(flow, min_batch))| flow >= min_batch)
-        .map(|(pair, _)| (pair.clone(), 0))
+        .filter(|&(key, &flow)| flow >= key.2)
+        .map(|(key, _)| (key.clone(), 0))
         .collect();
 
     let (sub_arcs, sub_supply, sub_demand, s_map, d_map) =

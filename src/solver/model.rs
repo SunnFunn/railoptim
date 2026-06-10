@@ -34,6 +34,18 @@ pub const MIDDLE_SUPPLY_STATION_MIN_CARS: i32 = 7;
 /// [`MIN_BATCH_TO_MIDDLE_DEMAND_STATION`]. Аналог `_DEMAND_SIZE_BOUND_`.
 pub const MIDDLE_DEMAND_STATION_MIN_CARS: i32 = 5;
 
+/// Минимальный размер партии «станция образования → маршрутные узлы станции погрузки»
+/// (`shipping_type == "Маршрутная"`). Аналог `_ROUTE_LOW_BOUND_` из example.py.
+///
+/// Маршрутная отправка формирует целый состав, поэтому подсыл меньшими партиями
+/// не имеет смысла: поток по паре должен быть `0` или `>= MIN_BATCH_TO_ROUTE_DEMAND_STATION`.
+///
+/// Та же константа служит порогом отбора станций предложения (как в example.py:
+/// `s_route_qty >= _ROUTE_LOW_BOUND_`): ограничение действует только для станций,
+/// которые суммарно (периоды 1 и 10 вместе, **включая** массовые) могут собрать
+/// партию. Станции с меньшим предложением шлют на маршрутные станции без ограничения.
+pub const MIN_BATCH_TO_ROUTE_DEMAND_STATION: i32 = 10;
+
 /// Штраф к тарифу (руб.) за каждые полные сутки выхода за допустимое окно срока подсыла
 /// `[L - 3, U + 3]` для предложений с [`SupplyNode::supply_period`] **не равным** 10.
 pub const PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_RUB: f64 = 15_000.0;
@@ -105,24 +117,46 @@ pub struct TaskArc {
     pub period_ok: bool,
     /// Тип вагона совместим с требованиями узла спроса.
     pub car_type_ok: bool,
-    /// Минимальный размер партии для пары станций `(supply_station, demand_station)`.
+    /// Минимальный размер партии для группы дуг [`TaskArc::pair_key`].
     ///
-    /// `0` — ограничения нет. Иначе суммарный поток по всем дугам пары должен быть
+    /// `0` — ограничения нет. Иначе суммарный поток по всем дугам группы должен быть
     /// `0` или `>= pair_min_batch`:
+    /// - [`MIN_BATCH_TO_ROUTE_DEMAND_STATION`] — маршрутные узлы спроса
+    ///   (`shipping_type == "Маршрутная"`), предложение со станции `>= 10` ваг.;
     /// - [`MIN_BATCH_FROM_MASS_STATION`] — предложение на станции массовой выгрузки;
     /// - [`MIN_BATCH_TO_MIDDLE_DEMAND_STATION`] — средняя станция предложения →
     ///   средне-крупная станция погрузки.
     ///
-    /// Классы не пересекаются (средние станции исключают массовые), поэтому все
-    /// дуги одной пары станций имеют одинаковое значение.
+    /// На одной паре станций могут сосуществовать **две** группы: маршрутные узлы
+    /// (B = 10) и немаршрутные (B = 3 или 0) — поэтому ключ группы включает порог.
     pub pair_min_batch: i32,
 }
+
+/// Ключ группы дуг ограничения минимальной партии:
+/// `(станция_предложения, станция_погрузки, порог_партии)`.
+///
+/// Порог входит в ключ, чтобы маршрутные и немаршрутные узлы одной станции
+/// погрузки образовывали **разные** группы (как в example.py: route-ограничение
+/// суммирует поток только по маршрутным узлам, dml/bulk — по остальным).
+pub type PairKey = (String, String, i32);
 
 impl TaskArc {
     /// Дуга участвует в ограничении минимальной партии на паре станций.
     #[inline]
     pub fn has_pair_min_batch(&self) -> bool {
         self.pair_min_batch > 0
+    }
+
+    /// Ключ группы ограничения минимальной партии для дуги.
+    ///
+    /// Имеет смысл только для дуг с [`TaskArc::has_pair_min_batch`].
+    #[inline]
+    pub fn pair_key(&self) -> PairKey {
+        (
+            self.supply_station_code.clone(),
+            self.demand_station_code.clone(),
+            self.pair_min_batch,
+        )
     }
 }
 
@@ -166,26 +200,35 @@ pub fn build_task_arcs(
 
     // --- Классификация станций для ограничений минимальной партии ---
     //
-    // Средние станции предложения: суммарно >= MIDDLE_SUPPLY_STATION_MIN_CARS вагонов
-    // (периоды 1 и 10 вместе), исключая станции массовой выгрузки — у тех своё
-    // ограничение MIN_BATCH_FROM_MASS_STATION.
-    let middle_supply_stations: HashSet<&str> = {
-        let mut totals: HashMap<&str, i32> = HashMap::new();
-        let mut mass_stations: HashSet<&str> = HashSet::new();
-        for s in supply {
-            *totals.entry(s.station_to_code.as_str()).or_insert(0) += s.car_count;
-            if s.is_mass_unloading {
-                mass_stations.insert(s.station_to_code.as_str());
-            }
+    // Суммарное предложение по станциям (периоды 1 и 10 вместе) и множество
+    // станций массовой выгрузки — общая база для средних и маршрутных классов.
+    let mut supply_station_totals: HashMap<&str, i32> = HashMap::new();
+    let mut mass_stations: HashSet<&str> = HashSet::new();
+    for s in supply {
+        *supply_station_totals.entry(s.station_to_code.as_str()).or_insert(0) += s.car_count;
+        if s.is_mass_unloading {
+            mass_stations.insert(s.station_to_code.as_str());
         }
-        totals
-            .into_iter()
-            .filter(|(code, total)| {
-                *total >= MIDDLE_SUPPLY_STATION_MIN_CARS && !mass_stations.contains(code)
-            })
-            .map(|(code, _)| code)
-            .collect()
-    };
+    }
+
+    // Средние станции предложения: суммарно >= MIDDLE_SUPPLY_STATION_MIN_CARS вагонов,
+    // исключая станции массовой выгрузки — у тех своё ограничение MIN_BATCH_FROM_MASS_STATION.
+    let middle_supply_stations: HashSet<&str> = supply_station_totals
+        .iter()
+        .filter(|(code, total)| {
+            **total >= MIDDLE_SUPPLY_STATION_MIN_CARS && !mass_stations.contains(*code)
+        })
+        .map(|(code, _)| *code)
+        .collect();
+
+    // Станции предложения для маршрутного ограничения: суммарно
+    // >= MIN_BATCH_TO_ROUTE_DEMAND_STATION вагонов, **включая** массовые
+    // (example.py, s_route_stations: массовые не исключаются).
+    let route_supply_stations: HashSet<&str> = supply_station_totals
+        .iter()
+        .filter(|(_, total)| **total >= MIN_BATCH_TO_ROUTE_DEMAND_STATION)
+        .map(|(code, _)| *code)
+        .collect();
 
     // Средне-крупные станции погрузки: суммарный Load-спрос без маршрутных отправок
     // >= MIDDLE_DEMAND_STATION_MIN_CARS вагонов.
@@ -290,12 +333,22 @@ pub fn build_task_arcs(
             };
 
             // Ограничения минимальной партии действуют только для погрузки, не для промывки.
+            // Приоритет классов: маршрутная отправка → массовая выгрузка → средние станции.
             let pair_min_batch = if d.purpose != DemandPurpose::Load {
                 0
+            } else if is_route_shipping(d) {
+                // Маршрутный узел спроса: партия >= 10, если станция предложения
+                // в принципе может её собрать (>= 10 ваг. суммарно). Станции с
+                // меньшим предложением шлют без ограничения (example.py:
+                // route-ограничение строится только для s_route_stations_filtered).
+                if route_supply_stations.contains(s.station_to_code.as_str()) {
+                    MIN_BATCH_TO_ROUTE_DEMAND_STATION
+                } else {
+                    0
+                }
             } else if s.is_mass_unloading {
                 MIN_BATCH_FROM_MASS_STATION
             } else if middle_supply_stations.contains(s.station_to_code.as_str())
-                && !is_route_shipping(d)
                 && middle_demand_stations.contains(d.station_code.as_str())
             {
                 MIN_BATCH_TO_MIDDLE_DEMAND_STATION
@@ -448,11 +501,12 @@ fn is_route_shipping(d: &DemandNode) -> bool {
 // Проверка ограничения минимальной партии на уровне пары станций
 // ---------------------------------------------------------------------------
 
-/// Возвращает пары станций `(supply_station_code, demand_station_code)`, для которых
-/// суммарный поток нарушает ограничение минимальной партии:
-/// `0 < total < pair_min_batch` (порог берётся из дуг пары — он одинаков внутри пары).
+/// Возвращает ключи групп [`PairKey`], для которых суммарный поток нарушает
+/// ограничение минимальной партии: `0 < total < pair_min_batch` (порог — третий
+/// элемент ключа).
 ///
-/// Учитываются дуги обоих классов: массовая выгрузка и средние станции.
+/// Учитываются дуги всех классов: массовая выгрузка, средние станции, маршрутные
+/// отправки. Маршрутные и немаршрутные узлы одной станции погрузки — разные группы.
 ///
 /// Принимает итератор `(arc_id, quantity)` — не зависит от конкретного типа назначения,
 /// что позволяет использовать функцию как из `greedy.rs`, так и из `alns.rs`.
@@ -461,22 +515,25 @@ fn is_route_shipping(d: &DemandNode) -> bool {
 pub fn collect_pair_min_batch_violations(
     flow: impl Iterator<Item = (usize, i32)>,
     arcs: &[TaskArc],
-) -> Vec<(String, String)> {
-    // (пара станций) → (суммарный поток, порог партии).
-    let mut totals: HashMap<(&str, &str), (i32, i32)> = HashMap::new();
+) -> Vec<PairKey> {
+    // Ключ группы → суммарный поток.
+    let mut totals: HashMap<(&str, &str, i32), i32> = HashMap::new();
     for (arc_id, quantity) in flow {
         let arc = &arcs[arc_id];
         if arc.has_pair_min_batch() {
-            let entry = totals
-                .entry((arc.supply_station_code.as_str(), arc.demand_station_code.as_str()))
-                .or_insert((0, arc.pair_min_batch));
-            entry.0 += quantity;
+            *totals
+                .entry((
+                    arc.supply_station_code.as_str(),
+                    arc.demand_station_code.as_str(),
+                    arc.pair_min_batch,
+                ))
+                .or_insert(0) += quantity;
         }
     }
     totals
         .into_iter()
-        .filter(|(_, (total, min_batch))| *total > 0 && *total < *min_batch)
-        .map(|((s, d), _)| (s.to_string(), d.to_string()))
+        .filter(|((_, _, min_batch), total)| *total > 0 && *total < *min_batch)
+        .map(|((s, d, b), _)| (s.to_string(), d.to_string(), b))
         .collect()
 }
 
@@ -657,6 +714,70 @@ mod tests {
         assert_eq!(arcs[0].pair_min_batch, MIN_BATCH_FROM_MASS_STATION);
     }
 
+    /// Маршрутный узел спроса + станция предложения ≥ 10 ваг. → порог партии 10.
+    /// Размер маршрутного спроса роли не играет (в example.py route-станции не фильтруются).
+    #[test]
+    fn route_pair_gets_min_batch() {
+        let supply = vec![dummy_supply(10, "S1", 1, false)];
+        let demand = vec![dummy_demand(12, "D1", Some("Маршрутная"))];
+        let arcs = build(&supply, &demand, &[dummy_tariff("S1", "D1")]);
+        assert_eq!(arcs.len(), 1);
+        assert_eq!(arcs[0].pair_min_batch, MIN_BATCH_TO_ROUTE_DEMAND_STATION);
+    }
+
+    /// Станция предложения 9 ваг. (< 10) не может собрать маршрутную партию —
+    /// её дуги на маршрутные узлы без ограничения (example.py: s_route_stations_filtered).
+    #[test]
+    fn route_pair_small_supply_station_no_constraint() {
+        let supply = vec![dummy_supply(9, "S1", 1, false)];
+        let demand = vec![dummy_demand(12, "D1", Some("Маршрутная"))];
+        let arcs = build(&supply, &demand, &[dummy_tariff("S1", "D1")]);
+        assert_eq!(arcs.len(), 1);
+        assert_eq!(arcs[0].pair_min_batch, 0);
+    }
+
+    /// Периоды 1 и 10 считаются вместе и для маршрутного порога: 6 + 4 = 10 ваг.
+    #[test]
+    fn route_supply_counts_periods_together() {
+        let supply = vec![
+            dummy_supply(6, "S1", 1, false),
+            dummy_supply(4, "S1", 10, false),
+        ];
+        let demand = vec![dummy_demand(15, "D1", Some("Маршрутная"))];
+        let arcs = build(&supply, &demand, &[dummy_tariff("S1", "D1")]);
+        assert_eq!(arcs.len(), 2);
+        for arc in &arcs {
+            assert_eq!(arc.pair_min_batch, MIN_BATCH_TO_ROUTE_DEMAND_STATION);
+        }
+    }
+
+    /// Массовая станция предложения на маршрутный узел: действует маршрутный порог
+    /// (10 строже 3; в example.py route-секция не исключает массовые станции).
+    #[test]
+    fn mass_supply_to_route_demand_gets_route_batch() {
+        let supply = vec![dummy_supply(120, "S1", 1, true)];
+        let demand = vec![dummy_demand(15, "D1", Some("Маршрутная"))];
+        let arcs = build(&supply, &demand, &[dummy_tariff("S1", "D1")]);
+        assert_eq!(arcs.len(), 1);
+        assert_eq!(arcs[0].pair_min_batch, MIN_BATCH_TO_ROUTE_DEMAND_STATION);
+    }
+
+    /// Маршрутные и немаршрутные узлы одной станции погрузки — разные группы
+    /// с разными порогами (10 и 3), pair_key их различает.
+    #[test]
+    fn mixed_route_and_regular_demand_on_same_station() {
+        let supply = vec![dummy_supply(12, "S1", 1, false)];
+        let demand = vec![
+            dummy_demand(10, "D1", Some("Маршрутная")),
+            dummy_demand(5, "D1", None),
+        ];
+        let arcs = build(&supply, &demand, &[dummy_tariff("S1", "D1")]);
+        assert_eq!(arcs.len(), 2);
+        assert_eq!(arcs[0].pair_min_batch, MIN_BATCH_TO_ROUTE_DEMAND_STATION);
+        assert_eq!(arcs[1].pair_min_batch, MIN_BATCH_TO_MIDDLE_DEMAND_STATION);
+        assert_ne!(arcs[0].pair_key(), arcs[1].pair_key());
+    }
+
     /// collect_pair_min_batch_violations ловит поток 0 < total < B на средней паре.
     #[test]
     fn violations_detected_for_middle_pair() {
@@ -665,7 +786,10 @@ mod tests {
         let arcs = build(&supply, &demand, &[dummy_tariff("S1", "D1")]);
 
         let v = collect_pair_min_batch_violations([(0_usize, 2_i32)].into_iter(), &arcs);
-        assert_eq!(v, vec![("S1".to_string(), "D1".to_string())]);
+        assert_eq!(
+            v,
+            vec![("S1".to_string(), "D1".to_string(), MIN_BATCH_TO_MIDDLE_DEMAND_STATION)]
+        );
 
         let ok = collect_pair_min_batch_violations([(0_usize, 3_i32)].into_iter(), &arcs);
         assert!(ok.is_empty());

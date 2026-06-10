@@ -23,5 +23,5 @@ pub use model::{
 };
 pub use result::{
     build_assigned_output_records, build_output_records, build_repair_output_records, build_report,
-    output_records_for_api, save_result, AssignmentRecord, OptimReport,
+    output_balance, output_records_for_api, save_result, AssignmentRecord, OptimReport,
 };

@@ -592,6 +592,22 @@ async fn main() -> Result<()> {
     let mut output_records = solver::build_output_records(
         &solution, &arcs, &opt_supply, &demand_lp, &wash_codes, &no_cleaning_roads,
     );
+    // Самопроверка баланса: вагоны не должны «исчезать» из отчёта — каждый вагон
+    // предложения либо назначен, либо получает «Затягивание грузовой операции».
+    {
+        let (cars_recs, cars_sup) = solver::output_balance(&output_records, &opt_supply);
+        if cars_recs == cars_sup {
+            println!("Баланс отчёта оптимизации:   OK ({} ваг. в записях = {} ваг. предложения)", cars_recs, cars_sup);
+        } else {
+            eprintln!(
+                "  ВНИМАНИЕ: баланс отчёта нарушен — {} ваг. в записях != {} ваг. предложения \
+                 (потеряно {} ваг.). Проверьте build_output_records.",
+                cars_recs,
+                cars_sup,
+                cars_sup - cars_recs,
+            );
+        }
+    }
     // Добавляем вагоны "По факту" (Assigned): ShipmentGoalId из DislocationPreview → тип назначения.
     let assigned_car_numbers: Vec<u64> = assigned_nodes
         .iter()

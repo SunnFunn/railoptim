@@ -437,6 +437,7 @@ pub fn build_output_records(
 
         let car_nums = &s.car_numbers;
         let mut cursor: usize = 0;
+        let mut assigned_total: i32 = 0;
 
         // --- Шаг 2а: записи по назначенным дугам ---
         for &(arc, qty) in group {
@@ -448,6 +449,7 @@ pub fn build_output_records(
                 .map(|n| n.to_string())
                 .collect();
             cursor += take;
+            assigned_total += qty;
 
             let period_label = if d.purpose == DemandPurpose::Wash {
                 "промывка".to_string()
@@ -511,12 +513,17 @@ pub fn build_output_records(
         }
 
         // --- Шаг 2б: остаток — вагоны, ушедшие в dummy (не назначены) ---
-        if cursor < car_nums.len() {
-            let leftover: Vec<String> = car_nums[cursor..]
+        //
+        // Остаток считается по количеству вагонов узла (`car_count`), а НЕ по списку
+        // номеров: у NoNumber-узлов `car_numbers` пуст, но их нераспределённые вагоны
+        // обязаны попасть в отчёт как «Затягивание грузовой операции» (запись без
+        // номеров — так же, как их назначенные записи выше).
+        let leftover_count = s.car_count - assigned_total;
+        if leftover_count > 0 {
+            let leftover: Vec<String> = car_nums[cursor.min(car_nums.len())..]
                 .iter()
                 .map(|n| n.to_string())
                 .collect();
-            let leftover_count = leftover.len() as i32;
             records.push(OutputRecord {
                 opz_date:           now_str.clone(),
                 railway_from:       s.railway_to.clone(),
@@ -554,12 +561,13 @@ pub fn build_output_records(
 
     // --- Шаг 3: вагоны узлов без активных дуг вовсе (весь узел — dummy) ---
     // Это узлы, у которых нет ни одной активной дуги в solution.
+    // NoNumber-узлы тоже попадают в отчёт: запись «Затягивание» без номеров,
+    // количество — car_count (вагоны не должны исчезать из отчёта).
     for (s_idx, s) in supply.iter().enumerate() {
         if arcs_by_supply.contains_key(&s_idx) {
             continue; // уже обработан выше
         }
-        // Только именные вагоны (NoNumber не имеют car_numbers).
-        if s.car_numbers.is_empty() {
+        if s.car_count <= 0 {
             continue;
         }
         records.push(OutputRecord {
@@ -597,6 +605,18 @@ pub fn build_output_records(
     }
 
     records
+}
+
+/// Баланс отчёта оптимизации: `(вагонов в записях, вагонов в предложении)`.
+///
+/// Суммы обязаны совпадать: каждый вагон активного предложения либо назначен
+/// (запись по дуге), либо остался на месте («Затягивание грузовой операции»).
+/// Расхождение означает «исчезнувшие» из отчёта вагоны — следствие ошибки
+/// в [`build_output_records`] (как потеря NoNumber-остатков до фикса 2026-06).
+pub fn output_balance(records: &[OutputRecord], supply: &[SupplyNode]) -> (i32, i32) {
+    let cars_in_records: i32 = records.iter().map(|r| r.assigned_cars).sum();
+    let cars_in_supply: i32 = supply.iter().map(|s| s.car_count).sum();
+    (cars_in_records, cars_in_supply)
 }
 
 /// Записи для тела POST в АПИ: все назначения по предложению 1-х суток (`supply_period == 1`).
@@ -687,5 +707,162 @@ pub fn build_repair_output_records(
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::node::RepairStatus;
+
+    fn dummy_supply(count: i32, car_numbers: Vec<u64>, kind: CarKind) -> SupplyNode {
+        SupplyNode {
+            s_id: 1,
+            kind,
+            car_count: count,
+            station_to: "Тестовая".to_string(),
+            station_to_code: "S1".to_string(),
+            railway_to: String::new(),
+            railway_to_code: None,
+            railway_part_to: None,
+            car_type: Some("Прочие".to_string()),
+            etsng: None,
+            etsng_name: None,
+            repair_status: RepairStatus::Ok,
+            status: None,
+            supply_period: 1,
+            car_numbers,
+            stations_from: vec![],
+            stations_from_code: vec![],
+            railways_from: vec![],
+            railways_from_code: vec![],
+            railways_part_from: vec![],
+            is_mass_unloading: false,
+            prev_etsngs: vec![],
+            prev_etsng_names: vec![],
+        }
+    }
+
+    fn dummy_demand(count: i32) -> DemandNode {
+        DemandNode {
+            d_id: 1,
+            purpose: DemandPurpose::Load,
+            period: 1,
+            station_name: "Погрузка".to_string(),
+            station_code: "D1".to_string(),
+            railway_name: String::new(),
+            railway_code: None,
+            railway_part: None,
+            station_to_name: None,
+            station_to_code: None,
+            railway_to_name: None,
+            railway_to_code: None,
+            railway_to_part: None,
+            sender: None,
+            sender_okpo: None,
+            sender_tgnl: None,
+            client: None,
+            customer_okpo: None,
+            recipient: None,
+            loader_to_okpo: None,
+            gng_cargo: None,
+            etsng: None,
+            request_numbers: None,
+            request_dates: None,
+            gu12_number: None,
+            shipping_type: None,
+            car_type: Some("Прочие".to_string()),
+            car_count: count,
+            cars_on_station: 0,
+        }
+    }
+
+    fn dummy_arc() -> TaskArc {
+        TaskArc {
+            arc_id: 0,
+            s_idx: 0,
+            d_idx: 0,
+            supply_station_code: "S1".to_string(),
+            demand_station_code: "D1".to_string(),
+            cost: 100.0,
+            distance: 1,
+            delivery_days: 1,
+            period_ok: true,
+            car_type_ok: true,
+            pair_min_batch: 0,
+        }
+    }
+
+    fn build(solution: &[f64], arcs: &[TaskArc], supply: &[SupplyNode], demand: &[DemandNode]) -> Vec<OutputRecord> {
+        build_output_records(solution, arcs, supply, demand, &HashSet::new(), &HashSet::new())
+    }
+
+    /// NoNumber-узел с частичным назначением: остаток обязан получить запись
+    /// «Затягивание грузовой операции» по количеству (номеров нет).
+    #[test]
+    fn no_number_leftover_gets_zatyagivanie() {
+        let supply = vec![dummy_supply(5, vec![], CarKind::NoNumber)];
+        let demand = vec![dummy_demand(3)];
+        let arcs = vec![dummy_arc()];
+        let records = build(&[3.0], &arcs, &supply, &demand);
+
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].assigned_cars, 3);
+        let leftover = &records[1];
+        assert_eq!(leftover.assignment_type, "Затягивание грузовой операции");
+        assert_eq!(leftover.assigned_cars, 2);
+        assert!(leftover.car_numbers_list.is_empty());
+
+        let (recs, sup) = output_balance(&records, &supply);
+        assert_eq!(recs, sup);
+    }
+
+    /// NoNumber-узел без единой активной дуги: весь узел уходит в «Затягивание».
+    #[test]
+    fn no_number_node_without_arcs_gets_record() {
+        let supply = vec![dummy_supply(4, vec![], CarKind::NoNumber)];
+        let demand = vec![dummy_demand(3)];
+        let arcs = vec![dummy_arc()];
+        let records = build(&[0.0], &arcs, &supply, &demand);
+
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].assignment_type, "Затягивание грузовой операции");
+        assert_eq!(records[0].assigned_cars, 4);
+
+        let (recs, sup) = output_balance(&records, &supply);
+        assert_eq!(recs, sup);
+    }
+
+    /// Номерной узел: остаток получает «Затягивание» с конкретными номерами вагонов.
+    #[test]
+    fn numbered_leftover_keeps_numbers() {
+        let supply = vec![dummy_supply(3, vec![101, 102, 103], CarKind::Free)];
+        let demand = vec![dummy_demand(2)];
+        let arcs = vec![dummy_arc()];
+        let records = build(&[2.0], &arcs, &supply, &demand);
+
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].assigned_cars, 2);
+        assert_eq!(records[0].car_numbers_list, vec!["101", "102"]);
+        let leftover = &records[1];
+        assert_eq!(leftover.assignment_type, "Затягивание грузовой операции");
+        assert_eq!(leftover.assigned_cars, 1);
+        assert_eq!(leftover.car_numbers_list, vec!["103"]);
+
+        let (recs, sup) = output_balance(&records, &supply);
+        assert_eq!(recs, sup);
+    }
+
+    /// Полностью назначенный узел не получает записи «Затягивание».
+    #[test]
+    fn fully_assigned_node_has_no_leftover_record() {
+        let supply = vec![dummy_supply(2, vec![201, 202], CarKind::Free)];
+        let demand = vec![dummy_demand(2)];
+        let arcs = vec![dummy_arc()];
+        let records = build(&[2.0], &arcs, &supply, &demand);
+
+        assert_eq!(records.len(), 1);
+        let (recs, sup) = output_balance(&records, &supply);
+        assert_eq!(recs, sup);
+    }
 }
 

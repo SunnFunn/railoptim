@@ -1,8 +1,9 @@
-//! MIP-постановка транспортной задачи с жёстким ограничением MIN_BATCH
-//! на уровне пар станций массовой выгрузки.
+//! MIP-постановка транспортной задачи с жёстким ограничением минимальной партии
+//! на уровне пар станций (`TaskArc::pair_min_batch > 0`): станции массовой выгрузки
+//! и пары «средняя станция предложения → средне-крупная станция погрузки».
 //!
-//! Реализует big-M формулировку дизъюнкции «поток по паре = 0 или ≥ MIN_BATCH»:
-//! для каждой пары `(mass_supply_station, demand_station)` вводится бинарная
+//! Реализует big-M формулировку дизъюнкции «поток по паре = 0 или ≥ B_pair»:
+//! для каждой пары `(supply_station, demand_station)` вводится бинарная
 //! переменная `y_pair ∈ {0, 1}` и два линейных ограничения:
 //!
 //! ```text
@@ -10,9 +11,9 @@
 //! Σ x[arc]         ≤  M_pair * y_pair        (разрешить поток только при y_pair = 1)
 //! ```
 //!
-//! где `B_pair = min(MIN_BATCH_FROM_MASS_STATION, supply_at_mass_station)`,
-//! `M_pair = supply_at_mass_station` — тонкая верхняя оценка суммарного потока по паре
-//! (улучшает LP-релаксацию и ускоряет branch-and-cut).
+//! где `B_pair = min(pair_min_batch, supply_cap_пары)`,
+//! `M_pair = supply_cap_пары` — суммарное предложение уникальных узлов пары, тонкая
+//! верхняя оценка суммарного потока (улучшает LP-релаксацию и ускоряет branch-and-cut).
 //!
 //! Дуговые переменные целые (`add_integer_column`), `y_pair` — бинарные.
 //! Dummy-узлы (избыток / неудовл. спрос) — непрерывные, их целостность гарантируется
@@ -21,15 +22,27 @@
 //! Поддерживается warm-start из жадного решения: greedy даёт допустимое назначение
 //! (inline-проверки MIN_BATCH гарантируют это), HiGHS принимает его как incumbent.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use highs::{ColProblem, HighsModelStatus, Row, Sense};
 
 use super::greedy::{Assignment, GreedyResult};
 use super::lp::{OptimResult, PENALTY_EXCESS, PENALTY_UNMET};
-use super::model::{MIN_BATCH_FROM_MASS_STATION, TaskArc};
+use super::model::TaskArc;
 use crate::node::{DemandNode, DemandPurpose, SupplyNode};
+
+/// Ограничение минимальной партии для одной пары станций
+/// `(supply_station_code, demand_station_code)`.
+struct PairConstraint {
+    /// Индексы дуг пары в срезе `arcs`.
+    arc_ids: Vec<usize>,
+    /// Базовый порог партии (из `TaskArc::pair_min_batch`; одинаков внутри пары).
+    min_batch: i32,
+    /// Суммарное предложение уникальных узлов пары — тонкая верхняя оценка потока
+    /// (big-M) и клиппинг порога.
+    supply_cap: i32,
+}
 
 // ---------------------------------------------------------------------------
 // Константы
@@ -106,7 +119,8 @@ impl MipOutcome {
 // Основная точка входа
 // ---------------------------------------------------------------------------
 
-/// Решает задачу как MIP с жёстким ограничением MIN_BATCH на парах станций массовой выгрузки.
+/// Решает задачу как MIP с жёстким ограничением минимальной партии на парах станций
+/// (`TaskArc::pair_min_batch > 0`: массовая выгрузка и средние станции).
 ///
 /// # Параметры
 /// - `warm_start` — начальные значения дуговых переменных (`Vec<f64>` длины `arcs.len()`,
@@ -121,9 +135,9 @@ impl MipOutcome {
 /// - `pair_min_batch_override` — карта `(supply_station, demand_station) → B_pair`,
 ///   переопределяющая порог MIN_BATCH для отдельных пар. Используется в MIP-LNS
 ///   ([`super::alns::repair_mip`]): если во внешнем state уже есть поток `≥ MIN_BATCH`
-///   по паре, подзадача вправе добавить **любое** количество (в т.ч. `1..MIN_BATCH-1`)
+///   по паре, подзадача вправе добавить **любое** количество (в т.ч. `1..B_pair-1`)
 ///   — для таких пар в карту кладётся `B_pair = 0`. Для пар вне карты используется
-///   глобальный [`MIN_BATCH_FROM_MASS_STATION`]. `None` = нет переопределений
+///   порог пары из дуг (`TaskArc::pair_min_batch`). `None` = нет переопределений
 ///   (главный MIP запускается именно так).
 ///
 /// Возвращает [`MipOutcome`] со статусом HiGHS, MIP-gap и значениями дуговых переменных
@@ -138,32 +152,37 @@ pub fn solve_mip(
     pair_min_batch_override: Option<&HashMap<(String, String), i32>>,
 ) -> MipOutcome {
     // -----------------------------------------------------------------------
-    // 1. Сбор пар станций массовой выгрузки и суммарного предложения по ним.
+    // 1. Сбор пар станций с ограничением минимальной партии (pair_min_batch > 0).
     // -----------------------------------------------------------------------
-    let mut mass_pair_arcs: HashMap<(String, String), Vec<usize>> = HashMap::new();
+    let mut pair_arcs: HashMap<(String, String), (Vec<usize>, i32)> = HashMap::new();
     for (i, arc) in arcs.iter().enumerate() {
-        if arc.is_mass_unloading {
-            mass_pair_arcs
+        if arc.has_pair_min_batch() {
+            let entry = pair_arcs
                 .entry((
                     arc.supply_station_code.clone(),
                     arc.demand_station_code.clone(),
                 ))
-                .or_default()
-                .push(i);
+                .or_insert((Vec::new(), arc.pair_min_batch));
+            entry.0.push(i);
+            // Внутри пары порог одинаков по построению (build_task_arcs).
+            debug_assert_eq!(entry.1, arc.pair_min_batch);
         }
-    }
-
-    // Суммарное предложение на каждой станции массовой выгрузки (используется для
-    // тонкой оценки M_pair и для клиппинга B_pair — см. аналогичный трюк в example.py,
-    // `min(_ASSIGN_BULK_BOUND_, station_supply)`).
-    let mut station_supply: HashMap<String, i32> = HashMap::new();
-    for s in supply.iter().filter(|s| s.is_mass_unloading) {
-        *station_supply.entry(s.station_to_code.clone()).or_insert(0) += s.car_count;
     }
 
     // Стабилизируем порядок пар — он определяет позиции бинарных столбцов
     // и, как следствие, правильность выравнивания warm-start по этим столбцам.
-    let mut pair_list: Vec<((String, String), Vec<usize>)> = mass_pair_arcs.into_iter().collect();
+    //
+    // supply_cap пары — сумма car_count по уникальным s_idx её дуг (используется для
+    // тонкой оценки M_pair и для клиппинга B_pair — см. аналогичный трюк в example.py,
+    // `min(_ASSIGN_BULK_BOUND_, station_supply)`).
+    let mut pair_list: Vec<((String, String), PairConstraint)> = pair_arcs
+        .into_iter()
+        .map(|(key, (arc_ids, min_batch))| {
+            let s_idxs: HashSet<usize> = arc_ids.iter().map(|&i| arcs[i].s_idx).collect();
+            let supply_cap: i32 = s_idxs.iter().map(|&si| supply[si].car_count).sum();
+            (key, PairConstraint { arc_ids, min_batch, supply_cap })
+        })
+        .collect();
     pair_list.sort_by(|a, b| a.0.cmp(&b.0));
 
     let total_supply: f64 = supply.iter().map(|s| s.car_count as f64).sum();
@@ -224,8 +243,8 @@ pub fn solve_mip(
 
     // Индекс: arc_id → индекс пары в pair_list (если арк участвует в паре).
     let mut arc_to_pair: Vec<Option<usize>> = vec![None; n_arcs];
-    for (p_idx, (_, ids)) in pair_list.iter().enumerate() {
-        for &aid in ids {
+    for (p_idx, (_, pc)) in pair_list.iter().enumerate() {
+        for &aid in &pc.arc_ids {
             arc_to_pair[aid] = Some(p_idx);
         }
     }
@@ -268,21 +287,20 @@ pub fn solve_mip(
         }
     }
 
-    // Вычисление эффективного B_pair для пары: override, если задан; иначе глобальный
-    // MIN_BATCH. Также клиппится station_supply — нет смысла требовать больше, чем вообще
-    // может уйти со станции.
-    let b_pair_effective = |key: &(String, String), station_sup: i32| -> i32 {
+    // Вычисление эффективного B_pair для пары: override, если задан; иначе порог пары
+    // из дуг (pair_min_batch). Также клиппится supply_cap пары — нет смысла требовать
+    // больше, чем вообще может уйти с узлов пары.
+    let b_pair_effective = |key: &(String, String), pc: &PairConstraint| -> i32 {
         let base = pair_min_batch_override
             .and_then(|m| m.get(key).copied())
-            .unwrap_or(MIN_BATCH_FROM_MASS_STATION);
-        base.min(station_sup).max(0)
+            .unwrap_or(pc.min_batch);
+        base.min(pc.supply_cap).max(0)
     };
 
     // Бинарные y_pair ∈ {0,1} с двумя ограничениями: B*y ≤ Σx, Σx ≤ M*y.
-    for (p_idx, ((ss, ds), _)) in pair_list.iter().enumerate() {
-        let station_sup = *station_supply.get(ss).unwrap_or(&0);
-        let b = b_pair_effective(&(ss.clone(), ds.clone()), station_sup) as f64;
-        let m = station_sup as f64;
+    for (p_idx, (key, pc)) in pair_list.iter().enumerate() {
+        let b = b_pair_effective(key, pc) as f64;
+        let m = pc.supply_cap as f64;
         model.add_integer_column(
             0.0,
             0.0..=1.0,
@@ -320,15 +338,14 @@ pub fn solve_mip(
             let mut warm_clean: Vec<f64> = warm.to_vec();
             let mut sanitized_pairs = 0_usize;
             let mut sanitized_cars = 0.0_f64;
-            for ((ss, ds), ids) in &pair_list {
-                let station_sup = *station_supply.get(ss).unwrap_or(&0);
-                let b = b_pair_effective(&(ss.clone(), ds.clone()), station_sup);
+            for (key, pc) in &pair_list {
+                let b = b_pair_effective(key, pc);
                 if b <= 0 {
                     continue;
                 }
-                let sum: f64 = ids.iter().map(|&i| warm_clean[i]).sum();
+                let sum: f64 = pc.arc_ids.iter().map(|&i| warm_clean[i]).sum();
                 if sum > 0.5 && sum + 0.5 < b as f64 {
-                    for &i in ids {
+                    for &i in &pc.arc_ids {
                         warm_clean[i] = 0.0;
                     }
                     sanitized_pairs += 1;
@@ -368,8 +385,8 @@ pub fn solve_mip(
             }
 
             // y_pair: 1 если greedy сделал хотя бы одно назначение по паре.
-            for (_, ids) in &pair_list {
-                let flow: f64 = ids.iter().map(|&i| warm_clean[i]).sum();
+            for (_, pc) in &pair_list {
+                let flow: f64 = pc.arc_ids.iter().map(|&i| warm_clean[i]).sum();
                 cols_init.push(if flow > 1e-6 { 1.0 } else { 0.0 });
             }
 

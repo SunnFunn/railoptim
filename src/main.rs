@@ -340,6 +340,40 @@ async fn main() -> Result<()> {
         100.0 * arc_stats.feasible as f64 / total.max(1) as f64,
     );
 
+    // --- Статистика ограничений минимальной партии (MIN_BATCH) по классам пар ---
+    // Класс определяем по узлу предложения: массовая выгрузка ↔ средняя станция.
+    {
+        use std::collections::HashSet;
+        let mut mass_arcs = 0_usize;
+        let mut mid_arcs = 0_usize;
+        let mut mass_pairs: HashSet<(&str, &str)> = HashSet::new();
+        let mut mid_pairs: HashSet<(&str, &str)> = HashSet::new();
+        let mut mid_supply_stations: HashSet<&str> = HashSet::new();
+        let mut mid_demand_stations: HashSet<&str> = HashSet::new();
+        for arc in arcs.iter().filter(|a| a.has_pair_min_batch()) {
+            let pair = (arc.supply_station_code.as_str(), arc.demand_station_code.as_str());
+            if opt_supply[arc.s_idx].is_mass_unloading {
+                mass_arcs += 1;
+                mass_pairs.insert(pair);
+            } else {
+                mid_arcs += 1;
+                mid_pairs.insert(pair);
+                mid_supply_stations.insert(pair.0);
+                mid_demand_stations.insert(pair.1);
+            }
+        }
+        println!(
+            "Ограничения партии (MIN_BATCH): массовая выгрузка — {} дуг / {} пар; \
+             средние станции — {} дуг / {} пар (станций образования: {}, погрузки: {})",
+            mass_arcs,
+            mass_pairs.len(),
+            mid_arcs,
+            mid_pairs.len(),
+            mid_supply_stations.len(),
+            mid_demand_stations.len(),
+        );
+    }
+
     // -----------------------------------------------------------------------
     // 5. Анализ баланса и начальное жадное решение
     // -----------------------------------------------------------------------

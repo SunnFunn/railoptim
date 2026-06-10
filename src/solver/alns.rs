@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 use rand::prelude::*;
 
 use crate::node::{DemandNode, DemandPurpose, SupplyNode};
-use super::model::{collect_mass_pair_violations, MIN_BATCH_FROM_MASS_STATION, TaskArc};
+use super::model::{collect_pair_min_batch_violations, TaskArc};
 use super::greedy::{Assignment, GreedyResult, greedy_to_arc_vals};
 use super::lp::{solve, OptimResult, PENALTY_EXCESS, PENALTY_UNMET};
 use super::mip::solve_mip;
@@ -233,8 +233,8 @@ fn destroy_random(
 // Cleanup после destroy: удаление нарушений MIN_BATCH с возвратом назначений
 // ---------------------------------------------------------------------------
 
-/// Проверяет все назначения в `state` на соответствие ограничению MIN_BATCH
-/// для пар станций массовой выгрузки.
+/// Проверяет все назначения в `state` на соответствие ограничению минимальной партии
+/// для пар станций с `pair_min_batch > 0` (массовая выгрузка, средние станции).
 ///
 /// Удаляет нарушающие назначения, возвращает вагоны в остатки предложения/спроса
 /// и **возвращает список освобождённых назначений**, чтобы оператор ремонта
@@ -243,7 +243,7 @@ fn destroy_random(
 /// Вызывается **после `destroy`** (не после repair): к моменту ремонта
 /// состояние уже валидно, и ремонт строит новые назначения с inline-проверкой.
 fn drain_violated_mass_pairs(state: &mut AlnsState, arcs: &[TaskArc]) -> Vec<Assignment> {
-    let violations: HashSet<(String, String)> = collect_mass_pair_violations(
+    let violations: HashSet<(String, String)> = collect_pair_min_batch_violations(
         state.assignments.iter().map(|a| (a.arc_id, a.quantity)),
         arcs,
     )
@@ -260,7 +260,7 @@ fn drain_violated_mass_pairs(state: &mut AlnsState, arcs: &[TaskArc]) -> Vec<Ass
         i -= 1;
         let a = &state.assignments[i];
         let arc = &arcs[a.arc_id];
-        if arc.is_mass_unloading {
+        if arc.has_pair_min_batch() {
             let pair = (arc.supply_station_code.clone(), arc.demand_station_code.clone());
             if violations.contains(&pair) {
                 let removed = state.assignments.swap_remove(i);
@@ -295,9 +295,9 @@ fn repair_greedy(
     use std::collections::HashMap;
 
     // Индекс узлов предложения по парам (supply_station, demand_station)
-    // для дуг is_mass_unloading. Позволяет быстро считать station_remaining.
+    // для дуг с pair_min_batch > 0. Позволяет быстро считать station_remaining.
     let mut mass_pair_supply_idx: HashMap<(String, String), HashSet<usize>> = HashMap::new();
-    for arc in arcs.iter().filter(|a| a.is_mass_unloading) {
+    for arc in arcs.iter().filter(|a| a.has_pair_min_batch()) {
         mass_pair_supply_idx
             .entry((arc.supply_station_code.clone(), arc.demand_station_code.clone()))
             .or_default()
@@ -308,7 +308,7 @@ fn repair_greedy(
     let mut mass_pair_totals: HashMap<(String, String), i32> = HashMap::new();
     for a in &state.assignments {
         let arc = &arcs[a.arc_id];
-        if arc.is_mass_unloading {
+        if arc.has_pair_min_batch() {
             *mass_pair_totals
                 .entry((arc.supply_station_code.clone(), arc.demand_station_code.clone()))
                 .or_insert(0) += a.quantity;
@@ -332,7 +332,8 @@ fn repair_greedy(
                 let avail = state.remaining_supply[arc.s_idx];
                 if avail <= 0 { return false; }
 
-                if arc.is_mass_unloading {
+                if arc.has_pair_min_batch() {
+                    let b = arc.pair_min_batch;
                     let key = (arc.supply_station_code.clone(), arc.demand_station_code.clone());
                     let existing = mass_pair_totals.get(&key).copied().unwrap_or(0);
                     let station_remaining: i32 = mass_pair_supply_idx
@@ -340,19 +341,16 @@ fn repair_greedy(
                         .map(|nodes| nodes.iter().map(|&si| state.remaining_supply[si]).sum())
                         .unwrap_or(0);
 
-                    // (A) пара не наберёт MIN_BATCH даже суммарно
-                    if existing + station_remaining < MIN_BATCH_FROM_MASS_STATION {
+                    // (A) пара не наберёт порог партии даже суммарно
+                    if existing + station_remaining < b {
                         return false;
                     }
 
-                    // (B) назначение оставит застрявший остаток < MIN_BATCH
+                    // (B) назначение оставит застрявший остаток < порога партии
                     let qty = avail.min(rem_demand);
                     let residual = avail - qty;
                     let other_station_remaining = station_remaining - avail;
-                    if residual > 0
-                        && residual < MIN_BATCH_FROM_MASS_STATION
-                        && other_station_remaining < MIN_BATCH_FROM_MASS_STATION
-                    {
+                    if residual > 0 && residual < b && other_station_remaining < b {
                         return false;
                     }
                 }
@@ -373,7 +371,7 @@ fn repair_greedy(
             state.remaining_demand[arc.d_idx] -= qty;
             state.total_cost += arc_cost;
 
-            if arc.is_mass_unloading {
+            if arc.has_pair_min_batch() {
                 let key = (arc.supply_station_code.clone(), arc.demand_station_code.clone());
                 *mass_pair_totals.entry(key).or_insert(0) += qty;
             }
@@ -482,7 +480,7 @@ fn build_subproblem(
             delivery_days:       arc.delivery_days,
             period_ok:           arc.period_ok,
             car_type_ok:         arc.car_type_ok,
-            is_mass_unloading:   arc.is_mass_unloading,
+            pair_min_batch:      arc.pair_min_batch,
         }
     }).collect();
 
@@ -532,11 +530,11 @@ fn repair_lp(
 
     let (_, arc_vals) = solve(&sub_arcs, &sub_supply, &sub_demand);
 
-    // Пред-вычисление для inline MIN_BATCH-проверки.
+    // Пред-вычисление для inline-проверки минимальной партии.
     //
     // mass_pair_supply_idx: (supply_station, demand_station) → множество s_idx.
     let mut mass_pair_supply_idx: HashMap<(String, String), HashSet<usize>> = HashMap::new();
-    for arc in arcs.iter().filter(|a| a.is_mass_unloading) {
+    for arc in arcs.iter().filter(|a| a.has_pair_min_batch()) {
         mass_pair_supply_idx
             .entry((arc.supply_station_code.clone(), arc.demand_station_code.clone()))
             .or_default()
@@ -548,7 +546,7 @@ fn repair_lp(
     let mut mass_pair_totals: HashMap<(String, String), i32> = HashMap::new();
     for a in &state.assignments {
         let arc = &arcs[a.arc_id];
-        if arc.is_mass_unloading {
+        if arc.has_pair_min_batch() {
             *mass_pair_totals
                 .entry((arc.supply_station_code.clone(), arc.demand_station_code.clone()))
                 .or_insert(0) += a.quantity;
@@ -565,7 +563,7 @@ fn repair_lp(
 
         let orig_arc = orig_arc_idx.get(&(orig_s, orig_d)).copied();
         let orig_arc_id = orig_arc.map(|a| a.arc_id).unwrap_or(arc.arc_id);
-        let is_mass = orig_arc.map(|a| a.is_mass_unloading).unwrap_or(arc.is_mass_unloading);
+        let pair_b = orig_arc.map(|a| a.pair_min_batch).unwrap_or(arc.pair_min_batch);
 
         // Фактически доступные остатки (LP мог не знать об изменениях в ходе цикла).
         let avail_supply = state.remaining_supply[orig_s];
@@ -573,7 +571,7 @@ fn repair_lp(
         let qty = qty_lp.min(avail_supply).min(avail_demand);
         if qty <= 0 { continue; }
 
-        if is_mass {
+        if pair_b > 0 {
             let supply_code = orig_arc
                 .map(|a| a.supply_station_code.clone())
                 .unwrap_or_else(|| arc.supply_station_code.clone());
@@ -588,18 +586,15 @@ fn repair_lp(
                 .map(|nodes| nodes.iter().map(|&si| state.remaining_supply[si]).sum())
                 .unwrap_or(0);
 
-            // (A) пара не наберёт MIN_BATCH даже суммарно — пропускаем.
-            if existing + station_remaining < MIN_BATCH_FROM_MASS_STATION {
+            // (A) пара не наберёт порог партии даже суммарно — пропускаем.
+            if existing + station_remaining < pair_b {
                 continue;
             }
 
-            // (B) назначение оставит застрявший остаток < MIN_BATCH — пропускаем.
+            // (B) назначение оставит застрявший остаток < порога партии — пропускаем.
             let residual = avail_supply - qty;
             let other_station_remaining = station_remaining - avail_supply;
-            if residual > 0
-                && residual < MIN_BATCH_FROM_MASS_STATION
-                && other_station_remaining < MIN_BATCH_FROM_MASS_STATION
-            {
+            if residual > 0 && residual < pair_b && other_station_remaining < pair_b {
                 continue;
             }
 
@@ -675,23 +670,25 @@ fn repair_mip(
 ) -> bool {
     use std::collections::HashMap;
 
-    // Суммарный поток по каждой паре массовой выгрузки во внешнем state
-    // (до подзадачи). Нужен, чтобы не навязывать подзадаче MIN_BATCH на парах,
-    // где state уже обеспечил его внешними назначениями.
-    let mut state_flow: HashMap<(String, String), i32> = HashMap::new();
+    // Суммарный поток по каждой паре с pair_min_batch > 0 во внешнем state
+    // (до подзадачи) вместе с порогом партии пары. Нужен, чтобы не навязывать
+    // подзадаче минимальную партию на парах, где state уже обеспечил её
+    // внешними назначениями.
+    let mut state_flow: HashMap<(String, String), (i32, i32)> = HashMap::new();
     for a in &state.assignments {
         let arc = &arcs[a.arc_id];
-        if arc.is_mass_unloading {
-            *state_flow
+        if arc.has_pair_min_batch() {
+            let entry = state_flow
                 .entry((arc.supply_station_code.clone(), arc.demand_station_code.clone()))
-                .or_insert(0) += a.quantity;
+                .or_insert((0, arc.pair_min_batch));
+            entry.0 += a.quantity;
         }
     }
 
-    // Override для solve_mip: B_pair = 0 для пар, где state_flow ≥ MIN_BATCH.
+    // Override для solve_mip: B_pair = 0 для пар, где state_flow ≥ порога пары.
     let pair_override: HashMap<(String, String), i32> = state_flow
         .iter()
-        .filter(|&(_, &flow)| flow >= MIN_BATCH_FROM_MASS_STATION)
+        .filter(|&(_, &(flow, min_batch))| flow >= min_batch)
         .map(|(pair, _)| (pair.clone(), 0))
         .collect();
 

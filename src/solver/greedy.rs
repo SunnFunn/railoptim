@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::node::{DemandNode, DemandPurpose, SupplyNode};
-use super::model::{MIN_BATCH_FROM_MASS_STATION, TaskArc};
+use super::model::TaskArc;
 
 // ---------------------------------------------------------------------------
 // Результат жадного решения
@@ -227,7 +227,7 @@ fn dinic_like_mass_pair_flow(
 
     let sum_sup: i32 = s_idx_set.iter().map(|&si| rem_s[si]).sum();
     let sum_dem: i32 = d_idx_set.iter().map(|&di| rem_d[di]).sum();
-    let inf = sum_sup.max(sum_dem).max(limit).max(MIN_BATCH_FROM_MASS_STATION);
+    let inf = sum_sup.max(sum_dem).max(limit);
 
     let mut tracked: Vec<TrackedForward> = Vec::with_capacity(pair_arc_indices.len());
     for &arc_idx in pair_arc_indices {
@@ -324,11 +324,14 @@ fn record_assignments_for_mass_pair_flows(
     *mass_pair_totals.entry(key.clone()).or_insert(0) += add_pair;
 }
 
-/// Активация пары массовой выгрузки: поток по паре становится ≥ MIN_BATCH или пара запрещается.
+/// Активация пары с ограничением минимальной партии: поток по паре становится
+/// ≥ `min_target` (порог пары из `TaskArc::pair_min_batch`) или пара запрещается.
+#[allow(clippy::too_many_arguments)]
 fn try_activate_mass_pair(
     key: &(String, String),
     pair_arc_indices: &[usize],
     arcs: &[TaskArc],
+    min_target: i32,
     remaining_supply: &mut Vec<i32>,
     remaining_demand: &mut Vec<i32>,
     mass_pair_totals: &mut HashMap<(String, String), i32>,
@@ -350,7 +353,7 @@ fn try_activate_mass_pair(
         arcs,
         &mut trial_s,
         &mut trial_d,
-        MIN_BATCH_FROM_MASS_STATION,
+        min_target,
     ) {
         remaining_supply.clone_from(&trial_s);
         remaining_demand.clone_from(&trial_d);
@@ -373,7 +376,7 @@ fn try_activate_mass_pair(
         arcs,
         &mut trial_s,
         &mut trial_d,
-        MIN_BATCH_FROM_MASS_STATION,
+        min_target,
     ) {
         remaining_supply.clone_from(&trial_s);
         remaining_demand.clone_from(&trial_d);
@@ -402,15 +405,15 @@ fn try_activate_mass_pair(
 ///
 /// 1. Отбрасываем дуги с `car_type_ok == false`.
 /// 2. Сортируем допустимые дуги по стоимости, затем по расстоянию.
-/// 3. Для дуг **без** массовой выгрузки — классическое назначение
-///    `min(остаток_s, остаток_d)`.
-/// 4. Для дуг с массовой выгрузкой ограничение
-///    [`MIN_BATCH_FROM_MASS_STATION`] на пару станций `(образование порожнего → погрузка)`:
+/// 3. Для дуг **без** ограничения партии (`pair_min_batch == 0`) — классическое
+///    назначение `min(остаток_s, остаток_d)`.
+/// 4. Для дуг с `pair_min_batch > 0` (массовая выгрузка, средние станции) ограничение
+///    минимальной партии на пару станций `(образование порожнего → погрузка)`:
 ///    - индекс всех допустимых дуг по ключу пары станций;
-///    - при первом обращении к паре: набрать не менее MIN_BATCH суммарного потока
+///    - при первом обращении к паре: набрать не менее `pair_min_batch` суммарного потока
 ///      (сначала жадно в порядке дуг пары по стоимости; если не удалось — поток в двудольном
-///      подграфе пары, Edmonds–Karp с лимитом MIN_BATCH);
-///    - если достичь MIN_BATCH невозможно, пара помечается запрещённой (нулевой поток);
+///      подграфе пары, Edmonds–Karp с лимитом `pair_min_batch`);
+///    - если достичь порога невозможно, пара помечается запрещённой (нулевой поток);
 ///    - при уже активированной паре — обычное добавление по текущей дуге.
 ///
 /// Жадность по стоимости глобально сохраняется порядком обхода отсортированных дуг;
@@ -440,10 +443,10 @@ pub fn greedy_initial_solution(
             .then_with(|| arc_a.distance.cmp(&arc_b.distance))
     });
 
-    // Пары станций (массовая выгрузка → погрузка): только допустимые по типу дуги.
+    // Пары станций с ограничением минимальной партии: только допустимые по типу дуги.
     let mut mass_pair_arc_indices: HashMap<(String, String), Vec<usize>> = HashMap::new();
     for (i, arc) in arcs.iter().enumerate() {
-        if arc.is_mass_unloading && arc.car_type_ok {
+        if arc.has_pair_min_batch() && arc.car_type_ok {
             mass_pair_arc_indices
                 .entry((arc.supply_station_code.clone(), arc.demand_station_code.clone()))
                 .or_default()
@@ -479,7 +482,7 @@ pub fn greedy_initial_solution(
             continue;
         }
 
-        if arc.is_mass_unloading {
+        if arc.has_pair_min_batch() {
             let key = (
                 arc.supply_station_code.clone(),
                 arc.demand_station_code.clone(),
@@ -498,6 +501,7 @@ pub fn greedy_initial_solution(
                     &key,
                     pair_indices,
                     arcs,
+                    arc.pair_min_batch,
                     &mut remaining_supply,
                     &mut remaining_demand,
                     &mut mass_pair_totals,
@@ -637,6 +641,7 @@ pub fn print_greedy_result(result: &GreedyResult, supply: &[SupplyNode], demand:
 mod tests {
     use super::*;
     use crate::node::DemandPurpose;
+    use crate::solver::model::MIN_BATCH_FROM_MASS_STATION;
 
     fn dummy_supply(count: i32, station_code: &str, s_idx: usize, mass: bool) -> SupplyNode {
         SupplyNode {
@@ -720,7 +725,23 @@ mod tests {
             delivery_days: 1,
             period_ok: true,
             car_type_ok: true,
-            is_mass_unloading: mass,
+            pair_min_batch: if mass { MIN_BATCH_FROM_MASS_STATION } else { 0 },
+        }
+    }
+
+    /// Дуга с явным порогом партии пары (средние станции).
+    fn arc_b(
+        id: usize,
+        s: usize,
+        d: usize,
+        from_st: &str,
+        to_st: &str,
+        cost: f64,
+        pair_min_batch: i32,
+    ) -> TaskArc {
+        TaskArc {
+            pair_min_batch,
+            ..arc(id, s, d, from_st, to_st, cost, false)
         }
     }
 
@@ -785,5 +806,74 @@ mod tests {
             .sum();
         assert!(sum_b == 0 || sum_b >= MIN_BATCH_FROM_MASS_STATION);
         assert!(sum_c == 0 || sum_c >= MIN_BATCH_FROM_MASS_STATION);
+    }
+
+    /// Средняя пара (pair_min_batch=3): спрос 5 на станции D + дешёвая альтернатива
+    /// на 2 ваг. без ограничения. Поток средней пары — 0 или ≥ 3, спрос закрыт полностью.
+    #[test]
+    fn middle_pair_flow_zero_or_ge_min_batch() {
+        let b = crate::solver::model::MIN_BATCH_TO_MIDDLE_DEMAND_STATION;
+        let supply = vec![dummy_supply(7, "M", 0, false)];
+        let demand = vec![
+            dummy_demand(5, "D", 0), // средне-крупная станция спроса
+            dummy_demand(2, "C", 1), // мелкий спрос без ограничения
+        ];
+        let arcs = vec![
+            arc_b(0, 0, 0, "M", "D", 100.0, b),
+            arc_b(1, 0, 1, "M", "C", 50.0, 0),
+        ];
+        let r = greedy_initial_solution(&arcs, &supply, &demand);
+        let sum_d: i32 = r
+            .assignments
+            .iter()
+            .filter(|a| a.d_idx == 0)
+            .map(|a| a.quantity)
+            .sum();
+        assert!(sum_d == 0 || sum_d >= b, "поток средней пары {} нарушает порог {}", sum_d, b);
+        assert_eq!(r.unmet_demand, 0);
+    }
+
+    /// Средняя пара: спрос всего 2 ваг. на станции D — порог 3 недостижим, пара
+    /// запрещается (поток 0), вагоны не дробятся по одному.
+    #[test]
+    fn middle_pair_forbidden_when_demand_below_min_batch() {
+        let b = crate::solver::model::MIN_BATCH_TO_MIDDLE_DEMAND_STATION;
+        let supply = vec![dummy_supply(7, "M", 0, false)];
+        let demand = vec![dummy_demand(2, "D", 0)];
+        let arcs = vec![arc_b(0, 0, 0, "M", "D", 100.0, b)];
+        let r = greedy_initial_solution(&arcs, &supply, &demand);
+        assert_eq!(r.assignments.len(), 0);
+        assert_eq!(r.unmet_demand, 2);
+    }
+
+    /// MIP: средняя пара со спросом 5 и дешёвой альтернативой на 2 ваг. — поток
+    /// пары в решении MIP должен быть 0 или ≥ 3 (big-M по pair_min_batch).
+    #[test]
+    fn mip_middle_pair_flow_zero_or_ge_min_batch() {
+        use std::time::Duration;
+        let b = crate::solver::model::MIN_BATCH_TO_MIDDLE_DEMAND_STATION;
+        let supply = vec![dummy_supply(7, "M", 0, false)];
+        let demand = vec![
+            dummy_demand(5, "D", 0),
+            dummy_demand(2, "C", 1),
+        ];
+        let arcs = vec![
+            arc_b(0, 0, 0, "M", "D", 100.0, b),
+            arc_b(1, 0, 1, "M", "C", 50.0, 0),
+        ];
+        let outcome = crate::solver::mip::solve_mip(
+            &arcs,
+            &supply,
+            &demand,
+            Duration::from_secs(10),
+            None,
+            None,
+            None,
+        );
+        assert!(outcome.has_feasible_solution());
+        let flow_d = outcome.arc_vals[0].round() as i32;
+        assert!(flow_d == 0 || flow_d >= b, "поток средней пары {} нарушает порог {}", flow_d, b);
+        // 7 вагонов хватает на оба адресата — MIP закрывает весь спрос.
+        assert_eq!(outcome.optim.penalty_cars.round() as i32, 0);
     }
 }

@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, HashMap};
 use crate::node::{DemandNode, DemandPurpose, SupplyNode};
 
 use super::lp::PENALTY_UNMET;
-use super::model::{MIN_BATCH_FROM_MASS_STATION, TaskArc};
+use super::model::TaskArc;
 
 /// Категория причины, по которой вагоны узла предложения остались нераспределёнными.
 ///
@@ -45,11 +45,12 @@ enum ExcessCause {
         min_arc_cost_per_wagon: f64,
     },
 
-    /// Все Load-дуги с доступным спросом упираются в `MIN_BATCH`: пара
-    /// `(supply_station, demand_station)` — пара массовой выгрузки, и текущий
-    /// поток в ней `< MIN_BATCH`, а суммарный потенциал тоже меньше.
+    /// Все Load-дуги с доступным спросом упираются в ограничение минимальной партии:
+    /// пара `(supply_station, demand_station)` имеет `pair_min_batch > 0` (массовая
+    /// выгрузка или средние станции), текущий поток в ней `< порога`, а суммарный
+    /// потенциал тоже меньше.
     MinBatchDeadlock {
-        pairs: Vec<(String, String, i32, i32)>, // (ss, ds, current_flow, potential_add)
+        pairs: Vec<(String, String, i32, i32, i32)>, // (ss, ds, current_flow, potential_add, min_batch)
     },
 
     /// Есть feasible Load-дуги с доступным спросом, их минимальная стоимость
@@ -105,10 +106,10 @@ pub fn diagnose_excess_supply(
         .map(|(i, d)| d.car_count - recv[i])
         .collect();
 
-    // 2. Текущий поток по mass-unloading парам (ss, ds).
+    // 2. Текущий поток по парам с ограничением минимальной партии (ss, ds).
     let mut pair_flow: HashMap<(String, String), i32> = HashMap::new();
     for (arc, &q) in arcs.iter().zip(arc_vals.iter()) {
-        if !arc.is_mass_unloading { continue; }
+        if !arc.has_pair_min_batch() { continue; }
         let qi = q.round() as i32;
         if qi <= 0 { continue; }
         *pair_flow
@@ -169,7 +170,8 @@ pub fn diagnose_excess_supply(
 
         let mut min_arc_cost_load = f64::INFINITY;
         let mut min_arc_cost_wash = f64::INFINITY;
-        let mut min_batch_pairs: HashMap<(String, String), (i32, i32)> = HashMap::new();
+        // (пара) → (текущий поток, макс. потенциал добавления, порог партии).
+        let mut min_batch_pairs: HashMap<(String, String), (i32, i32, i32)> = HashMap::new();
 
         for &arc_id in node_arcs {
             let arc = &arcs[arc_id];
@@ -188,22 +190,23 @@ pub fn diagnose_excess_supply(
                 continue;
             }
 
-            // Load-дуга с rem>0: проверяем MIN_BATCH (только для mass_unloading).
-            if arc.is_mass_unloading {
+            // Load-дуга с rem>0: проверяем ограничение минимальной партии (pair_min_batch > 0).
+            if arc.has_pair_min_batch() {
+                let b = arc.pair_min_batch;
                 let key = (arc.supply_station_code.clone(), arc.demand_station_code.clone());
                 let flow = pair_flow.get(&key).copied().unwrap_or(0);
                 let add_potential = rem.min(d_rem);
                 let blocked = if flow == 0 {
-                    add_potential < MIN_BATCH_FROM_MASS_STATION
+                    add_potential < b
                 } else {
-                    flow < MIN_BATCH_FROM_MASS_STATION
+                    flow < b
                 };
                 if blocked {
                     load_min_batch_blocked.push(arc_id);
                     min_batch_pairs
                         .entry(key)
                         .and_modify(|e| { e.0 = flow; e.1 = e.1.max(add_potential); })
-                        .or_insert((flow, add_potential));
+                        .or_insert((flow, add_potential, b));
                     continue;
                 }
             }
@@ -233,7 +236,7 @@ pub fn diagnose_excess_supply(
             ExcessCause::MinBatchDeadlock {
                 pairs: min_batch_pairs
                     .into_iter()
-                    .map(|((ss, ds), (f, p))| (ss, ds, f, p))
+                    .map(|((ss, ds), (f, p, b))| (ss, ds, f, p, b))
                     .collect(),
             }
         } else if min_arc_cost_load >= PENALTY_UNMET {
@@ -296,12 +299,12 @@ pub fn diagnose_excess_supply(
             }
             ExcessCause::MinBatchDeadlock { pairs } => {
                 println!(
-                    "    ПРИЧИНА: MIN_BATCH-тупик ({} пар). Все Load-дуги с доступным спросом — пары массовой выгрузки с потоком <{}:",
-                    pairs.len(), MIN_BATCH_FROM_MASS_STATION
+                    "    ПРИЧИНА: MIN_BATCH-тупик ({} пар). Все Load-дуги с доступным спросом — пары с потоком ниже порога партии:",
+                    pairs.len()
                 );
-                for (ss, ds, flow, potential) in pairs.iter().take(5) {
+                for (ss, ds, flow, potential, min_batch) in pairs.iter().take(5) {
                     println!(
-                        "      · ({ss} → {ds}): текущий поток {flow} ваг., макс. добавим {potential} (порог {MIN_BATCH_FROM_MASS_STATION})",
+                        "      · ({ss} → {ds}): текущий поток {flow} ваг., макс. добавим {potential} (порог {min_batch})",
                     );
                 }
                 if pairs.len() > 5 {

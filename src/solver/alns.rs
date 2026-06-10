@@ -3,10 +3,26 @@ use std::time::{Duration, Instant};
 use rand::prelude::*;
 
 use crate::node::{DemandNode, DemandPurpose, SupplyNode};
-use super::model::{collect_pair_min_batch_violations, PairKey, TaskArc};
+use super::model::{collect_pair_min_batch_violations, DmziIndex, DmziLimits, PairKey, TaskArc};
 use super::greedy::{Assignment, GreedyResult, greedy_to_arc_vals};
 use super::lp::{solve, OptimResult, PENALTY_EXCESS, PENALTY_UNMET};
 use super::mip::solve_mip;
+
+// ---------------------------------------------------------------------------
+// Квоты ДМЗИ внутри ALNS
+// ---------------------------------------------------------------------------
+
+/// Остатки квот ДМЗИ для текущего состояния: лимиты бакетов за вычетом потока
+/// всех активных назначений state (по `arc_id` в полном списке `arcs`).
+fn dmzi_remaining_for_state(index: &DmziIndex, assignments: &[Assignment]) -> Vec<i32> {
+    let mut rem = index.limits_vec();
+    for a in assignments {
+        if let Some(b) = index.arc_bucket[a.arc_id] {
+            rem[b] -= a.quantity;
+        }
+    }
+    rem
+}
 
 // ---------------------------------------------------------------------------
 // Константы
@@ -285,14 +301,25 @@ fn drain_violated_mass_pairs(state: &mut AlnsState, arcs: &[TaskArc]) -> Vec<Ass
 ///
 /// Ограничение MIN_BATCH проверяется **inline** (по тем же условиям A и B,
 /// что и в `greedy_initial_solution`) — пост-удаление не нужно.
+/// Квоты ДМЗИ также учитываются inline: дуги с исчерпанным бакетом отбрасываются,
+/// объём назначения клиппится остатком квоты.
 ///
 /// Используется как быстрый оператор ремонта когда LP-ремонт избыточен.
 fn repair_greedy(
     state:   &mut AlnsState,
     removed: &[Assignment],
     arcs:    &[TaskArc],
+    dmzi:    Option<&DmziIndex>,
 ) {
     use std::collections::HashMap;
+
+    // Остатки квот ДМЗИ с учётом всех активных назначений state.
+    let mut dmzi_rem: Vec<i32> = dmzi
+        .map(|idx| dmzi_remaining_for_state(idx, &state.assignments))
+        .unwrap_or_default();
+    let bucket_of = |arc_id: usize| -> Option<usize> {
+        dmzi.and_then(|idx| idx.arc_bucket[arc_id])
+    };
 
     // Индекс узлов предложения по группам pair_key для дуг с pair_min_batch > 0.
     // Позволяет быстро считать station_remaining.
@@ -330,6 +357,11 @@ fn repair_greedy(
                 let avail = state.remaining_supply[arc.s_idx];
                 if avail <= 0 { return false; }
 
+                // Квота ДМЗИ бакета дуги исчерпана — дуга недоступна.
+                if let Some(b) = bucket_of(arc.arc_id) {
+                    if dmzi_rem[b] <= 0 { return false; }
+                }
+
                 if arc.has_pair_min_batch() {
                     let b = arc.pair_min_batch;
                     let key = arc.pair_key();
@@ -362,7 +394,12 @@ fn repair_greedy(
             });
 
         if let Some(arc) = best_arc {
-            let qty = state.remaining_supply[arc.s_idx].min(rem_demand);
+            let mut qty = state.remaining_supply[arc.s_idx].min(rem_demand);
+            if let Some(b) = bucket_of(arc.arc_id) {
+                qty = qty.min(dmzi_rem[b]);
+                dmzi_rem[b] -= qty;
+            }
+            if qty <= 0 { continue; }
 
             let arc_cost = qty as f64 * arc.cost;
             state.remaining_supply[arc.s_idx] -= qty;
@@ -504,6 +541,7 @@ fn build_subproblem(
 /// (условия A и B). LP не знает про MIN_BATCH, поэтому проверка идёт на стороне
 /// применения: если пара не может набрать MIN_BATCH — назначение пропускается,
 /// вагоны остаются в `remaining_supply` для последующих итераций.
+/// Квоты ДМЗИ также применяются inline: объём клиппится остатком квоты бакета.
 ///
 /// Возвращает `true` если ремонт выполнен успешно.
 fn repair_lp(
@@ -512,6 +550,7 @@ fn repair_lp(
     arcs:    &[TaskArc],
     supply:  &[SupplyNode],
     demand:  &[DemandNode],
+    dmzi:    Option<&DmziIndex>,
 ) -> bool {
     use std::collections::HashMap;
 
@@ -519,6 +558,11 @@ fn repair_lp(
         build_subproblem(removed, arcs, state, supply, demand);
 
     if sub_arcs.is_empty() { return false; }
+
+    // Остатки квот ДМЗИ с учётом всех активных назначений state.
+    let mut dmzi_rem: Vec<i32> = dmzi
+        .map(|idx| dmzi_remaining_for_state(idx, &state.assignments))
+        .unwrap_or_default();
 
     // Индекс оригинальных дуг по (s_idx, d_idx) для поиска флагов и кодов.
     let orig_arc_idx: HashMap<(usize, usize), &TaskArc> = arcs.iter()
@@ -560,10 +604,26 @@ fn repair_lp(
         let orig_arc_id = orig_arc.map(|a| a.arc_id).unwrap_or(arc.arc_id);
         let pair_b = orig_arc.map(|a| a.pair_min_batch).unwrap_or(arc.pair_min_batch);
 
+        // Бакет квоты ДМЗИ дуги (по оригинальной дуге; иначе — по узлам напрямую).
+        let dmzi_bucket: Option<usize> = dmzi.and_then(|idx| match orig_arc {
+            Some(a) => idx.arc_bucket[a.arc_id],
+            None => {
+                let d = &demand[orig_d];
+                if d.purpose == DemandPurpose::Load {
+                    idx.bucket_for(&d.railway_name, supply[orig_s].supply_period)
+                } else {
+                    None
+                }
+            }
+        });
+
         // Фактически доступные остатки (LP мог не знать об изменениях в ходе цикла).
         let avail_supply = state.remaining_supply[orig_s];
         let avail_demand = state.remaining_demand[orig_d];
-        let qty = qty_lp.min(avail_supply).min(avail_demand);
+        let mut qty = qty_lp.min(avail_supply).min(avail_demand);
+        if let Some(b) = dmzi_bucket {
+            qty = qty.min(dmzi_rem[b]);
+        }
         if qty <= 0 { continue; }
 
         if pair_b > 0 {
@@ -594,6 +654,9 @@ fn repair_lp(
             state.remaining_demand[orig_d] -= qty;
             state.total_cost += arc_cost;
             *mass_pair_totals.entry(key).or_insert(0) += qty;
+            if let Some(b) = dmzi_bucket {
+                dmzi_rem[b] -= qty;
+            }
 
             state.assignments.push(Assignment {
                 arc_id:     orig_arc_id,
@@ -607,6 +670,9 @@ fn repair_lp(
             state.remaining_supply[orig_s] -= qty;
             state.remaining_demand[orig_d] -= qty;
             state.total_cost += arc_cost;
+            if let Some(b) = dmzi_bucket {
+                dmzi_rem[b] -= qty;
+            }
 
             state.assignments.push(Assignment {
                 arc_id:     orig_arc_id,
@@ -647,9 +713,16 @@ fn repair_lp(
 ///   `drain_violated_mass_pairs` эвакуирует сразу после `destroy`, поэтому к моменту
 ///   вызова `repair_mip` все пары state — либо пустые, либо `≥ MIN_BATCH`.
 ///
+/// # Квоты ДМЗИ
+/// Подзадаче передаются **редуцированные** лимиты: из лимита каждого бакета
+/// вычитается поток активных назначений state (внешних по отношению к подзадаче;
+/// удалённые destroy/drain назначения уже возвращены в остатки и в state не входят).
+/// Так суммарный поток state + подзадачи не превышает исходных квот.
+///
 /// Возвращает `true`, если MIP нашёл хотя бы допустимое решение; `false` —
 /// если решатель завершился без пригодного incumbent (сигнал для fallback
 /// на `repair_greedy`).
+#[allow(clippy::too_many_arguments)]
 fn repair_mip(
     state:      &mut AlnsState,
     removed:    &[Assignment],
@@ -658,8 +731,19 @@ fn repair_mip(
     demand:     &[DemandNode],
     time_limit: Duration,
     rel_gap:    f64,
+    dmzi:       Option<&DmziIndex>,
 ) -> bool {
     use std::collections::HashMap;
+
+    // Редуцированные квоты ДМЗИ для подзадачи: лимит − поток внешнего state.
+    let dmzi_reduced: Option<DmziLimits> = dmzi.map(|idx| {
+        let rem = dmzi_remaining_for_state(idx, &state.assignments);
+        idx.buckets
+            .iter()
+            .zip(rem.iter())
+            .map(|((key, _), &r)| (key.clone(), r.max(0)))
+            .collect()
+    });
 
     // Суммарный поток по каждой группе с pair_min_batch > 0 во внешнем state
     // (до подзадачи). Порог группы — третий элемент ключа. Нужен, чтобы не
@@ -697,6 +781,7 @@ fn repair_mip(
         &sub_arcs, &sub_supply, &sub_demand,
         time_limit, None, Some(rel_gap),
         Some(&pair_override),
+        dmzi_reduced.as_ref(),
     );
 
     if !outcome.has_feasible_solution() {
@@ -765,6 +850,7 @@ pub fn run_alns(
     supply:  &[SupplyNode],
     demand:  &[DemandNode],
     config:  &AlnsConfig,
+    dmzi_limits: Option<&DmziLimits>,
 ) -> AlnsResult {
     let start = Instant::now();
 
@@ -772,6 +858,11 @@ pub fn run_alns(
         Some(s) => StdRng::seed_from_u64(s),
         None    => StdRng::from_entropy(),
     };
+
+    // Индекс квот ДМЗИ по полному списку дуг (общий для всех операторов ремонта).
+    let dmzi_index = dmzi_limits
+        .filter(|l| !l.is_empty())
+        .map(|l| DmziIndex::build(arcs, supply, demand, l));
 
     // --- Инициализация ---
     let initial_state = AlnsState::from_greedy(greedy, supply, demand);
@@ -836,12 +927,13 @@ pub fn run_alns(
             repair_mip(
                 &mut candidate, &removed, arcs, supply, demand,
                 ALNS_MIP_TIME_LIMIT, ALNS_MIP_REL_GAP,
+                dmzi_index.as_ref(),
             )
         } else {
-            repair_lp(&mut candidate, &removed, arcs, supply, demand)
+            repair_lp(&mut candidate, &removed, arcs, supply, demand, dmzi_index.as_ref())
         };
         if !repaired {
-            repair_greedy(&mut candidate, &removed, arcs);
+            repair_greedy(&mut candidate, &removed, arcs, dmzi_index.as_ref());
         }
 
         candidate.recalculate_cost();

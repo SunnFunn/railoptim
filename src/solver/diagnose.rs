@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, HashMap};
 use crate::node::{DemandNode, DemandPurpose, SupplyNode};
 
 use super::lp::PENALTY_UNMET;
-use super::model::{PairKey, TaskArc};
+use super::model::{DmziIndex, DmziLimits, PairKey, TaskArc};
 
 /// Категория причины, по которой вагоны узла предложения остались нераспределёнными.
 ///
@@ -53,6 +53,12 @@ enum ExcessCause {
         pairs: Vec<(String, String, i32, i32, i32)>, // (ss, ds, current_flow, potential_add, min_batch)
     },
 
+    /// Все Load-дуги с доступным спросом упираются в исчерпанную квоту ДМЗИ:
+    /// бакет `(дорога погрузки, период предложения)` уже использован полностью.
+    DmziQuotaExhausted {
+        buckets: Vec<(String, u8, i32, i32)>, // (дорога, период, used, limit)
+    },
+
     /// Есть feasible Load-дуги с доступным спросом, их минимальная стоимость
     /// выше `PENALTY_UNMET`. MIP математически правильно предпочёл штраф unmet
     /// вместо дорогой маршрутизации.
@@ -81,6 +87,7 @@ pub fn diagnose_excess_supply(
     arc_vals: &[f64],
     supply: &[SupplyNode],
     demand: &[DemandNode],
+    dmzi_limits: Option<&DmziLimits>,
 ) {
     if arcs.len() != arc_vals.len() {
         eprintln!(
@@ -114,6 +121,15 @@ pub fn diagnose_excess_supply(
         if qi <= 0 { continue; }
         *pair_flow.entry(arc.pair_key()).or_insert(0) += qi;
     }
+
+    // 2а. Квоты ДМЗИ: индекс бакетов и их текущее использование решением.
+    let dmzi: Option<(DmziIndex, Vec<i32>)> = dmzi_limits
+        .filter(|l| !l.is_empty())
+        .map(|l| {
+            let idx = DmziIndex::build(arcs, supply, demand, l);
+            let used = idx.usage_from_arc_vals(arc_vals);
+            (idx, used)
+        });
 
     // 3. Узлы с excess.
     let excess_nodes: Vec<usize> = rem_supply
@@ -163,6 +179,7 @@ pub fn diagnose_excess_supply(
         let mut load_feasible: Vec<usize> = Vec::new(); // Load-демы, rem>0, MIN_BATCH не блок.
         let mut wash_feasible: Vec<usize> = Vec::new(); // Wash-демы с rem>0 (информационно).
         let mut load_min_batch_blocked: Vec<usize> = Vec::new();
+        let mut load_dmzi_blocked: Vec<usize> = Vec::new();
         let mut load_target_covered = 0_usize;
         let mut wash_target_covered = 0_usize;
 
@@ -170,6 +187,8 @@ pub fn diagnose_excess_supply(
         let mut min_arc_cost_wash = f64::INFINITY;
         // pair_key (порог — третий элемент) → (текущий поток, макс. потенциал добавления).
         let mut min_batch_pairs: HashMap<PairKey, (i32, i32)> = HashMap::new();
+        // Индексы исчерпанных бакетов ДМЗИ, блокирующих дуги узла.
+        let mut dmzi_buckets: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
 
         for &arc_id in node_arcs {
             let arc = &arcs[arc_id];
@@ -208,6 +227,18 @@ pub fn diagnose_excess_supply(
                     continue;
                 }
             }
+
+            // Квота ДМЗИ бакета дуги исчерпана — дуга недоступна решателю.
+            if let Some((idx, used)) = &dmzi {
+                if let Some(b) = idx.arc_bucket[arc_id] {
+                    if used[b] >= idx.buckets[b].1 {
+                        load_dmzi_blocked.push(arc_id);
+                        dmzi_buckets.insert(b);
+                        continue;
+                    }
+                }
+            }
+
             load_feasible.push(arc_id);
             if arc.cost < min_arc_cost_load { min_arc_cost_load = arc.cost; }
         }
@@ -216,7 +247,10 @@ pub fn diagnose_excess_supply(
         // отправку — учитываем только Load-дуги.
         let cause = if node_arcs.is_empty() {
             ExcessCause::NoArcs
-        } else if load_feasible.is_empty() && load_min_batch_blocked.is_empty() {
+        } else if load_feasible.is_empty()
+            && load_min_batch_blocked.is_empty()
+            && load_dmzi_blocked.is_empty()
+        {
             // Нет ни одного Load-направления с доступным спросом. Остались либо
             // Wash-дуги, либо всё закрыто.
             if !wash_feasible.is_empty() {
@@ -230,11 +264,23 @@ pub fn diagnose_excess_supply(
                     wash_arcs: wash_target_covered,
                 }
             }
-        } else if load_feasible.is_empty() {
+        } else if load_feasible.is_empty() && !load_min_batch_blocked.is_empty() {
             ExcessCause::MinBatchDeadlock {
                 pairs: min_batch_pairs
                     .into_iter()
                     .map(|((ss, ds, b), (f, p))| (ss, ds, f, p, b))
+                    .collect(),
+            }
+        } else if load_feasible.is_empty() {
+            // Остались только дуги, заблокированные квотами ДМЗИ.
+            let (idx, used) = dmzi.as_ref().expect("dmzi_buckets непусто только при Some");
+            ExcessCause::DmziQuotaExhausted {
+                buckets: dmzi_buckets
+                    .iter()
+                    .map(|&b| {
+                        let ((rw, period), limit) = &idx.buckets[b];
+                        (rw.clone(), *period, used[b], *limit)
+                    })
                     .collect(),
             }
         } else if min_arc_cost_load >= PENALTY_UNMET {
@@ -310,6 +356,20 @@ pub fn diagnose_excess_supply(
                 }
                 add_stat("min_batch_deadlock", rem, &mut cause_stats);
             }
+            ExcessCause::DmziQuotaExhausted { buckets } => {
+                println!(
+                    "    ПРИЧИНА: квота ДМЗИ исчерпана — все Load-дуги с доступным спросом идут на дороги с выбранным лимитом:"
+                );
+                for (rw, period, used, limit) in buckets.iter().take(5) {
+                    println!(
+                        "      · дорога {rw}, период {period}: использовано {used} из {limit} ваг.",
+                    );
+                }
+                if buckets.len() > 5 {
+                    println!("      · ...ещё {} бакетов", buckets.len() - 5);
+                }
+                add_stat("dmzi_quota", rem, &mut cause_stats);
+            }
             ExcessCause::PenaltyCheaperThanArcs {
                 feasible_arcs_count,
                 min_arc_cost_per_wagon,
@@ -349,6 +409,7 @@ pub fn diagnose_excess_supply(
             "targets_covered"    => "все Load-адресаты закрыты",
             "only_wash"          => "доступны только Wash-дуги",
             "min_batch_deadlock" => "MIN_BATCH-тупик",
+            "dmzi_quota"         => "квота ДМЗИ исчерпана",
             "penalty_cheaper"    => "штраф < стоимости дуг",
             "unexpected"         => "Load-дуги есть, но не использованы",
             _                    => cause,

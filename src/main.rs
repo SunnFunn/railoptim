@@ -296,6 +296,42 @@ async fn main() -> Result<()> {
     }
 
     // -----------------------------------------------------------------------
+    // 3в. Ограничения ДМЗИ: лимиты подсыла порожних вагонов на дороги.
+    //     Период 1 — Normativ ближайшей даты; период 10 — максимум по горизонту.
+    //     Недоступность АПИ не блокирует прогон: квоты просто не применяются.
+    // -----------------------------------------------------------------------
+    let dmzi_limits: Option<solver::DmziLimits> = match client.fetch_dmzi_quotas().await {
+        Ok(q) if !q.is_empty() => {
+            let mut railways: Vec<_> = q.by_railway.iter().collect();
+            railways.sort_by(|a, b| a.0.cmp(b.0));
+            println!(
+                "Ограничения ДМЗИ:            {} дорог ({} записей Ostatok)",
+                railways.len(),
+                q.records,
+            );
+            for (rw, quota) in &railways {
+                println!(
+                    "  {:4} период 1 ≤ {:>4}, период 10 ≤ {:>4} ваг.",
+                    rw, quota.limit_p1, quota.limit_p10,
+                );
+            }
+            Some(q.to_limits())
+        }
+        Ok(_) => {
+            eprintln!(
+                "  ВНИМАНИЕ: ответ ДМЗИ пуст — прогон выполняется БЕЗ ограничений ДМЗИ!"
+            );
+            None
+        }
+        Err(e) => {
+            eprintln!(
+                "  ВНИМАНИЕ: ДМЗИ недоступно ({e}) — прогон выполняется БЕЗ ограничений ДМЗИ!"
+            );
+            None
+        }
+    };
+
+    // -----------------------------------------------------------------------
     // 4. Построение дуг транспортной задачи
     // -----------------------------------------------------------------------
     let (arcs, arc_stats) = solver::build_task_arcs(
@@ -397,7 +433,8 @@ async fn main() -> Result<()> {
     // -----------------------------------------------------------------------
     solver::print_balance(&opt_supply, &demand_lp);
 
-    let greedy_result = solver::greedy_initial_solution(&arcs, &opt_supply, &demand_lp);
+    let greedy_result =
+        solver::greedy_initial_solution(&arcs, &opt_supply, &demand_lp, dmzi_limits.as_ref());
     solver::print_greedy_result(&greedy_result, &opt_supply, &demand_lp);
 
     // -----------------------------------------------------------------------
@@ -433,6 +470,7 @@ async fn main() -> Result<()> {
         warm_start_vec.as_deref(),
         None, // rel_gap — берём DEFAULT_MIP_REL_GAP
         None, // pair_min_batch_override — для главного MIP не нужен
+        dmzi_limits.as_ref(),
     );
     let mip_elapsed = mip_t0.elapsed();
     solver::print_mip_result(&mip_outcome.optim, &opt_supply, &demand_lp);
@@ -493,6 +531,7 @@ async fn main() -> Result<()> {
             &mip_outcome.arc_vals,
             &opt_supply,
             &demand_lp,
+            dmzi_limits.as_ref(),
         );
     }
 
@@ -561,12 +600,41 @@ async fn main() -> Result<()> {
         let alns_config = solver::AlnsConfig::default();
         let alns_result = solver::run_alns(
             alns_seed, &arcs, &opt_supply, &demand_lp, &alns_config,
+            dmzi_limits.as_ref(),
         );
         let optim_result = alns_result.to_optim_result(&demand_lp);
         let solution     = alns_result.arc_vals.clone();
         let rem          = alns_result.best_state.remaining_supply.clone();
         (optim_result, solution, rem)
     };
+
+    // --- Утилизация квот ДМЗИ финальным решением ---
+    if let Some(limits) = &dmzi_limits {
+        let idx = solver::DmziIndex::build(&arcs, &opt_supply, &demand_lp, limits);
+        let used = idx.usage_from_arc_vals(&solution);
+        println!("--- УТИЛИЗАЦИЯ КВОТ ДМЗИ ---");
+        let mut violated = 0_usize;
+        for (b, ((rw, period), limit)) in idx.buckets.iter().enumerate() {
+            if used[b] == 0 && *limit == 0 {
+                continue;
+            }
+            let mark = if used[b] > *limit { "  [!] ПРЕВЫШЕНИЕ" } else { "" };
+            if used[b] > *limit {
+                violated += 1;
+            }
+            println!(
+                "  {:4} период {:>2}: {:>4} из {:>4} ваг.{}",
+                rw, period, used[b], limit, mark,
+            );
+        }
+        if violated > 0 {
+            eprintln!(
+                "  ВНИМАНИЕ: квоты ДМЗИ превышены в {} бакетах — проверьте решатель!",
+                violated,
+            );
+        }
+        println!("----------------------------");
+    }
 
     let mut remaining_supply_p1 = 0_i32;
     let mut remaining_supply_p10 = 0_i32;

@@ -1,7 +1,29 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::node::{DemandNode, DemandPurpose, SupplyNode};
-use super::model::{PairKey, TaskArc};
+use super::model::{DmziIndex, DmziLimits, PairKey, TaskArc};
+
+// ---------------------------------------------------------------------------
+// Квоты ДМЗИ внутри жадного алгоритма
+// ---------------------------------------------------------------------------
+
+/// Остаток квоты бакета ДМЗИ для дуги `arc_pos` (позиция в `arcs`).
+/// Дуги вне квот не ограничены.
+#[inline]
+fn dmzi_rem(arc_bucket: &[Option<usize>], quota_rem: &[i32], arc_pos: usize) -> i32 {
+    match arc_bucket.get(arc_pos).copied().flatten() {
+        Some(b) => quota_rem[b],
+        None => i32::MAX,
+    }
+}
+
+/// Списывает `qty` вагонов с квоты бакета дуги `arc_pos` (если дуга под квотой).
+#[inline]
+fn dmzi_consume(arc_bucket: &[Option<usize>], quota_rem: &mut [i32], arc_pos: usize, qty: i32) {
+    if let Some(b) = arc_bucket.get(arc_pos).copied().flatten() {
+        quota_rem[b] -= qty;
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Результат жадного решения
@@ -127,12 +149,15 @@ fn max_flow_edmonds_karp_limit(
 }
 
 /// Жадно набирает по дугам пары (порядок `pair_arc_indices`) до суммарного потока `min_target`.
-/// Изменяет `rem_s`, `rem_d`. Возвращает список ненулевых отгрузок по индексам дуг в `arcs`.
+/// Изменяет `rem_s`, `rem_d`, `quota_rem` (остатки квот ДМЗИ).
+/// Возвращает список ненулевых отгрузок по индексам дуг в `arcs`.
 fn greedy_fill_mass_pair_to_min(
     pair_arc_indices: &[usize],
     arcs: &[TaskArc],
     rem_s: &mut [i32],
     rem_d: &mut [i32],
+    arc_bucket: &[Option<usize>],
+    quota_rem: &mut [i32],
     min_target: i32,
 ) -> Option<Vec<(usize, i32)>> {
     let mut flows: Vec<(usize, i32)> = Vec::new();
@@ -144,13 +169,15 @@ fn greedy_fill_mass_pair_to_min(
             let arc = &arcs[arc_idx];
             let q = rem_s[arc.s_idx]
                 .min(rem_d[arc.d_idx])
-                .min(min_target - total_pair);
+                .min(min_target - total_pair)
+                .min(dmzi_rem(arc_bucket, quota_rem, arc_idx));
             if q <= 0 {
                 continue;
             }
             progressed = true;
             rem_s[arc.s_idx] -= q;
             rem_d[arc.d_idx] -= q;
+            dmzi_consume(arc_bucket, quota_rem, arc_idx, q);
             total_pair += q;
             flows.push((arc_idx, q));
             if total_pair >= min_target {
@@ -326,6 +353,11 @@ fn record_assignments_for_mass_pair_flows(
 
 /// Активация пары с ограничением минимальной партии: поток по паре становится
 /// ≥ `min_target` (порог пары из `TaskArc::pair_min_batch`) или пара запрещается.
+///
+/// Квоты ДМЗИ (`arc_bucket` / `quota_rem`) учитываются в обоих путях активации:
+/// жадный набор клиппит каждую отгрузку остатком квоты бакета; поток Edmonds–Karp
+/// квот не знает, поэтому его результат проверяется пост-фактум — при превышении
+/// квоты пара запрещается (консервативно: партия в обход квоты не собирается).
 #[allow(clippy::too_many_arguments)]
 fn try_activate_mass_pair(
     key: &PairKey,
@@ -334,6 +366,8 @@ fn try_activate_mass_pair(
     min_target: i32,
     remaining_supply: &mut Vec<i32>,
     remaining_demand: &mut Vec<i32>,
+    arc_bucket: &[Option<usize>],
+    quota_rem: &mut Vec<i32>,
     mass_pair_totals: &mut HashMap<PairKey, i32>,
     forbidden_pairs: &mut HashSet<PairKey>,
     assignments: &mut Vec<Assignment>,
@@ -347,16 +381,20 @@ fn try_activate_mass_pair(
 
     let mut trial_s = remaining_supply.clone();
     let mut trial_d = remaining_demand.clone();
+    let mut trial_q = quota_rem.clone();
 
     if let Some(flows) = greedy_fill_mass_pair_to_min(
         pair_arc_indices,
         arcs,
         &mut trial_s,
         &mut trial_d,
+        arc_bucket,
+        &mut trial_q,
         min_target,
     ) {
         remaining_supply.clone_from(&trial_s);
         remaining_demand.clone_from(&trial_d);
+        quota_rem.clone_from(&trial_q);
         record_assignments_for_mass_pair_flows(
             &flows,
             arcs,
@@ -378,18 +416,33 @@ fn try_activate_mass_pair(
         &mut trial_d,
         min_target,
     ) {
-        remaining_supply.clone_from(&trial_s);
-        remaining_demand.clone_from(&trial_d);
-        record_assignments_for_mass_pair_flows(
-            &flows,
-            arcs,
-            mass_pair_totals,
-            key,
-            assignments,
-            total_cost,
-            assigned_cars,
-        );
-        return;
+        // Пост-проверка квот ДМЗИ: поток Edmonds–Karp строится без учёта квот.
+        let mut trial_q = quota_rem.clone();
+        let mut quota_ok = true;
+        for &(arc_idx, q) in &flows {
+            if let Some(b) = arc_bucket.get(arc_idx).copied().flatten() {
+                trial_q[b] -= q;
+                if trial_q[b] < 0 {
+                    quota_ok = false;
+                    break;
+                }
+            }
+        }
+        if quota_ok {
+            remaining_supply.clone_from(&trial_s);
+            remaining_demand.clone_from(&trial_d);
+            quota_rem.clone_from(&trial_q);
+            record_assignments_for_mass_pair_flows(
+                &flows,
+                arcs,
+                mass_pair_totals,
+                key,
+                assignments,
+                total_cost,
+                assigned_cars,
+            );
+            return;
+        }
     }
 
     forbidden_pairs.insert(key.clone());
@@ -415,6 +468,9 @@ fn try_activate_mass_pair(
 ///      подграфе пары, Edmonds–Karp с лимитом `pair_min_batch`);
 ///    - если достичь порога невозможно, пара помечается запрещённой (нулевой поток);
 ///    - при уже активированной паре — обычное добавление по текущей дуге.
+/// 5. Квоты ДМЗИ (`dmzi_limits`): каждое назначение на Load-узел клиппится
+///    остатком квоты бакета `(дорога погрузки, период предложения)`; активация
+///    MIN_BATCH-пары не может собрать партию в обход квоты.
 ///
 /// Жадность по стоимости глобально сохраняется порядком обхода отсортированных дуг;
 /// внутри пары при активации дуги упорядочены по `(cost, distance)`.
@@ -422,9 +478,19 @@ pub fn greedy_initial_solution(
     arcs: &[TaskArc],
     supply: &[SupplyNode],
     demand: &[DemandNode],
+    dmzi_limits: Option<&DmziLimits>,
 ) -> GreedyResult {
     let mut remaining_supply: Vec<i32> = supply.iter().map(|s| s.car_count).collect();
     let mut remaining_demand: Vec<i32> = demand.iter().map(|d| d.car_count).collect();
+
+    // Квоты ДМЗИ: arc_bucket — позиция дуги → бакет; quota_rem — остатки лимитов.
+    let dmzi_index = dmzi_limits
+        .filter(|l| !l.is_empty())
+        .map(|l| DmziIndex::build(arcs, supply, demand, l));
+    let (arc_bucket, mut quota_rem): (Vec<Option<usize>>, Vec<i32>) = match &dmzi_index {
+        Some(idx) => (idx.arc_bucket.clone(), idx.limits_vec()),
+        None => (vec![None; arcs.len()], vec![]),
+    };
 
     let mut feasible_arc_indices: Vec<usize> = arcs
         .iter()
@@ -498,6 +564,8 @@ pub fn greedy_initial_solution(
                     arc.pair_min_batch,
                     &mut remaining_supply,
                     &mut remaining_demand,
+                    &arc_bucket,
+                    &mut quota_rem,
                     &mut mass_pair_totals,
                     &mut forbidden_pairs,
                     &mut assignments,
@@ -518,9 +586,15 @@ pub fn greedy_initial_solution(
                 continue;
             }
 
-            let qty = avail_supply.min(avail_demand);
+            let qty = avail_supply
+                .min(avail_demand)
+                .min(dmzi_rem(&arc_bucket, &quota_rem, arc_i));
+            if qty <= 0 {
+                continue;
+            }
             remaining_supply[arc.s_idx] -= qty;
             remaining_demand[arc.d_idx] -= qty;
+            dmzi_consume(&arc_bucket, &mut quota_rem, arc_i, qty);
 
             let arc_cost = qty as f64 * arc.cost;
             total_cost += arc_cost;
@@ -536,10 +610,16 @@ pub fn greedy_initial_solution(
 
             *mass_pair_totals.entry(key).or_insert(0) += qty;
         } else {
-            let qty = avail_supply.min(avail_demand);
+            let qty = avail_supply
+                .min(avail_demand)
+                .min(dmzi_rem(&arc_bucket, &quota_rem, arc_i));
+            if qty <= 0 {
+                continue;
+            }
 
             remaining_supply[arc.s_idx] -= qty;
             remaining_demand[arc.d_idx] -= qty;
+            dmzi_consume(&arc_bucket, &mut quota_rem, arc_i, qty);
 
             let arc_cost = qty as f64 * arc.cost;
             total_cost += arc_cost;
@@ -751,7 +831,7 @@ mod tests {
         let arcs = vec![
             arc(0, 0, 0, "A", "B", 100.0, true),
         ];
-        let r = greedy_initial_solution(&arcs, &supply, &demand);
+        let r = greedy_initial_solution(&arcs, &supply, &demand, None);
         assert_eq!(r.assignments.len(), 0);
         assert_eq!(r.unmet_demand, 2);
     }
@@ -768,7 +848,7 @@ mod tests {
             arc(0, 0, 0, "A", "B", 10.0, true),
             arc(1, 0, 1, "A", "B", 20.0, true),
         ];
-        let r = greedy_initial_solution(&arcs, &supply, &demand);
+        let r = greedy_initial_solution(&arcs, &supply, &demand, None);
         assert!(r.assigned_cars >= MIN_BATCH_FROM_MASS_STATION);
         assert!(r.unmet_demand <= 1);
     }
@@ -785,7 +865,7 @@ mod tests {
             arc(0, 0, 0, "A", "B", 5.0, true),
             arc(1, 0, 1, "A", "C", 6.0, true),
         ];
-        let r = greedy_initial_solution(&arcs, &supply, &demand);
+        let r = greedy_initial_solution(&arcs, &supply, &demand, None);
         let sum_b: i32 = r
             .assignments
             .iter()
@@ -816,7 +896,7 @@ mod tests {
             arc_b(0, 0, 0, "M", "D", 100.0, b),
             arc_b(1, 0, 1, "M", "C", 50.0, 0),
         ];
-        let r = greedy_initial_solution(&arcs, &supply, &demand);
+        let r = greedy_initial_solution(&arcs, &supply, &demand, None);
         let sum_d: i32 = r
             .assignments
             .iter()
@@ -835,7 +915,7 @@ mod tests {
         let supply = vec![dummy_supply(7, "M", 0, false)];
         let demand = vec![dummy_demand(2, "D", 0)];
         let arcs = vec![arc_b(0, 0, 0, "M", "D", 100.0, b)];
-        let r = greedy_initial_solution(&arcs, &supply, &demand);
+        let r = greedy_initial_solution(&arcs, &supply, &demand, None);
         assert_eq!(r.assignments.len(), 0);
         assert_eq!(r.unmet_demand, 2);
     }
@@ -848,7 +928,7 @@ mod tests {
         let supply = vec![dummy_supply(12, "M", 0, false)];
         let demand = vec![dummy_demand(12, "D", 0)];
         let arcs = vec![arc_b(0, 0, 0, "M", "D", 100.0, b)];
-        let r = greedy_initial_solution(&arcs, &supply, &demand);
+        let r = greedy_initial_solution(&arcs, &supply, &demand, None);
         let sum_d: i32 = r.assignments.iter().map(|a| a.quantity).sum();
         assert!(sum_d == 0 || sum_d >= b, "поток маршрутной пары {} нарушает порог {}", sum_d, b);
         assert_eq!(r.unmet_demand, 0);
@@ -861,7 +941,7 @@ mod tests {
         let supply = vec![dummy_supply(12, "M", 0, false)];
         let demand = vec![dummy_demand(7, "D", 0)];
         let arcs = vec![arc_b(0, 0, 0, "M", "D", 100.0, b)];
-        let r = greedy_initial_solution(&arcs, &supply, &demand);
+        let r = greedy_initial_solution(&arcs, &supply, &demand, None);
         assert_eq!(r.assignments.len(), 0);
         assert_eq!(r.unmet_demand, 7);
     }
@@ -891,6 +971,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         );
         assert!(outcome.has_feasible_solution());
         let flow_route = outcome.arc_vals[0].round() as i32;
@@ -900,6 +981,163 @@ mod tests {
         // PENALTY_UNMET доминирует: выгоднее закрыть маршрутные 10, чем обычные 5.
         assert_eq!(flow_route, 10);
         assert_eq!(flow_mid, 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // Квоты ДМЗИ
+    // -----------------------------------------------------------------------
+
+    fn dmzi_limits(entries: &[(&str, u8, i32)]) -> crate::solver::model::DmziLimits {
+        entries
+            .iter()
+            .map(|(rw, p, lim)| ((rw.to_string(), *p), *lim))
+            .collect()
+    }
+
+    fn with_railway(mut d: DemandNode, railway: &str) -> DemandNode {
+        d.railway_name = railway.to_string();
+        d
+    }
+
+    fn with_period(mut s: SupplyNode, period: u8) -> SupplyNode {
+        s.supply_period = period;
+        s
+    }
+
+    /// Квота ДМЗИ клиппит назначение: предложение 5, спрос 5, лимит дороги 3.
+    #[test]
+    fn dmzi_quota_clamps_greedy_assignment() {
+        let supply = vec![dummy_supply(5, "A", 0, false)];
+        let demand = vec![with_railway(dummy_demand(5, "B", 0), "МСК")];
+        let arcs = vec![arc(0, 0, 0, "A", "B", 100.0, false)];
+        let limits = dmzi_limits(&[("МСК", 1, 3)]);
+        let r = greedy_initial_solution(&arcs, &supply, &demand, Some(&limits));
+        assert_eq!(r.assigned_cars, 3);
+        assert_eq!(r.unmet_demand, 2);
+        assert_eq!(r.excess_supply, 2);
+    }
+
+    /// Периоды 1 и 10 — раздельные бакеты одной дороги.
+    #[test]
+    fn dmzi_quota_separate_periods() {
+        let supply = vec![
+            with_period(dummy_supply(5, "A", 0, false), 1),
+            with_period(dummy_supply(5, "C", 1, false), 10),
+        ];
+        let demand = vec![with_railway(dummy_demand(10, "B", 0), "МСК")];
+        let arcs = vec![
+            arc(0, 0, 0, "A", "B", 100.0, false),
+            arc(1, 1, 0, "C", "B", 100.0, false),
+        ];
+        let limits = dmzi_limits(&[("МСК", 1, 2), ("МСК", 10, 3)]);
+        let r = greedy_initial_solution(&arcs, &supply, &demand, Some(&limits));
+        let from_p1: i32 = r.assignments.iter().filter(|a| a.s_idx == 0).map(|a| a.quantity).sum();
+        let from_p10: i32 = r.assignments.iter().filter(|a| a.s_idx == 1).map(|a| a.quantity).sum();
+        assert_eq!(from_p1, 2);
+        assert_eq!(from_p10, 3);
+        assert_eq!(r.assigned_cars, 5);
+    }
+
+    /// Квота 2 < порога партии 3 — MIN_BATCH-пара не активируется (поток 0),
+    /// партия не собирается «в обход» квоты ДМЗИ.
+    #[test]
+    fn dmzi_quota_blocks_min_batch_pair_activation() {
+        let b = crate::solver::model::MIN_BATCH_TO_MIDDLE_DEMAND_STATION;
+        let supply = vec![dummy_supply(7, "M", 0, false)];
+        let demand = vec![with_railway(dummy_demand(5, "D", 0), "МСК")];
+        let arcs = vec![arc_b(0, 0, 0, "M", "D", 100.0, b)];
+        let limits = dmzi_limits(&[("МСК", 1, 2)]);
+        let r = greedy_initial_solution(&arcs, &supply, &demand, Some(&limits));
+        assert_eq!(r.assignments.len(), 0, "пара должна быть запрещена квотой ДМЗИ");
+        assert_eq!(r.unmet_demand, 5);
+    }
+
+    /// Дорога без лимита в карте квот не ограничивается.
+    #[test]
+    fn dmzi_quota_ignores_unlisted_railway() {
+        let supply = vec![dummy_supply(5, "A", 0, false)];
+        let demand = vec![with_railway(dummy_demand(5, "B", 0), "ЮВС")];
+        let arcs = vec![arc(0, 0, 0, "A", "B", 100.0, false)];
+        let limits = dmzi_limits(&[("МСК", 1, 1)]);
+        let r = greedy_initial_solution(&arcs, &supply, &demand, Some(&limits));
+        assert_eq!(r.assigned_cars, 5);
+    }
+
+    /// MIP: квота ДМЗИ как жёсткая строка модели — поток на дорогу не превышает лимит.
+    #[test]
+    fn mip_dmzi_quota_enforced() {
+        use std::time::Duration;
+        let supply = vec![dummy_supply(5, "A", 0, false)];
+        let demand = vec![with_railway(dummy_demand(5, "B", 0), "МСК")];
+        let arcs = vec![arc(0, 0, 0, "A", "B", 100.0, false)];
+        let limits = dmzi_limits(&[("МСК", 1, 3)]);
+        let outcome = crate::solver::mip::solve_mip(
+            &arcs,
+            &supply,
+            &demand,
+            Duration::from_secs(10),
+            None,
+            None,
+            None,
+            Some(&limits),
+        );
+        assert!(outcome.has_feasible_solution());
+        let flow = outcome.arc_vals[0].round() as i32;
+        assert_eq!(flow, 3, "поток {} должен быть ограничен квотой 3", flow);
+        assert_eq!(outcome.optim.penalty_cars.round() as i32, 2);
+    }
+
+    /// MIP: периоды 1 и 10 — раздельные бакеты; суммарно закрывается 5 из 10.
+    #[test]
+    fn mip_dmzi_quota_separate_periods() {
+        use std::time::Duration;
+        let supply = vec![
+            with_period(dummy_supply(5, "A", 0, false), 1),
+            with_period(dummy_supply(5, "C", 1, false), 10),
+        ];
+        let demand = vec![with_railway(dummy_demand(10, "B", 0), "МСК")];
+        let arcs = vec![
+            arc(0, 0, 0, "A", "B", 100.0, false),
+            arc(1, 1, 0, "C", "B", 100.0, false),
+        ];
+        let limits = dmzi_limits(&[("МСК", 1, 2), ("МСК", 10, 3)]);
+        let outcome = crate::solver::mip::solve_mip(
+            &arcs,
+            &supply,
+            &demand,
+            Duration::from_secs(10),
+            None,
+            None,
+            None,
+            Some(&limits),
+        );
+        assert!(outcome.has_feasible_solution());
+        assert_eq!(outcome.arc_vals[0].round() as i32, 2);
+        assert_eq!(outcome.arc_vals[1].round() as i32, 3);
+    }
+
+    /// MIP: warm-start из greedy с квотами не отвергается (оба слоя согласованы).
+    #[test]
+    fn mip_dmzi_accepts_greedy_warm_start() {
+        use std::time::Duration;
+        let supply = vec![dummy_supply(5, "A", 0, false)];
+        let demand = vec![with_railway(dummy_demand(5, "B", 0), "МСК")];
+        let arcs = vec![arc(0, 0, 0, "A", "B", 100.0, false)];
+        let limits = dmzi_limits(&[("МСК", 1, 3)]);
+        let greedy = greedy_initial_solution(&arcs, &supply, &demand, Some(&limits));
+        let warm = greedy_to_arc_vals(&greedy, arcs.len());
+        let outcome = crate::solver::mip::solve_mip(
+            &arcs,
+            &supply,
+            &demand,
+            Duration::from_secs(10),
+            Some(&warm),
+            None,
+            None,
+            Some(&limits),
+        );
+        assert!(outcome.has_feasible_solution());
+        assert_eq!(outcome.arc_vals[0].round() as i32, 3);
     }
 
     /// MIP: средняя пара со спросом 5 и дешёвой альтернативой на 2 ваг. — поток
@@ -922,6 +1160,7 @@ mod tests {
             &supply,
             &demand,
             Duration::from_secs(10),
+            None,
             None,
             None,
             None,

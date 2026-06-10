@@ -29,7 +29,7 @@ use highs::{ColProblem, HighsModelStatus, Row, Sense};
 
 use super::greedy::{Assignment, GreedyResult};
 use super::lp::{OptimResult, PENALTY_EXCESS, PENALTY_UNMET};
-use super::model::{PairKey, TaskArc};
+use super::model::{DmziIndex, DmziLimits, PairKey, TaskArc};
 use crate::node::{DemandNode, DemandPurpose, SupplyNode};
 
 /// Ограничение минимальной партии для одной группы дуг [`TaskArc::pair_key`].
@@ -145,9 +145,15 @@ impl MipOutcome {
 ///   — для таких пар в карту кладётся `B_pair = 0`. Для пар вне карты используется
 ///   порог пары из дуг (`TaskArc::pair_min_batch`). `None` = нет переопределений
 ///   (главный MIP запускается именно так).
+/// - `dmzi_limits` — квоты ДМЗИ `(дорога погрузки, период предложения) → лимит`:
+///   суммарный поток по Load-дугам каждого бакета ограничен сверху лимитом
+///   (см. [`DmziIndex`]). `None` = квоты не применяются. В MIP-LNS
+///   ([`super::alns::repair_mip`]) передаются **редуцированные** лимиты
+///   (за вычетом потока внешнего state).
 ///
 /// Возвращает [`MipOutcome`] со статусом HiGHS, MIP-gap и значениями дуговых переменных
 /// в порядке `arcs`.
+#[allow(clippy::too_many_arguments)]
 pub fn solve_mip(
     arcs: &[TaskArc],
     supply: &[SupplyNode],
@@ -156,6 +162,7 @@ pub fn solve_mip(
     warm_start: Option<&[f64]>,
     rel_gap: Option<f64>,
     pair_min_batch_override: Option<&HashMap<PairKey, i32>>,
+    dmzi_limits: Option<&DmziLimits>,
 ) -> MipOutcome {
     // -----------------------------------------------------------------------
     // 1. Сбор групп дуг с ограничением минимальной партии (pair_min_batch > 0).
@@ -249,6 +256,20 @@ pub fn solve_mip(
         pair_upper_rows.push(model.add_row(f64::NEG_INFINITY..=0.0));
     }
 
+    // Строки квот ДМЗИ: Σ x по Load-дугам бакета (дорога погрузки, период) ≤ лимит.
+    let dmzi_index = dmzi_limits
+        .filter(|l| !l.is_empty())
+        .map(|l| DmziIndex::build(arcs, supply, demand, l));
+    let dmzi_rows: Vec<Row> = dmzi_index
+        .as_ref()
+        .map(|idx| {
+            idx.buckets
+                .iter()
+                .map(|(_, limit)| model.add_row(0.0..=*limit as f64))
+                .collect()
+        })
+        .unwrap_or_default();
+
     // Индекс: arc_id → индекс пары в pair_list (если арк участвует в паре).
     let mut arc_to_pair: Vec<Option<usize>> = vec![None; n_arcs];
     for (p_idx, (_, pc)) in pair_list.iter().enumerate() {
@@ -264,14 +285,19 @@ pub fn solve_mip(
 
     // Дуговые переменные — целочисленные, верхняя граница `min(supply, demand)`
     // даёт HiGHS полезную априорную информацию.
-    for arc in arcs {
+    for (a_pos, arc) in arcs.iter().enumerate() {
         let upper = supply[arc.s_idx].car_count.min(demand[arc.d_idx].car_count) as f64;
-        let mut factors: Vec<(Row, f64)> = Vec::with_capacity(4);
+        let mut factors: Vec<(Row, f64)> = Vec::with_capacity(5);
         factors.push((supply_rows[arc.s_idx], 1.0));
         factors.push((demand_rows[arc.d_idx], 1.0));
         if let Some(p) = arc_to_pair[arc.arc_id] {
             factors.push((pair_lower_rows[p], -1.0));
             factors.push((pair_upper_rows[p], 1.0));
+        }
+        if let Some(idx) = &dmzi_index {
+            if let Some(b) = idx.arc_bucket[a_pos] {
+                factors.push((dmzi_rows[b], 1.0));
+            }
         }
         model.add_integer_column(arc.cost, 0.0..=upper, factors);
     }

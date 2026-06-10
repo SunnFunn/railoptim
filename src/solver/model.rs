@@ -161,6 +161,100 @@ impl TaskArc {
 }
 
 // ---------------------------------------------------------------------------
+// Ограничения ДМЗИ (динамическая модель загрузки ж-д инфраструктуры)
+// ---------------------------------------------------------------------------
+
+/// Квоты ДМЗИ: `(нормализованный код дороги погрузки, период предложения 1|10)`
+/// → максимум вагонов, которые можно подослать на дорогу.
+///
+/// Строится из [`crate::data::dmzi::DmziQuotas::to_limits`]:
+/// период 1 — `Normativ` ближайшей даты, период 10 — максимум по горизонту.
+pub type DmziLimits = HashMap<(String, u8), i32>;
+
+/// Индекс квот ДМЗИ по дугам задачи.
+///
+/// Бакет — пара `(дорога погрузки, период предложения)`. Суммарный поток по всем
+/// дугам бакета не должен превышать его лимит. Под квоту попадают **только дуги
+/// на Load-узлы**: промывка не считается подсылом под погрузку.
+#[derive(Debug, Clone)]
+pub struct DmziIndex {
+    /// Бакеты с лимитами; порядок стабильный (сортировка по ключу).
+    pub buckets: Vec<((String, u8), i32)>,
+    /// Позиция дуги в `arcs` → индекс бакета; `None` — дуга вне квот
+    /// (не Load-узел или для дороги нет лимита).
+    pub arc_bucket: Vec<Option<usize>>,
+    /// Ключ бакета → его индекс в `buckets`.
+    pos: HashMap<(String, u8), usize>,
+}
+
+impl DmziIndex {
+    /// Строит индекс для конкретного набора дуг (позиции в `arc_bucket`
+    /// соответствуют позициям в `arcs`).
+    pub fn build(
+        arcs: &[TaskArc],
+        supply: &[SupplyNode],
+        demand: &[DemandNode],
+        limits: &DmziLimits,
+    ) -> Self {
+        let mut buckets: Vec<((String, u8), i32)> = limits
+            .iter()
+            .map(|(key, &limit)| (key.clone(), limit.max(0)))
+            .collect();
+        buckets.sort();
+
+        let pos: HashMap<(String, u8), usize> = buckets
+            .iter()
+            .enumerate()
+            .map(|(i, (key, _))| (key.clone(), i))
+            .collect();
+
+        let arc_bucket: Vec<Option<usize>> = arcs
+            .iter()
+            .map(|arc| {
+                let d = &demand[arc.d_idx];
+                if d.purpose != DemandPurpose::Load {
+                    return None;
+                }
+                let key = (
+                    crate::data::dmzi::normalize_railway(&d.railway_name),
+                    supply[arc.s_idx].supply_period,
+                );
+                pos.get(&key).copied()
+            })
+            .collect();
+
+        Self { buckets, arc_bucket, pos }
+    }
+
+    /// Индекс бакета по дороге погрузки и периоду предложения.
+    pub fn bucket_for(&self, railway: &str, supply_period: u8) -> Option<usize> {
+        self.pos
+            .get(&(crate::data::dmzi::normalize_railway(railway), supply_period))
+            .copied()
+    }
+
+    /// Вектор лимитов в порядке `buckets` (стартовые остатки квот).
+    pub fn limits_vec(&self) -> Vec<i32> {
+        self.buckets.iter().map(|(_, limit)| *limit).collect()
+    }
+
+    /// Использование бакетов по значениям дуговых переменных (порядок `arcs`).
+    pub fn usage_from_arc_vals(&self, arc_vals: &[f64]) -> Vec<i32> {
+        let mut used = vec![0_i32; self.buckets.len()];
+        for (i, &q) in arc_vals.iter().enumerate() {
+            let qi = q.round() as i32;
+            if qi <= 0 {
+                continue;
+            }
+            if let Some(b) = self.arc_bucket[i] {
+                used[b] += qi;
+            }
+        }
+        used
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Построение дуг
 // ---------------------------------------------------------------------------
 

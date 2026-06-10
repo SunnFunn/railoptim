@@ -5,11 +5,10 @@
 //! Из ответа берутся только записи `NormativType == "Ostatok"`.
 //!
 //! Правила свёртки лимитов по дороге (поле `Normativ`):
-//! - **период 1** (вагоны из АПИ, готовы сегодня) — `Normativ` на **ближайшую**
-//!   доступную дату горизонта (обычно текущие сутки; если записи на сегодня нет —
-//!   ближайшая следующая дата);
-//! - **период 10** (дислокация 2–10 суток) — **максимум** `Normativ` по всем
-//!   датам горизонта: вагоны доедут в одну из будущих дат, точная неизвестна.
+//! - **период 1** (вагоны из АПИ, готовы сегодня) — **сумма** `Normativ`
+//!   за первые 3 суток от текущей даты (смещения 0–2);
+//! - **период 10** (дислокация 2–10 суток) — **сумма** `Normativ`
+//!   за 4-е, 5-е и 6-е сутки (смещения 3–5).
 //!
 //! Код дороги — префикс `DMZIRailWayGroup` до `/` (например, `"МСК/ЗНВ"` → `МСК`);
 //! матчится с `DemandNode::railway_name` (дорога погрузки) после [`normalize_railway`].
@@ -27,6 +26,13 @@ use super::client::{ApiClient, ApiEndpoint, ApiError};
 
 /// Горизонт ДМЗИ: `DateEnd = DateBegin + 6` суток (7 дней включительно).
 pub const DMZI_HORIZON_DAYS: i64 = 6;
+
+/// Окно суммирования `Normativ` для периода 1: первые 3 суток
+/// (смещение даты норматива от текущей даты, в сутках).
+const P1_SUM_OFFSET_DAYS: std::ops::RangeInclusive<i64> = 0..=2;
+
+/// Окно суммирования `Normativ` для периода 10: 4-е, 5-е и 6-е сутки.
+const P10_SUM_OFFSET_DAYS: std::ops::RangeInclusive<i64> = 3..=5;
 
 /// Тип подвижного состава: зерновозы.
 pub const DMZI_CAR_KIND_GRAIN: &str = "20";
@@ -61,9 +67,9 @@ struct DmziApiItem {
 /// Свёрнутые квоты ДМЗИ одной дороги.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DmziRailwayQuota {
-    /// Лимит на подсыл вагонов периода 1 (`Normativ` на ближайшую дату горизонта).
+    /// Лимит на подсыл вагонов периода 1: сумма `Normativ` за сутки 1–3.
     pub limit_p1: i32,
-    /// Лимит на подсыл вагонов периода 10 (максимум `Normativ` по датам горизонта).
+    /// Лимит на подсыл вагонов периода 10: сумма `Normativ` за сутки 4–6.
     pub limit_p10: i32,
 }
 
@@ -113,14 +119,13 @@ fn parse_dmzi_date(s: &str) -> Option<NaiveDateTime> {
         })
 }
 
-fn aggregate(items: &[DmziApiItem]) -> DmziQuotas {
-    /// Накопитель по дороге: норматив ближайшей даты и максимум по горизонту.
-    struct Acc {
-        nearest: Option<(NaiveDateTime, i32)>,
-        max: i32,
-    }
-
-    let mut by_railway: HashMap<String, Acc> = HashMap::new();
+/// Сворачивает записи ответа в квоты по дорогам.
+///
+/// Период 1 — сумма `Normativ` за смещения [`P1_SUM_OFFSET_DAYS`] от `today`;
+/// период 10 — сумма за смещения [`P10_SUM_OFFSET_DAYS`]. Записи без распознанной
+/// даты или вне обоих окон не учитываются.
+fn aggregate(items: &[DmziApiItem], today: NaiveDate) -> DmziQuotas {
+    let mut by_railway: HashMap<String, DmziRailwayQuota> = HashMap::new();
     let mut records = 0_usize;
 
     for item in items {
@@ -146,33 +151,29 @@ fn aggregate(items: &[DmziApiItem]) -> DmziQuotas {
         if normativ < 0 {
             continue;
         }
+        let Some(date) = item.date_of_normativ.as_deref().and_then(parse_dmzi_date) else {
+            continue;
+        };
 
-        records += 1;
-        let acc = by_railway.entry(railway).or_insert(Acc { nearest: None, max: 0 });
-        acc.max = acc.max.max(normativ);
-
-        if let Some(date) = item.date_of_normativ.as_deref().and_then(parse_dmzi_date) {
-            // Ближайшая дата; при равных датах — минимальный (консервативный) норматив.
-            let replace = match acc.nearest {
-                None => true,
-                Some((cur_date, cur_n)) => {
-                    date < cur_date || (date == cur_date && normativ < cur_n)
-                }
-            };
-            if replace {
-                acc.nearest = Some((date, normativ));
-            }
+        let offset = (date.date() - today).num_days();
+        let is_p1 = P1_SUM_OFFSET_DAYS.contains(&offset);
+        let is_p10 = P10_SUM_OFFSET_DAYS.contains(&offset);
+        if !is_p1 && !is_p10 {
+            // Вне обоих окон (например, 7-е сутки горизонта) — не учитывается,
+            // запись по дороге не создаётся.
+            continue;
         }
-    }
 
-    let by_railway = by_railway
-        .into_iter()
-        .map(|(railway, acc)| {
-            // Без распознанной даты в записях fallback периода 1 — максимум горизонта.
-            let limit_p1 = acc.nearest.map(|(_, n)| n).unwrap_or(acc.max);
-            (railway, DmziRailwayQuota { limit_p1, limit_p10: acc.max })
-        })
-        .collect();
+        let quota = by_railway
+            .entry(railway)
+            .or_insert(DmziRailwayQuota { limit_p1: 0, limit_p10: 0 });
+        if is_p1 {
+            quota.limit_p1 += normativ;
+        } else {
+            quota.limit_p10 += normativ;
+        }
+        records += 1;
+    }
 
     DmziQuotas { by_railway, records }
 }
@@ -215,7 +216,7 @@ impl ApiClient {
         }
 
         let items = response.json::<Vec<DmziApiItem>>().await?;
-        Ok(aggregate(&items))
+        Ok(aggregate(&items, today.date_naive()))
     }
 }
 
@@ -231,45 +232,69 @@ mod tests {
         serde_json::from_str(json).expect("valid test json")
     }
 
-    /// p1 — норматив ближайшей даты, p10 — максимум по горизонту;
-    /// записи с NormativType != Ostatok отбрасываются (регистр не важен).
+    fn today() -> NaiveDate {
+        NaiveDate::from_ymd_opt(2026, 6, 10).unwrap()
+    }
+
+    /// p1 — сумма Normativ за сутки 1–3 (10–12.06), p10 — сумма за сутки 4–6 (13–15.06);
+    /// 7-е сутки (16.06) не учитываются; записи NormativType != Ostatok отбрасываются
+    /// (регистр не важен).
     #[test]
-    fn aggregate_nearest_and_max() {
+    fn aggregate_sums_by_windows() {
         let items = parse_items(
             r#"[
                 {"DMZIRailWayGroup": "МСК/ЗНВ", "NormativType": "Ostatok",
-                 "DateOfNormativ": "2026-06-12T00:00:00", "Normativ": 40},
-                {"DMZIRailWayGroup": "МСК/ЗНВ", "NormativType": "ostatok",
                  "DateOfNormativ": "2026-06-10T00:00:00", "Normativ": 25},
+                {"DMZIRailWayGroup": "МСК/ЗНВ", "NormativType": "ostatok",
+                 "DateOfNormativ": "2026-06-11T00:00:00", "Normativ": 10},
+                {"DMZIRailWayGroup": "МСК/ЗНВ", "NormativType": "Ostatok",
+                 "DateOfNormativ": "2026-06-12T00:00:00", "Normativ": 5},
+                {"DMZIRailWayGroup": "МСК/ЗНВ", "NormativType": "Ostatok",
+                 "DateOfNormativ": "2026-06-13T00:00:00", "Normativ": 40},
+                {"DMZIRailWayGroup": "МСК/ЗНВ", "NormativType": "Ostatok",
+                 "DateOfNormativ": "2026-06-15T00:00:00", "Normativ": 7},
+                {"DMZIRailWayGroup": "МСК/ЗНВ", "NormativType": "Ostatok",
+                 "DateOfNormativ": "2026-06-16T00:00:00", "Normativ": 999},
                 {"DMZIRailWayGroup": "МСК/ЗНВ", "NormativType": "Plan",
-                 "DateOfNormativ": "2026-06-09T00:00:00", "Normativ": 999},
+                 "DateOfNormativ": "2026-06-10T00:00:00", "Normativ": 999},
                 {"DMZIRailWayGroup": "ЮВС/ЗНВ", "NormativType": "Ostatok",
                  "DateOfNormativ": "2026-06-11T00:00:00", "Normativ": 7}
             ]"#,
         );
-        let q = aggregate(&items);
-        assert_eq!(q.records, 3);
+        let q = aggregate(&items, today());
+        assert_eq!(q.records, 6);
         let msk = q.by_railway.get("МСК").expect("МСК");
-        assert_eq!(msk.limit_p1, 25); // ближайшая дата 10.06
-        assert_eq!(msk.limit_p10, 40); // максимум горизонта
+        assert_eq!(msk.limit_p1, 25 + 10 + 5); // сутки 1–3
+        assert_eq!(msk.limit_p10, 40 + 7); // сутки 4–6 (14.06 нет в данных)
         let yvs = q.by_railway.get("ЮВС").expect("ЮВС");
         assert_eq!(yvs.limit_p1, 7);
-        assert_eq!(yvs.limit_p10, 7);
+        assert_eq!(yvs.limit_p10, 0); // записей на сутки 4–6 нет
     }
 
-    /// Записи без даты учитываются в максимуме (p10); p1 без дат = максимум.
+    /// Записи без распознанной даты не учитываются; дорога только с такими
+    /// записями не получает квоты (не ограничивается).
     #[test]
-    fn aggregate_without_dates_falls_back_to_max() {
+    fn aggregate_skips_undated_records() {
         let items = parse_items(
             r#"[
                 {"DMZIRailWayGroup": "СКВ/ЗНВ", "NormativType": "Ostatok", "Normativ": 12},
                 {"DMZIRailWayGroup": "СКВ/ЗНВ", "NormativType": "Ostatok", "Normativ": 30}
             ]"#,
         );
-        let q = aggregate(&items);
-        let skv = q.by_railway.get("СКВ").expect("СКВ");
-        assert_eq!(skv.limit_p1, 30);
-        assert_eq!(skv.limit_p10, 30);
+        let q = aggregate(&items, today());
+        assert!(q.by_railway.is_empty());
+        assert_eq!(q.records, 0);
+    }
+
+    /// Дорога с записями только вне окон (7-е сутки) не получает квоты.
+    #[test]
+    fn aggregate_skips_out_of_window_railway() {
+        let items = parse_items(
+            r#"[{"DMZIRailWayGroup": "ЗАБ/ЗНВ", "NormativType": "Ostatok",
+                 "DateOfNormativ": "2026-06-16T00:00:00", "Normativ": 50}]"#,
+        );
+        let q = aggregate(&items, today());
+        assert!(!q.by_railway.contains_key("ЗАБ"));
     }
 
     /// to_limits разворачивает квоты в бакеты (дорога, период).
@@ -293,7 +318,7 @@ mod tests {
             r#"[{"DMZIRailWayGroup": " мск ", "NormativType": "Ostatok",
                  "DateOfNormativ": "2026-06-10T00:00:00", "Normativ": 5}]"#,
         );
-        let q = aggregate(&items);
+        let q = aggregate(&items, today());
         assert!(q.by_railway.contains_key("МСК"));
     }
 }

@@ -21,7 +21,7 @@ pub const MIN_BATCH_FROM_MASS_STATION: i32 = 3;
 /// оплачиваются за подачу, а не за вагон. Аналог `_ASSIGN_LOW_BOUND_` из example.py.
 ///
 /// Поток по паре станций должен удовлетворять: `x == 0 || x >= MIN_BATCH_TO_MIDDLE_DEMAND_STATION`.
-pub const MIN_BATCH_TO_MIDDLE_DEMAND_STATION: i32 = 3;
+pub const MIN_BATCH_TO_MIDDLE_DEMAND_STATION: i32 = 2;
 
 /// Минимальное суммарное предложение на станции образования (все периоды),
 /// при котором станция считается **средней** и попадает под ограничение
@@ -32,7 +32,7 @@ pub const MIDDLE_SUPPLY_STATION_MIN_CARS: i32 = 7;
 /// Минимальный суммарный Load-спрос на станции погрузки (без маршрутных отправок),
 /// при котором станция считается **средне-крупной** и попадает под ограничение
 /// [`MIN_BATCH_TO_MIDDLE_DEMAND_STATION`]. Аналог `_DEMAND_SIZE_BOUND_`.
-pub const MIDDLE_DEMAND_STATION_MIN_CARS: i32 = 5;
+pub const MIDDLE_DEMAND_STATION_MIN_CARS: i32 = 10;
 
 /// Минимальный размер партии «станция образования → маршрутные узлы станции погрузки»
 /// (`shipping_type == "Маршрутная"`). Аналог `_ROUTE_LOW_BOUND_` из example.py.

@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use anyhow::Result;
 use railoptim::config::Config;
 use railoptim::data::{self, ApiClient, StationRef};
-use railoptim::node::{CarKind, DemandNode, DemandPurpose, RepairStatus, TariffNode};
+use railoptim::node::{CarKind, DemandNode, DemandPurpose, RepairStatus, ReserveNode, TariffNode};
 use railoptim::{debug,solver};
 
 
@@ -332,6 +332,36 @@ async fn main() -> Result<()> {
     };
 
     // -----------------------------------------------------------------------
+    // 3г. Узлы отстоя (резервы): ёмкости для излишка порожних вагонов.
+    //     Назначаются вторым этапом после основного решения — не конкурируют
+    //     с заявками клиентов. Недоступность АПИ не блокирует прогон.
+    // -----------------------------------------------------------------------
+    let reserve_data: Option<data::ReserveData> = match client.fetch_reserve_nodes().await {
+        Ok(r) if !r.nodes.is_empty() => {
+            println!(
+                "Узлы отстоя (резервы):       {} узлов / ёмкость {} ваг. \
+                 (записей АПИ {}, дублей {}, отфильтровано {})",
+                r.nodes.len(),
+                r.total_capacity(),
+                r.raw_records,
+                r.duplicates,
+                r.filtered,
+            );
+            Some(r)
+        }
+        Ok(_) => {
+            eprintln!("  ВНИМАНИЕ: ответ резервов пуст — излишек не будет назначен в отстой");
+            None
+        }
+        Err(e) => {
+            eprintln!(
+                "  ВНИМАНИЕ: резервы недоступны ({e}) — излишек не будет назначен в отстой"
+            );
+            None
+        }
+    };
+
+    // -----------------------------------------------------------------------
     // 4. Построение дуг транспортной задачи
     // -----------------------------------------------------------------------
     let (arcs, arc_stats) = solver::build_task_arcs(
@@ -654,11 +684,82 @@ async fn main() -> Result<()> {
         .max(0);
 
     // -----------------------------------------------------------------------
+    // 6а. Этап 2: размещение излишка в узлы отстоя (резервы).
+    //     Тарифы запрашиваются от станций излишка (станции дислокации
+    //     порожних supply-узлов) к станциям резервов. ДМЗИ не расходуется.
+    // -----------------------------------------------------------------------
+    let mut reserve_assignments: Vec<solver::ReserveAssignment> = Vec::new();
+    let reserve_nodes: Vec<ReserveNode> = reserve_data
+        .map(|r| r.nodes)
+        .unwrap_or_default();
+    let total_excess: i32 = remaining_supply_vec.iter().map(|&r| r.max(0)).sum();
+    if !reserve_nodes.is_empty() && total_excess > 0 {
+        let excess_from: Vec<StationRef> = opt_supply
+            .iter()
+            .zip(remaining_supply_vec.iter())
+            .filter(|&(_, &rem)| rem > 0)
+            .map(|(s, _)| (s.station_to_code.clone(), s.railway_to.clone()))
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .map(|(code, rw)| StationRef::new(code, rw))
+            .collect();
+        let reserve_refs = data::reserve_station_refs(&reserve_nodes);
+
+        match client.fetch_tariffs(&excess_from, &reserve_refs).await {
+            Ok(items) => {
+                let reserve_tariff_map: HashMap<(String, String), TariffNode> = items
+                    .into_iter()
+                    .map(|t| ((t.station_from_code.clone(), t.station_to_code.clone()), t))
+                    .collect();
+                println!(
+                    "Тарифов до отстоя:           {} (станций излишка {}, станций отстоя {})",
+                    reserve_tariff_map.len(),
+                    excess_from.len(),
+                    reserve_refs.len(),
+                );
+                reserve_assignments = solver::solve_reserve_assignment(
+                    &remaining_supply_vec,
+                    &opt_supply,
+                    &reserve_nodes,
+                    &reserve_tariff_map,
+                );
+            }
+            Err(e) => eprintln!(
+                "  тарифы до отстоя: {e} — излишек остаётся «Затягивание грузовой операции»"
+            ),
+        }
+
+        let placed: i32 = reserve_assignments.iter().map(|a| a.quantity).sum();
+        let used_stations: HashSet<&str> = reserve_assignments
+            .iter()
+            .map(|a| reserve_nodes[a.r_idx].station_code.as_str())
+            .collect();
+        let reserve_cost: f64 = reserve_assignments
+            .iter()
+            .map(|a| a.cost * a.quantity as f64)
+            .sum();
+        println!(
+            "В отстой: {} из {} ваг. излишка → {} станций отстоя, тариф {:.0} руб.; не размещено {} ваг. (нет тарифа / ёмкость исчерпана)",
+            placed,
+            total_excess,
+            used_stations.len(),
+            reserve_cost,
+            total_excess - placed,
+        );
+    } else if total_excess > 0 {
+        println!(
+            "В отстой: пропущено (резервы не загружены), излишек {} ваг. остаётся «Затягивание»",
+            total_excess,
+        );
+    }
+
+    // -----------------------------------------------------------------------
     // 7. Построение выходных записей + сохранение чекпоинта и отправка в АПИ
     // -----------------------------------------------------------------------
-    // Записи по оптимизированным назначениям (Free / NoNumber).
+    // Записи по оптимизированным назначениям (Free / NoNumber) + отстой (этап 2).
     let mut output_records = solver::build_output_records(
         &solution, &arcs, &opt_supply, &demand_lp, &wash_codes, &no_cleaning_roads,
+        &reserve_assignments, &reserve_nodes,
     );
     // Самопроверка баланса: вагоны не должны «исчезать» из отчёта — каждый вагон
     // предложения либо назначен, либо получает «Затягивание грузовой операции».
@@ -769,6 +870,10 @@ async fn main() -> Result<()> {
             "  остаток по периодам предложения: p1={} p10={} прочие={}",
             remaining_supply_p1, remaining_supply_p10, remaining_supply_other
         );
+        let reserve_placed: i32 = reserve_assignments.iter().map(|a| a.quantity).sum();
+        if reserve_placed > 0 {
+            println!("  из них в отстой (этап 2): {} ваг.", reserve_placed);
+        }
     }
     if optim_result.penalty_cars > 1e-4 {
         println!("Неудовл. спрос:       {:.0} ваг. (dummy-предложение)", optim_result.penalty_cars);

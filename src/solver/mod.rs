@@ -4,6 +4,7 @@ pub mod greedy;
 pub mod lp;
 pub mod mip;
 pub mod model;
+pub mod reserve;
 pub mod result;
 
 pub use alns::{AlnsConfig, run_alns};
@@ -22,6 +23,7 @@ pub use model::{
     PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_RUB, WASH_PATH_SURCHARGE_RUB,
     WASH_PROCEDURE_AVG_COST_RUB, build_task_arcs,
 };
+pub use reserve::{solve_reserve_assignment, ReserveAssignment, RESERVE_PLACEMENT_REWARD};
 pub use result::{
     build_assigned_output_records, build_output_records, build_repair_output_records, build_report,
     output_balance, output_records_for_api, save_result, AssignmentRecord, OptimReport,

@@ -33,6 +33,7 @@ pub enum ApiEndpoint {
     Tariffs,
     Output,
     Dmzi,
+    FreeReserves,
 }
 
 impl ApiEndpoint {
@@ -43,6 +44,7 @@ impl ApiEndpoint {
             Self::Tariffs => "GetRailTariffRouteDataTransmission",
             Self::Output  => "DestinationRegistryTransmission",
             Self::Dmzi    => "GetDMZIData",
+            Self::FreeReserves => "GetFreeReserveCapacityData",
         }
     }
 

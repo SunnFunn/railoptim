@@ -819,30 +819,36 @@ mod tests {
         }
     }
 
-    /// Спрос на B только 2 вагона — пара массовой станции не должна открыться (поток 0).
+    /// Спрос на B меньше порога партии — пара массовой станции не должна открыться (поток 0).
     #[test]
     fn mass_pair_forbidden_when_demand_less_than_min_batch() {
+        let b = MIN_BATCH_FROM_MASS_STATION;
+        if b <= 1 {
+            return; // при пороге ≤ 1 спрос b − 1 вырожден — запрещать нечего
+        }
         let supply = vec![
-            dummy_supply(5, "A", 0, true),
+            dummy_supply(b + 2, "A", 0, true),
         ];
         let demand = vec![
-            dummy_demand(2, "B", 0),
+            dummy_demand(b - 1, "B", 0),
         ];
         let arcs = vec![
             arc(0, 0, 0, "A", "B", 100.0, true),
         ];
         let r = greedy_initial_solution(&arcs, &supply, &demand, None);
         assert_eq!(r.assignments.len(), 0);
-        assert_eq!(r.unmet_demand, 2);
+        assert_eq!(r.unmet_demand, b - 1);
     }
 
-    /// Два узла спроса на B по 2 вагона — сумма 4 ≥ 3, активация возможна.
+    /// Два узла спроса на B, каждый меньше порога — сумма ≥ порога, активация возможна.
     #[test]
     fn mass_pair_activates_when_aggregate_demand_ge_min_batch() {
-        let supply = vec![dummy_supply(5, "A", 0, true)];
+        let b = MIN_BATCH_FROM_MASS_STATION;
+        let half = b / 2 + 1; // каждый узел < b (при b ≥ 3), сумма 2·half ≥ b
+        let supply = vec![dummy_supply(2 * half + 1, "A", 0, true)];
         let demand = vec![
-            dummy_demand(2, "B", 0),
-            dummy_demand(2, "B", 1),
+            dummy_demand(half, "B", 0),
+            dummy_demand(half, "B", 1),
         ];
         let arcs = vec![
             arc(0, 0, 0, "A", "B", 10.0, true),
@@ -856,10 +862,11 @@ mod tests {
     /// Две станции погрузки: активация первой пары не должна ломать вторую.
     #[test]
     fn mass_pair_two_destinations() {
-        let supply = vec![dummy_supply(10, "A", 0, true)];
+        let b = MIN_BATCH_FROM_MASS_STATION;
+        let supply = vec![dummy_supply(2 * b + 4, "A", 0, true)];
         let demand = vec![
-            dummy_demand(3, "B", 0),
-            dummy_demand(3, "C", 1),
+            dummy_demand(b, "B", 0),
+            dummy_demand(b, "C", 1),
         ];
         let arcs = vec![
             arc(0, 0, 0, "A", "B", 5.0, true),
@@ -882,15 +889,17 @@ mod tests {
         assert!(sum_c == 0 || sum_c >= MIN_BATCH_FROM_MASS_STATION);
     }
 
-    /// Средняя пара (pair_min_batch=3): спрос 5 на станции D + дешёвая альтернатива
-    /// на 2 ваг. без ограничения. Поток средней пары — 0 или ≥ 3, спрос закрыт полностью.
+    /// Средняя пара (pair_min_batch=B): достижимый спрос на станции D + дешёвая
+    /// альтернатива на 2 ваг. без ограничения. Поток средней пары — 0 или ≥ B,
+    /// спрос закрыт полностью.
     #[test]
     fn middle_pair_flow_zero_or_ge_min_batch() {
         let b = crate::solver::model::MIN_BATCH_TO_MIDDLE_DEMAND_STATION;
-        let supply = vec![dummy_supply(7, "M", 0, false)];
+        let d_big = b.max(2) + 2; // спрос средней станции заведомо ≥ порога
+        let supply = vec![dummy_supply(d_big + 2, "M", 0, false)];
         let demand = vec![
-            dummy_demand(5, "D", 0), // средне-крупная станция спроса
-            dummy_demand(2, "C", 1), // мелкий спрос без ограничения
+            dummy_demand(d_big, "D", 0), // средне-крупная станция спроса
+            dummy_demand(2, "C", 1),     // мелкий спрос без ограничения
         ];
         let arcs = vec![
             arc_b(0, 0, 0, "M", "D", 100.0, b),
@@ -907,26 +916,30 @@ mod tests {
         assert_eq!(r.unmet_demand, 0);
     }
 
-    /// Средняя пара: спрос всего 2 ваг. на станции D — порог 3 недостижим, пара
+    /// Средняя пара: спрос B − 1 ваг. на станции D — порог недостижим, пара
     /// запрещается (поток 0), вагоны не дробятся по одному.
     #[test]
     fn middle_pair_forbidden_when_demand_below_min_batch() {
         let b = crate::solver::model::MIN_BATCH_TO_MIDDLE_DEMAND_STATION;
-        let supply = vec![dummy_supply(7, "M", 0, false)];
-        let demand = vec![dummy_demand(2, "D", 0)];
+        if b <= 1 {
+            return; // при пороге ≤ 1 спрос b − 1 вырожден — запрещать нечего
+        }
+        let supply = vec![dummy_supply(b + 4, "M", 0, false)];
+        let demand = vec![dummy_demand(b - 1, "D", 0)];
         let arcs = vec![arc_b(0, 0, 0, "M", "D", 100.0, b)];
         let r = greedy_initial_solution(&arcs, &supply, &demand, None);
         assert_eq!(r.assignments.len(), 0);
-        assert_eq!(r.unmet_demand, 2);
+        assert_eq!(r.unmet_demand, b - 1);
     }
 
-    /// Маршрутная пара (pair_min_batch=10): спрос 12, предложение 12 —
-    /// поток 0 или ≥ 10.
+    /// Маршрутная пара (pair_min_batch=B): спрос B + 2, предложение B + 2 —
+    /// поток 0 или ≥ B.
     #[test]
     fn route_pair_flow_zero_or_ge_min_batch() {
         let b = crate::solver::model::MIN_BATCH_TO_ROUTE_DEMAND_STATION;
-        let supply = vec![dummy_supply(12, "M", 0, false)];
-        let demand = vec![dummy_demand(12, "D", 0)];
+        let n = b + 2;
+        let supply = vec![dummy_supply(n, "M", 0, false)];
+        let demand = vec![dummy_demand(n, "D", 0)];
         let arcs = vec![arc_b(0, 0, 0, "M", "D", 100.0, b)];
         let r = greedy_initial_solution(&arcs, &supply, &demand, None);
         let sum_d: i32 = r.assignments.iter().map(|a| a.quantity).sum();
@@ -934,30 +947,36 @@ mod tests {
         assert_eq!(r.unmet_demand, 0);
     }
 
-    /// Маршрутная пара: спрос 7 < порога 10 — партия недостижима, поток 0.
+    /// Маршрутная пара: спрос B − 1 < порога B — партия недостижима, поток 0.
     #[test]
     fn route_pair_forbidden_when_demand_below_min_batch() {
         let b = crate::solver::model::MIN_BATCH_TO_ROUTE_DEMAND_STATION;
-        let supply = vec![dummy_supply(12, "M", 0, false)];
-        let demand = vec![dummy_demand(7, "D", 0)];
+        if b <= 1 {
+            return; // при пороге ≤ 1 спрос b − 1 вырожден — запрещать нечего
+        }
+        let supply = vec![dummy_supply(b + 2, "M", 0, false)];
+        let demand = vec![dummy_demand(b - 1, "D", 0)];
         let arcs = vec![arc_b(0, 0, 0, "M", "D", 100.0, b)];
         let r = greedy_initial_solution(&arcs, &supply, &demand, None);
         assert_eq!(r.assignments.len(), 0);
-        assert_eq!(r.unmet_demand, 7);
+        assert_eq!(r.unmet_demand, b - 1);
     }
 
-    /// MIP: маршрутная (B=10) и средняя (B=3) группы на одной станции погрузки.
-    /// Предложение 12: оптимум — маршрутная партия 10, средней группе остаётся 2 < 3,
-    /// поэтому её поток обязан быть 0 (а не 1–2).
+    /// MIP: маршрутная (B_route) и средняя (B_mid) группы на одной станции погрузки.
+    /// Предложение B_route + B_mid − 1: оптимум — маршрутная партия B_route,
+    /// средней группе остаётся B_mid − 1 < B_mid, поэтому её поток обязан быть 0.
     #[test]
     fn mip_separates_route_and_regular_groups_on_same_station() {
         use std::time::Duration;
         let b_route = crate::solver::model::MIN_BATCH_TO_ROUTE_DEMAND_STATION;
         let b_mid = crate::solver::model::MIN_BATCH_TO_MIDDLE_DEMAND_STATION;
-        let supply = vec![dummy_supply(12, "M", 0, false)];
+        if b_mid < 1 || b_route <= b_mid {
+            return; // тест осмыслен, когда маршрутный порог строже среднего
+        }
+        let supply = vec![dummy_supply(b_route + b_mid - 1, "M", 0, false)];
         let demand = vec![
-            dummy_demand(10, "D", 0), // маршрутные узлы станции D
-            dummy_demand(5, "D", 1),  // обычные узлы той же станции D
+            dummy_demand(b_route, "D", 0), // маршрутные узлы станции D
+            dummy_demand(b_mid, "D", 1),   // обычные узлы той же станции D
         ];
         let arcs = vec![
             arc_b(0, 0, 0, "M", "D", 100.0, b_route),
@@ -978,8 +997,8 @@ mod tests {
         let flow_mid = outcome.arc_vals[1].round() as i32;
         assert!(flow_route == 0 || flow_route >= b_route);
         assert!(flow_mid == 0 || flow_mid >= b_mid);
-        // PENALTY_UNMET доминирует: выгоднее закрыть маршрутные 10, чем обычные 5.
-        assert_eq!(flow_route, 10);
+        // PENALTY_UNMET доминирует: выгоднее закрыть маршрутные B_route, чем обычные B_mid.
+        assert_eq!(flow_route, b_route);
         assert_eq!(flow_mid, 0);
     }
 
@@ -1038,18 +1057,21 @@ mod tests {
         assert_eq!(r.assigned_cars, 5);
     }
 
-    /// Квота 2 < порога партии 3 — MIN_BATCH-пара не активируется (поток 0),
+    /// Квота B − 1 < порога партии B — MIN_BATCH-пара не активируется (поток 0),
     /// партия не собирается «в обход» квоты ДМЗИ.
     #[test]
     fn dmzi_quota_blocks_min_batch_pair_activation() {
         let b = crate::solver::model::MIN_BATCH_TO_MIDDLE_DEMAND_STATION;
-        let supply = vec![dummy_supply(7, "M", 0, false)];
-        let demand = vec![with_railway(dummy_demand(5, "D", 0), "МСК")];
+        if b <= 1 {
+            return; // при пороге ≤ 1 квота b − 1 = 0 вырожденна
+        }
+        let supply = vec![dummy_supply(b + 4, "M", 0, false)];
+        let demand = vec![with_railway(dummy_demand(b + 2, "D", 0), "МСК")];
         let arcs = vec![arc_b(0, 0, 0, "M", "D", 100.0, b)];
-        let limits = dmzi_limits(&[("МСК", 1, 2)]);
+        let limits = dmzi_limits(&[("МСК", 1, b - 1)]);
         let r = greedy_initial_solution(&arcs, &supply, &demand, Some(&limits));
         assert_eq!(r.assignments.len(), 0, "пара должна быть запрещена квотой ДМЗИ");
-        assert_eq!(r.unmet_demand, 5);
+        assert_eq!(r.unmet_demand, b + 2);
     }
 
     /// Дорога без лимита в карте квот не ограничивается.

@@ -172,3 +172,27 @@ pub struct TariffNode {
     /// Дата актуальности тарифа.
     pub actual_date: NaiveDateTime,
 }
+
+/// Узел отстоя (резерва): станция + договор + владелец,
+/// ёмкость = `AgreementReserveCapacity`.
+///
+/// Формируется из ответа `GetFreeReserveCapacityData`
+/// (см. [`crate::data::demand_reserves`]). Выступает «спросом» на излишек
+/// порожних вагонов во втором этапе оптимизации
+/// ([`crate::solver::reserve`]).
+#[derive(Debug, Clone)]
+pub struct ReserveNode {
+    /// Порядковый ID узла (с 1).
+    pub r_id: usize,
+    pub station_name: String,
+    pub station_code: String,
+    pub railway_short: String,
+    pub railway_code: Option<String>,
+    pub division: Option<String>,
+    /// Владелец отстоя — грузополучатель (`Customer`) в выходной записи.
+    pub owner: Option<String>,
+    pub owner_okpo: Option<String>,
+    pub agreement_number: Option<String>,
+    /// Свободная ёмкость отстоя, вагонов.
+    pub capacity: i32,
+}

@@ -1,5 +1,6 @@
 pub mod client;
 pub mod demand;
+pub mod demand_reserves;
 pub mod dislocations;
 pub mod dmzi;
 pub mod esr;
@@ -12,6 +13,7 @@ pub mod tariffs;
 pub mod wash;
 
 pub use client::ApiClient;
+pub use demand_reserves::{reserve_station_refs, ReserveData};
 pub use dmzi::{DmziQuotas, DmziRailwayQuota};
 pub use esr::{normalize_esr6, validate_esr6_checksum, EsrClassification, EsrCountryIndex};
 pub use references::{load_no_cleaning_roads, load_wash_product_codes};

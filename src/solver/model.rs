@@ -21,7 +21,7 @@ pub const MIN_BATCH_FROM_MASS_STATION: i32 = 3;
 /// оплачиваются за подачу, а не за вагон. Аналог `_ASSIGN_LOW_BOUND_` из example.py.
 ///
 /// Поток по паре станций должен удовлетворять: `x == 0 || x >= MIN_BATCH_TO_MIDDLE_DEMAND_STATION`.
-pub const MIN_BATCH_TO_MIDDLE_DEMAND_STATION: i32 = 2;
+pub const MIN_BATCH_TO_MIDDLE_DEMAND_STATION: i32 = 3;
 
 /// Минимальное суммарное предложение на станции образования (все периоды),
 /// при котором станция считается **средней** и попадает под ограничение
@@ -32,7 +32,7 @@ pub const MIDDLE_SUPPLY_STATION_MIN_CARS: i32 = 7;
 /// Минимальный суммарный Load-спрос на станции погрузки (без маршрутных отправок),
 /// при котором станция считается **средне-крупной** и попадает под ограничение
 /// [`MIN_BATCH_TO_MIDDLE_DEMAND_STATION`]. Аналог `_DEMAND_SIZE_BOUND_`.
-pub const MIDDLE_DEMAND_STATION_MIN_CARS: i32 = 10;
+pub const MIDDLE_DEMAND_STATION_MIN_CARS: i32 = 5;
 
 /// Минимальный размер партии «станция образования → маршрутные узлы станции погрузки»
 /// (`shipping_type == "Маршрутная"`). Аналог `_ROUTE_LOW_BOUND_` из example.py.
@@ -635,6 +635,19 @@ pub fn collect_pair_min_batch_violations(
 mod tests {
     use super::*;
 
+    // Короткие алиасы констант: размеры узлов в тестах выводятся из них,
+    // чтобы тесты не ломались при настройке порогов.
+    const S_MID: i32 = MIDDLE_SUPPLY_STATION_MIN_CARS;
+    const D_MID: i32 = MIDDLE_DEMAND_STATION_MIN_CARS;
+    const B_MID: i32 = MIN_BATCH_TO_MIDDLE_DEMAND_STATION;
+    const B_ROUTE: i32 = MIN_BATCH_TO_ROUTE_DEMAND_STATION;
+
+    /// Ожидаемый порог дуги на маршрутный узел при данном суммарном предложении станции:
+    /// действует только если станция может собрать маршрутную партию.
+    fn expected_route_batch(supply_total: i32) -> i32 {
+        if supply_total >= B_ROUTE { B_ROUTE } else { 0 }
+    }
+
     fn dummy_supply(count: i32, station_code: &str, period: u8, mass: bool) -> SupplyNode {
         SupplyNode {
             s_id: 0,
@@ -726,166 +739,175 @@ mod tests {
         arcs
     }
 
-    /// Средняя станция предложения (7 ваг.) → средне-крупная станция спроса (5 ваг.):
-    /// дуги получают порог партии MIN_BATCH_TO_MIDDLE_DEMAND_STATION.
+    /// Средняя станция предложения (= S_MID ваг.) → средне-крупная станция спроса
+    /// (= D_MID ваг.): дуги получают порог партии MIN_BATCH_TO_MIDDLE_DEMAND_STATION.
     #[test]
     fn middle_pair_gets_min_batch() {
-        let supply = vec![dummy_supply(7, "S1", 1, false)];
-        let demand = vec![dummy_demand(5, "D1", None)];
+        let supply = vec![dummy_supply(S_MID, "S1", 1, false)];
+        let demand = vec![dummy_demand(D_MID, "D1", None)];
         let arcs = build(&supply, &demand, &[dummy_tariff("S1", "D1")]);
         assert_eq!(arcs.len(), 1);
-        assert_eq!(arcs[0].pair_min_batch, MIN_BATCH_TO_MIDDLE_DEMAND_STATION);
+        assert_eq!(arcs[0].pair_min_batch, B_MID);
     }
 
-    /// Периоды 1 и 10 считаются вместе: 4 + 3 = 7 ваг. → станция средняя.
+    /// Периоды 1 и 10 считаются вместе: сумма частей = S_MID → станция средняя.
     #[test]
     fn middle_supply_counts_periods_together() {
+        let part10 = S_MID / 2;
+        let part1 = S_MID - part10;
         let supply = vec![
-            dummy_supply(4, "S1", 1, false),
-            dummy_supply(3, "S1", 10, false),
+            dummy_supply(part1, "S1", 1, false),
+            dummy_supply(part10, "S1", 10, false),
         ];
-        let demand = vec![dummy_demand(5, "D1", None)];
+        let demand = vec![dummy_demand(D_MID, "D1", None)];
         let arcs = build(&supply, &demand, &[dummy_tariff("S1", "D1")]);
         assert_eq!(arcs.len(), 2);
         for arc in &arcs {
-            assert_eq!(arc.pair_min_batch, MIN_BATCH_TO_MIDDLE_DEMAND_STATION);
+            assert_eq!(arc.pair_min_batch, B_MID);
         }
     }
 
-    /// Станция предложения 6 ваг. (< 7) → ограничения нет.
+    /// Станция предложения S_MID − 1 ваг. → ограничения нет.
     #[test]
     fn small_supply_station_no_min_batch() {
-        let supply = vec![dummy_supply(6, "S1", 1, false)];
-        let demand = vec![dummy_demand(5, "D1", None)];
+        let supply = vec![dummy_supply(S_MID - 1, "S1", 1, false)];
+        let demand = vec![dummy_demand(D_MID, "D1", None)];
         let arcs = build(&supply, &demand, &[dummy_tariff("S1", "D1")]);
         assert_eq!(arcs.len(), 1);
         assert_eq!(arcs[0].pair_min_batch, 0);
     }
 
-    /// Станция спроса 4 ваг. (< 5) → ограничения нет.
+    /// Станция спроса D_MID − 1 ваг. → ограничения нет.
     #[test]
     fn small_demand_station_no_min_batch() {
-        let supply = vec![dummy_supply(7, "S1", 1, false)];
-        let demand = vec![dummy_demand(4, "D1", None)];
+        let supply = vec![dummy_supply(S_MID, "S1", 1, false)];
+        let demand = vec![dummy_demand(D_MID - 1, "D1", None)];
         let arcs = build(&supply, &demand, &[dummy_tariff("S1", "D1")]);
         assert_eq!(arcs.len(), 1);
         assert_eq!(arcs[0].pair_min_batch, 0);
     }
 
-    /// Маршрутная отправка исключается: и из суммы станции, и из ограничения дуги.
+    /// Маршрутная отправка исключается из «среднего» ограничения: на маршрутный узел
+    /// действует только маршрутный порог (если станция может собрать партию), но не B_MID.
     #[test]
     fn route_shipping_excluded_from_middle() {
-        let supply = vec![dummy_supply(7, "S1", 1, false)];
-        let demand = vec![dummy_demand(5, "D1", Some("Маршрутная"))];
+        let supply = vec![dummy_supply(S_MID, "S1", 1, false)];
+        let demand = vec![dummy_demand(D_MID, "D1", Some("Маршрутная"))];
         let arcs = build(&supply, &demand, &[dummy_tariff("S1", "D1")]);
         assert_eq!(arcs.len(), 1);
-        assert_eq!(arcs[0].pair_min_batch, 0);
+        assert_eq!(arcs[0].pair_min_batch, expected_route_batch(S_MID));
     }
 
     /// Немаршрутный узел на станции, где остальной спрос маршрутный: в сумму станции
-    /// входят только немаршрутные узлы (4 < 5 → ограничения нет).
+    /// входят только немаршрутные узлы (D_MID − 1 < D_MID → «среднего» ограничения нет).
     #[test]
     fn route_nodes_not_counted_in_demand_total() {
-        let supply = vec![dummy_supply(7, "S1", 1, false)];
+        let supply = vec![dummy_supply(S_MID, "S1", 1, false)];
         let demand = vec![
-            dummy_demand(4, "D1", None),
-            dummy_demand(10, "D1", Some("Маршрутная")),
+            dummy_demand(D_MID - 1, "D1", None),
+            dummy_demand(B_ROUTE + 2, "D1", Some("Маршрутная")),
         ];
         let arcs = build(&supply, &demand, &[dummy_tariff("S1", "D1")]);
         assert_eq!(arcs.len(), 2);
-        for arc in &arcs {
-            assert_eq!(arc.pair_min_batch, 0);
-        }
+        assert_eq!(arcs[0].pair_min_batch, 0);
+        assert_eq!(arcs[1].pair_min_batch, expected_route_batch(S_MID));
     }
 
     /// Станция массовой выгрузки не считается средней: действует её собственный порог.
     #[test]
     fn mass_station_not_middle() {
-        let supply = vec![dummy_supply(120, "S1", 1, true)];
-        let demand = vec![dummy_demand(5, "D1", None)];
+        let big = 10 * (S_MID + D_MID + B_ROUTE).max(12);
+        let supply = vec![dummy_supply(big, "S1", 1, true)];
+        let demand = vec![dummy_demand(D_MID, "D1", None)];
         let arcs = build(&supply, &demand, &[dummy_tariff("S1", "D1")]);
         assert_eq!(arcs.len(), 1);
         assert_eq!(arcs[0].pair_min_batch, MIN_BATCH_FROM_MASS_STATION);
     }
 
-    /// Маршрутный узел спроса + станция предложения ≥ 10 ваг. → порог партии 10.
+    /// Маршрутный узел спроса + станция предложения ≥ B_ROUTE ваг. → маршрутный порог.
     /// Размер маршрутного спроса роли не играет (в example.py route-станции не фильтруются).
     #[test]
     fn route_pair_gets_min_batch() {
-        let supply = vec![dummy_supply(10, "S1", 1, false)];
-        let demand = vec![dummy_demand(12, "D1", Some("Маршрутная"))];
+        let supply = vec![dummy_supply(B_ROUTE, "S1", 1, false)];
+        let demand = vec![dummy_demand(B_ROUTE + 2, "D1", Some("Маршрутная"))];
         let arcs = build(&supply, &demand, &[dummy_tariff("S1", "D1")]);
         assert_eq!(arcs.len(), 1);
-        assert_eq!(arcs[0].pair_min_batch, MIN_BATCH_TO_ROUTE_DEMAND_STATION);
+        assert_eq!(arcs[0].pair_min_batch, B_ROUTE);
     }
 
-    /// Станция предложения 9 ваг. (< 10) не может собрать маршрутную партию —
+    /// Станция предложения B_ROUTE − 1 ваг. не может собрать маршрутную партию —
     /// её дуги на маршрутные узлы без ограничения (example.py: s_route_stations_filtered).
     #[test]
     fn route_pair_small_supply_station_no_constraint() {
-        let supply = vec![dummy_supply(9, "S1", 1, false)];
-        let demand = vec![dummy_demand(12, "D1", Some("Маршрутная"))];
+        let supply = vec![dummy_supply(B_ROUTE - 1, "S1", 1, false)];
+        let demand = vec![dummy_demand(B_ROUTE + 2, "D1", Some("Маршрутная"))];
         let arcs = build(&supply, &demand, &[dummy_tariff("S1", "D1")]);
         assert_eq!(arcs.len(), 1);
         assert_eq!(arcs[0].pair_min_batch, 0);
     }
 
-    /// Периоды 1 и 10 считаются вместе и для маршрутного порога: 6 + 4 = 10 ваг.
+    /// Периоды 1 и 10 считаются вместе и для маршрутного порога: сумма частей = B_ROUTE.
     #[test]
     fn route_supply_counts_periods_together() {
+        let part10 = B_ROUTE / 2;
+        let part1 = B_ROUTE - part10;
         let supply = vec![
-            dummy_supply(6, "S1", 1, false),
-            dummy_supply(4, "S1", 10, false),
+            dummy_supply(part1, "S1", 1, false),
+            dummy_supply(part10, "S1", 10, false),
         ];
-        let demand = vec![dummy_demand(15, "D1", Some("Маршрутная"))];
+        let demand = vec![dummy_demand(B_ROUTE + 5, "D1", Some("Маршрутная"))];
         let arcs = build(&supply, &demand, &[dummy_tariff("S1", "D1")]);
         assert_eq!(arcs.len(), 2);
         for arc in &arcs {
-            assert_eq!(arc.pair_min_batch, MIN_BATCH_TO_ROUTE_DEMAND_STATION);
+            assert_eq!(arc.pair_min_batch, B_ROUTE);
         }
     }
 
     /// Массовая станция предложения на маршрутный узел: действует маршрутный порог
-    /// (10 строже 3; в example.py route-секция не исключает массовые станции).
+    /// (в example.py route-секция не исключает массовые станции).
     #[test]
     fn mass_supply_to_route_demand_gets_route_batch() {
-        let supply = vec![dummy_supply(120, "S1", 1, true)];
-        let demand = vec![dummy_demand(15, "D1", Some("Маршрутная"))];
+        let big = 10 * (S_MID + D_MID + B_ROUTE).max(12);
+        let supply = vec![dummy_supply(big, "S1", 1, true)];
+        let demand = vec![dummy_demand(B_ROUTE + 5, "D1", Some("Маршрутная"))];
         let arcs = build(&supply, &demand, &[dummy_tariff("S1", "D1")]);
         assert_eq!(arcs.len(), 1);
-        assert_eq!(arcs[0].pair_min_batch, MIN_BATCH_TO_ROUTE_DEMAND_STATION);
+        assert_eq!(arcs[0].pair_min_batch, B_ROUTE);
     }
 
     /// Маршрутные и немаршрутные узлы одной станции погрузки — разные группы
-    /// с разными порогами (10 и 3), pair_key их различает.
+    /// с разными порогами (B_ROUTE и B_MID), pair_key их различает.
     #[test]
     fn mixed_route_and_regular_demand_on_same_station() {
-        let supply = vec![dummy_supply(12, "S1", 1, false)];
+        // Предложение покрывает оба порога отбора: и маршрутный, и «средний».
+        let supply = vec![dummy_supply(B_ROUTE.max(S_MID) + 2, "S1", 1, false)];
         let demand = vec![
-            dummy_demand(10, "D1", Some("Маршрутная")),
-            dummy_demand(5, "D1", None),
+            dummy_demand(B_ROUTE, "D1", Some("Маршрутная")),
+            dummy_demand(D_MID, "D1", None),
         ];
         let arcs = build(&supply, &demand, &[dummy_tariff("S1", "D1")]);
         assert_eq!(arcs.len(), 2);
-        assert_eq!(arcs[0].pair_min_batch, MIN_BATCH_TO_ROUTE_DEMAND_STATION);
-        assert_eq!(arcs[1].pair_min_batch, MIN_BATCH_TO_MIDDLE_DEMAND_STATION);
-        assert_ne!(arcs[0].pair_key(), arcs[1].pair_key());
+        assert_eq!(arcs[0].pair_min_batch, B_ROUTE);
+        assert_eq!(arcs[1].pair_min_batch, B_MID);
+        if B_ROUTE != B_MID {
+            assert_ne!(arcs[0].pair_key(), arcs[1].pair_key());
+        }
     }
 
     /// collect_pair_min_batch_violations ловит поток 0 < total < B на средней паре.
     #[test]
     fn violations_detected_for_middle_pair() {
-        let supply = vec![dummy_supply(7, "S1", 1, false)];
-        let demand = vec![dummy_demand(5, "D1", None)];
+        if B_MID <= 1 {
+            return; // при пороге ≤ 1 нарушение 0 < x < B невозможно
+        }
+        let supply = vec![dummy_supply(S_MID, "S1", 1, false)];
+        let demand = vec![dummy_demand(D_MID, "D1", None)];
         let arcs = build(&supply, &demand, &[dummy_tariff("S1", "D1")]);
 
-        let v = collect_pair_min_batch_violations([(0_usize, 2_i32)].into_iter(), &arcs);
-        assert_eq!(
-            v,
-            vec![("S1".to_string(), "D1".to_string(), MIN_BATCH_TO_MIDDLE_DEMAND_STATION)]
-        );
+        let v = collect_pair_min_batch_violations([(0_usize, B_MID - 1)].into_iter(), &arcs);
+        assert_eq!(v, vec![("S1".to_string(), "D1".to_string(), B_MID)]);
 
-        let ok = collect_pair_min_batch_violations([(0_usize, 3_i32)].into_iter(), &arcs);
+        let ok = collect_pair_min_batch_violations([(0_usize, B_MID)].into_iter(), &arcs);
         assert!(ok.is_empty());
     }
 }

@@ -13,7 +13,11 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use crate::node::{DemandNode, DemandPurpose, SupplyNode, TariffNode};
 
 use super::lp::PENALTY_UNMET;
-use super::model::{classify_pair, DmziIndex, DmziLimits, PairKey, PairOutcome, TaskArc};
+use super::model::{
+    classify_pair, DmziIndex, DmziLimits, PairKey, PairOutcome, TaskArc,
+    MIN_BATCH_FROM_MASS_STATION, MIN_BATCH_TO_MIDDLE_DEMAND_STATION,
+    MIN_BATCH_TO_ROUTE_DEMAND_STATION,
+};
 
 /// Категория причины, по которой вагоны узла предложения остались нераспределёнными.
 ///
@@ -207,7 +211,21 @@ pub fn diagnose_excess_supply(
                 continue;
             }
 
-            // Load-дуга с rem>0: проверяем ограничение минимальной партии (pair_min_batch > 0).
+            // Квота ДМЗИ — жёсткий потолок дороги, проверяется ПЕРВОЙ. Иначе дуга,
+            // одновременно «ниже партии» и на исчерпанной дороге, ложно
+            // приписывается MIN_BATCH, хотя реально её держит инфраструктура.
+            if let Some((idx, used)) = &dmzi {
+                if let Some(b) = idx.arc_bucket[arc_id] {
+                    if used[b] >= idx.buckets[b].1 {
+                        load_dmzi_blocked.push(arc_id);
+                        dmzi_buckets.insert(b);
+                        continue;
+                    }
+                }
+            }
+
+            // Ограничение минимальной партии (на дороге ещё есть свободная квота ДМЗИ,
+            // значит держит именно партия, а не инфраструктура).
             if arc.has_pair_min_batch() {
                 let b = arc.pair_min_batch;
                 let key = arc.pair_key();
@@ -225,17 +243,6 @@ pub fn diagnose_excess_supply(
                         .and_modify(|e| { e.0 = flow; e.1 = e.1.max(add_potential); })
                         .or_insert((flow, add_potential));
                     continue;
-                }
-            }
-
-            // Квота ДМЗИ бакета дуги исчерпана — дуга недоступна решателю.
-            if let Some((idx, used)) = &dmzi {
-                if let Some(b) = idx.arc_bucket[arc_id] {
-                    if used[b] >= idx.buckets[b].1 {
-                        load_dmzi_blocked.push(arc_id);
-                        dmzi_buckets.insert(b);
-                        continue;
-                    }
                 }
             }
 
@@ -576,6 +583,14 @@ pub fn diagnose_unmet_demand(
         e.0 += 1; e.1 += rem;
     };
 
+    // Разбивка MIN_BATCH-узлов по самому низкому достижимому порогу партии:
+    // показывает, какому классу станций смягчение MIN_BATCH реально помогло бы.
+    // Учитываются только дуги на дорогах со свободной квотой ДМЗИ (проверка выше),
+    // поэтому это вагоны, которые держит именно партия, а не инфраструктура.
+    let mut mb_middle_cars = 0_i32; // достижим порог middle (3) → смягчение middle поможет
+    let mut mb_mass_cars = 0_i32;   // минимальный порог — массовая выгрузка (5)
+    let mut mb_route_cars = 0_i32;  // минимальный порог — маршрутная отправка (10)
+
     for &d_idx in &unmet_nodes {
         let d = &demand[d_idx];
         let rem = rem_demand[d_idx];
@@ -604,7 +619,21 @@ pub fn diagnose_unmet_demand(
                 continue;
             }
 
-            // Ограничение минимальной партии по паре (supply_station, demand_station).
+            // Квота ДМЗИ — жёсткий потолок дороги, проверяется ПЕРВОЙ. Иначе дуга,
+            // одновременно «ниже партии» и на исчерпанной дороге, ложно
+            // приписывается MIN_BATCH, хотя реально её держит инфраструктура.
+            if let Some((idx, used)) = &dmzi {
+                if let Some(b) = idx.arc_bucket[arc_id] {
+                    if used[b] >= idx.buckets[b].1 {
+                        dmzi_blocked.push(arc_id);
+                        dmzi_buckets.insert(b);
+                        continue;
+                    }
+                }
+            }
+
+            // Ограничение минимальной партии (на дороге ещё есть свободная квота ДМЗИ,
+            // значит держит именно партия, а не инфраструктура).
             if arc.has_pair_min_batch() {
                 let b = arc.pair_min_batch;
                 let key = arc.pair_key();
@@ -622,17 +651,6 @@ pub fn diagnose_unmet_demand(
                         .and_modify(|e| { e.0 = flow; e.1 = e.1.max(add_potential); })
                         .or_insert((flow, add_potential));
                     continue;
-                }
-            }
-
-            // Квота ДМЗИ бакета дуги исчерпана.
-            if let Some((idx, used)) = &dmzi {
-                if let Some(b) = idx.arc_bucket[arc_id] {
-                    if used[b] >= idx.buckets[b].1 {
-                        dmzi_blocked.push(arc_id);
-                        dmzi_buckets.insert(b);
-                        continue;
-                    }
                 }
             }
 
@@ -658,6 +676,15 @@ pub fn diagnose_unmet_demand(
                 no_tariff, bad_type, dirty_etsng, bad_period,
             }
         } else if feasible.is_empty() && !min_batch_blocked.is_empty() {
+            // Класс по самому низкому достижимому порогу: его смягчение помогло бы.
+            let min_b = min_batch_pairs.keys().map(|(_, _, b)| *b).min().unwrap_or(0);
+            if min_b == MIN_BATCH_TO_ROUTE_DEMAND_STATION {
+                mb_route_cars += rem;
+            } else if min_b == MIN_BATCH_FROM_MASS_STATION {
+                mb_mass_cars += rem;
+            } else {
+                mb_middle_cars += rem;
+            }
             UnmetCause::MinBatchDeadlock {
                 pairs: min_batch_pairs
                     .into_iter()
@@ -783,29 +810,54 @@ pub fn diagnose_unmet_demand(
     // Сводка.
     println!();
     println!("  СВОДКА ПО ПРИЧИНАМ:");
-    let mut unclosable_cars = 0_i32;
-    let mut closable_cars = 0_i32;
+    let cars_for = |key: &str| cause_stats.get(key).map(|(_, c)| *c).unwrap_or(0);
     for (cause, (n_nodes, n_cars)) in &cause_stats {
         let label = match *cause {
             "no_arcs"            => "нет допустимых дуг (структурно)",
             "sources_exhausted"  => "источники предложения исчерпаны",
-            "min_batch_deadlock" => "MIN_BATCH-тупик",
-            "dmzi_quota"         => "квота ДМЗИ исчерпана",
+            "min_batch_deadlock" => "MIN_BATCH-тупик (квота ДМЗИ ещё есть)",
+            "dmzi_quota"         => "квота ДМЗИ исчерпана (инфраструктура)",
             "penalty_cheaper"    => "штраф unmet < стоимости дуг",
             "unexpected"         => "дуги есть, но не использованы",
             _                    => cause,
         };
-        if *cause == "no_arcs" {
-            unclosable_cars += *n_cars;
-        } else {
-            closable_cars += *n_cars;
-        }
-        println!("    {:35} узлов: {:>3}, вагонов: {:>4}", label, n_nodes, n_cars);
+        println!("    {:38} узлов: {:>3}, вагонов: {:>4}", label, n_nodes, n_cars);
     }
+
+    // Разбивка MIN_BATCH-тупика по классу самого низкого порога: показывает, какому
+    // классу станций смягчение партии реально помогло бы (на этих дорогах квота ДМЗИ
+    // ещё не исчерпана, иначе узел попал бы в категорию ДМЗИ).
+    let mb_total = cars_for("min_batch_deadlock");
+    if mb_total > 0 {
+        println!(
+            "      из них держит партия по классам: middle (порог {}) {} ваг.; массовая (порог {}) {} ваг.; маршрутная (порог {}) {} ваг.",
+            MIN_BATCH_TO_MIDDLE_DEMAND_STATION, mb_middle_cars,
+            MIN_BATCH_FROM_MASS_STATION, mb_mass_cars,
+            MIN_BATCH_TO_ROUTE_DEMAND_STATION, mb_route_cars,
+        );
+    }
+
+    let unreachable = cars_for("no_arcs");
+    let dmzi_capped = cars_for("dmzi_quota");
+    let other = cars_for("sources_exhausted") + cars_for("penalty_cheaper") + cars_for("unexpected");
+
     println!();
+    println!("  ЗАКРЫВАЕМОСТЬ (по реальному связывающему ограничению):");
     println!(
-        "  ЗАКРЫВАЕМОСТЬ: структурно недостижимо {} ваг. (нет дуг — нужны новые тарифы/смягчение фильтров); потенциально закрываемо {} ваг. (партия / ДМЗИ / конкуренция / экономика штрафа).",
-        unclosable_cars, closable_cars,
+        "    структурно недостижимо (нет дуг):          {:>4} ваг.  — нужны новые тарифы / смягчение жёстких фильтров",
+        unreachable,
+    );
+    println!(
+        "    упёрто в квоту ДМЗИ (инфраструктура):       {:>4} ваг.  — поможет только повышение квоты на дороге",
+        dmzi_capped,
+    );
+    println!(
+        "    держит MIN_BATCH (квота ДМЗИ ещё есть):     {:>4} ваг.  — поможет смягчение партии (middle {} / масс. {} / маршр. {})",
+        mb_total, mb_middle_cars, mb_mass_cars, mb_route_cars,
+    );
+    println!(
+        "    прочее (конкуренция / экономика штрафа):    {:>4} ваг.",
+        other,
     );
     println!("--------------------------------");
 }

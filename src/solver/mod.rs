@@ -8,7 +8,7 @@ pub mod reserve;
 pub mod result;
 
 pub use alns::{AlnsConfig, run_alns};
-pub use diagnose::diagnose_excess_supply;
+pub use diagnose::{diagnose_excess_supply, diagnose_unmet_demand};
 pub use greedy::{greedy_initial_solution, greedy_to_arc_vals, print_greedy_result};
 pub use lp::print_balance;
 pub use mip::{

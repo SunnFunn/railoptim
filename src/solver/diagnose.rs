@@ -8,12 +8,12 @@
 //!
 //! Функция не меняет состояние — только печатает отчёт в stdout.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-use crate::node::{DemandNode, DemandPurpose, SupplyNode};
+use crate::node::{DemandNode, DemandPurpose, SupplyNode, TariffNode};
 
 use super::lp::PENALTY_UNMET;
-use super::model::{DmziIndex, DmziLimits, PairKey, TaskArc};
+use super::model::{classify_pair, DmziIndex, DmziLimits, PairKey, PairOutcome, TaskArc};
 
 /// Категория причины, по которой вагоны узла предложения остались нераспределёнными.
 ///
@@ -417,4 +417,395 @@ pub fn diagnose_excess_supply(
         println!("    {:35} узлов: {:>3}, вагонов: {:>4}", label, n_nodes, n_cars);
     }
     println!("---------------------------------");
+}
+
+/// Категория причины, по которой узел спроса на погрузку (`Load`) остался незакрытым.
+///
+/// Зеркальна [`ExcessCause`]: там разбирается, почему вагон **стоит**, здесь —
+/// почему заявку **некем закрыть**. Ключевое деление: [`NoFeasibleArcs`] —
+/// структурно недостижимо (нет дуг, никакая настройка солвера не поможет);
+/// остальные причины означают, что заявка закрываема в принципе, но упирается
+/// в партийность, квоту ДМЗИ, конкуренцию за предложение или экономику штрафа.
+///
+/// [`NoFeasibleArcs`]: UnmetCause::NoFeasibleArcs
+#[derive(Debug)]
+enum UnmetCause {
+    /// Ни одной допустимой дуги в узел нет — закрыть текущими данными невозможно.
+    /// Разбивка показывает, на каком жёстком фильтре отброшены пары со **всеми**
+    /// узлами предложения (сумма = `supply_nodes_total`).
+    NoFeasibleArcs {
+        supply_nodes_total: usize,
+        no_tariff: usize,
+        bad_type: usize,
+        dirty_etsng: usize,
+        bad_period: usize,
+    },
+
+    /// Дуги есть, но все узлы-источники предложения исчерпаны (`rem_supply == 0`):
+    /// совместимые вагоны ушли на другие (более выгодные) заявки. С учётом
+    /// глобального профицита это прямая конкуренция за ограниченное совместимое предложение.
+    AllSourcesExhausted {
+        arc_count: usize,
+    },
+
+    /// Все дуги со свободным предложением упираются в ограничение минимальной партии.
+    MinBatchDeadlock {
+        pairs: Vec<(String, String, i32, i32, i32)>, // (ss, ds, current_flow, potential_add, min_batch)
+    },
+
+    /// Все дуги со свободным предложением упираются в исчерпанную квоту ДМЗИ.
+    DmziQuotaExhausted {
+        buckets: Vec<(String, u8, i32, i32)>, // (дорога, период, used, limit)
+    },
+
+    /// Есть дуги со свободным предложением, но их мин. стоимость ≥ `PENALTY_UNMET`:
+    /// MIP правильно предпочёл штраф unmet дорогой маршрутизации (закрываемо
+    /// физически, но не экономически при текущем штрафе).
+    PenaltyCheaperThanArcs {
+        feasible_arcs_count: usize,
+        min_arc_cost_per_wagon: f64,
+    },
+
+    /// Есть дуги со свободным предложением дешевле `PENALTY_UNMET`, но не задействованы.
+    /// Подозрительно при доказанном оптимуме — обычно каскадный эффект `MIN_BATCH`
+    /// на соседних парах.
+    UnexpectedNotUsed {
+        feasible_arcs_count: usize,
+        min_arc_cost_per_wagon: f64,
+        top_sources: Vec<(String, f64, i32)>, // (supply_station, cost, rem_supply)
+    },
+}
+
+/// Печатает отчёт по незакрытому спросу на погрузку (`DemandPurpose::Load`).
+///
+/// Зеркало [`diagnose_excess_supply`]: для каждого узла спроса с `rem_demand > 0`
+/// объясняет, почему ни один вагон не дошёл. Главный вывод — деление остатка на
+/// «структурно недостижимо» (нет дуг) и «потенциально закрываемо» (партия / ДМЗИ /
+/// конкуренция), что показывает реальный потолок покрытия.
+///
+/// `tariffs` / `wash_codes` / `no_cleaning_roads` / `wash_tariffs` нужны для
+/// структурной разбивки узлов без дуг через [`classify_pair`].
+#[allow(clippy::too_many_arguments)]
+pub fn diagnose_unmet_demand(
+    arcs: &[TaskArc],
+    arc_vals: &[f64],
+    supply: &[SupplyNode],
+    demand: &[DemandNode],
+    tariffs: &[TariffNode],
+    wash_codes: &HashSet<String>,
+    no_cleaning_roads: &HashSet<String>,
+    wash_tariffs: &HashMap<(String, String), TariffNode>,
+    dmzi_limits: Option<&DmziLimits>,
+) {
+    if arcs.len() != arc_vals.len() {
+        eprintln!(
+            "diagnose_unmet_demand: размеры arcs ({}) и arc_vals ({}) не совпадают — диагностика пропущена.",
+            arcs.len(), arc_vals.len()
+        );
+        return;
+    }
+
+    // 1. Агрегируем потоки и считаем остатки.
+    let mut sent = vec![0_i32; supply.len()];
+    let mut recv = vec![0_i32; demand.len()];
+    for (arc, &q) in arcs.iter().zip(arc_vals.iter()) {
+        let qi = q.round() as i32;
+        if qi <= 0 { continue; }
+        sent[arc.s_idx] += qi;
+        recv[arc.d_idx] += qi;
+    }
+    let rem_supply: Vec<i32> = supply.iter().enumerate()
+        .map(|(i, s)| s.car_count - sent[i])
+        .collect();
+    let rem_demand: Vec<i32> = demand.iter().enumerate()
+        .map(|(i, d)| d.car_count - recv[i])
+        .collect();
+
+    // 2. Текущий поток по группам с ограничением минимальной партии.
+    let mut pair_flow: HashMap<PairKey, i32> = HashMap::new();
+    for (arc, &q) in arcs.iter().zip(arc_vals.iter()) {
+        if !arc.has_pair_min_batch() { continue; }
+        let qi = q.round() as i32;
+        if qi <= 0 { continue; }
+        *pair_flow.entry(arc.pair_key()).or_insert(0) += qi;
+    }
+
+    // 2а. Квоты ДМЗИ: индекс бакетов и их использование решением.
+    let dmzi: Option<(DmziIndex, Vec<i32>)> = dmzi_limits
+        .filter(|l| !l.is_empty())
+        .map(|l| {
+            let idx = DmziIndex::build(arcs, supply, demand, l);
+            let used = idx.usage_from_arc_vals(arc_vals);
+            (idx, used)
+        });
+
+    // 3. Незакрытые узлы спроса на погрузку.
+    let unmet_nodes: Vec<usize> = demand.iter().enumerate()
+        .filter(|(i, d)| d.purpose == DemandPurpose::Load && rem_demand[*i] > 0)
+        .map(|(i, _)| i)
+        .collect();
+
+    if unmet_nodes.is_empty() {
+        println!("--- ДИАГНОСТИКА UNMET DEMAND ---");
+        println!("Незакрытого спроса на погрузку нет — все Load-заявки удовлетворены.");
+        println!("--------------------------------");
+        return;
+    }
+
+    let total_unmet: i32 = unmet_nodes.iter().map(|&i| rem_demand[i]).sum();
+    println!(
+        "--- ДИАГНОСТИКА UNMET DEMAND ({} ваг. в {} узлах) ---",
+        total_unmet, unmet_nodes.len()
+    );
+
+    // Индекс дуг по узлу спроса.
+    let mut arcs_by_demand: HashMap<usize, Vec<usize>> = HashMap::new();
+    for arc in arcs {
+        arcs_by_demand.entry(arc.d_idx).or_default().push(arc.arc_id);
+    }
+
+    // Индекс тарифов погрузки — для структурной разбивки узлов без дуг.
+    let tariff_index: HashMap<(&str, &str), &TariffNode> = tariffs
+        .iter()
+        .map(|t| ((t.station_from_code.as_str(), t.station_to_code.as_str()), t))
+        .collect();
+
+    let mut cause_stats: BTreeMap<&'static str, (usize, i32)> = BTreeMap::new();
+    let add_stat = |key: &'static str, rem: i32, stats: &mut BTreeMap<&'static str, (usize, i32)>| {
+        let e = stats.entry(key).or_insert((0, 0));
+        e.0 += 1; e.1 += rem;
+    };
+
+    for &d_idx in &unmet_nodes {
+        let d = &demand[d_idx];
+        let rem = rem_demand[d_idx];
+
+        let node_arcs = arcs_by_demand
+            .get(&d_idx)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[]);
+
+        // Разбиваем входящие дуги по статусу источника предложения.
+        let mut feasible: Vec<usize> = Vec::new();          // источник свободен, не заблок.
+        let mut min_batch_blocked: Vec<usize> = Vec::new();
+        let mut dmzi_blocked: Vec<usize> = Vec::new();
+        let mut source_exhausted = 0_usize;
+
+        let mut min_arc_cost = f64::INFINITY;
+        let mut min_batch_pairs: HashMap<PairKey, (i32, i32)> = HashMap::new();
+        let mut dmzi_buckets: BTreeSet<usize> = BTreeSet::new();
+
+        for &arc_id in node_arcs {
+            let arc = &arcs[arc_id];
+            let s_rem = rem_supply[arc.s_idx];
+
+            if s_rem <= 0 {
+                source_exhausted += 1;
+                continue;
+            }
+
+            // Ограничение минимальной партии по паре (supply_station, demand_station).
+            if arc.has_pair_min_batch() {
+                let b = arc.pair_min_batch;
+                let key = arc.pair_key();
+                let flow = pair_flow.get(&key).copied().unwrap_or(0);
+                let add_potential = s_rem.min(rem);
+                let blocked = if flow == 0 {
+                    add_potential < b
+                } else {
+                    flow < b
+                };
+                if blocked {
+                    min_batch_blocked.push(arc_id);
+                    min_batch_pairs
+                        .entry(key)
+                        .and_modify(|e| { e.0 = flow; e.1 = e.1.max(add_potential); })
+                        .or_insert((flow, add_potential));
+                    continue;
+                }
+            }
+
+            // Квота ДМЗИ бакета дуги исчерпана.
+            if let Some((idx, used)) = &dmzi {
+                if let Some(b) = idx.arc_bucket[arc_id] {
+                    if used[b] >= idx.buckets[b].1 {
+                        dmzi_blocked.push(arc_id);
+                        dmzi_buckets.insert(b);
+                        continue;
+                    }
+                }
+            }
+
+            feasible.push(arc_id);
+            if arc.cost < min_arc_cost { min_arc_cost = arc.cost; }
+        }
+
+        let cause = if node_arcs.is_empty() {
+            // Структурный разбор: почему пара с каждым узлом предложения отброшена.
+            let (mut no_tariff, mut bad_type, mut dirty_etsng, mut bad_period) = (0, 0, 0, 0);
+            for s in supply.iter() {
+                match classify_pair(s, d, &tariff_index, wash_codes, no_cleaning_roads, wash_tariffs) {
+                    // Feasible здесь невозможен: иначе дуга была бы построена.
+                    PairOutcome::Feasible { .. } => {}
+                    PairOutcome::NoTariff => no_tariff += 1,
+                    PairOutcome::BadType => bad_type += 1,
+                    PairOutcome::DirtyEtsngMismatch => dirty_etsng += 1,
+                    PairOutcome::BadPeriod => bad_period += 1,
+                }
+            }
+            UnmetCause::NoFeasibleArcs {
+                supply_nodes_total: supply.len(),
+                no_tariff, bad_type, dirty_etsng, bad_period,
+            }
+        } else if feasible.is_empty() && !min_batch_blocked.is_empty() {
+            UnmetCause::MinBatchDeadlock {
+                pairs: min_batch_pairs
+                    .into_iter()
+                    .map(|((ss, ds, b), (f, p))| (ss, ds, f, p, b))
+                    .collect(),
+            }
+        } else if feasible.is_empty() && !dmzi_blocked.is_empty() {
+            let (idx, used) = dmzi.as_ref().expect("dmzi_buckets непусто только при Some");
+            UnmetCause::DmziQuotaExhausted {
+                buckets: dmzi_buckets
+                    .iter()
+                    .map(|&b| {
+                        let ((rw, period), limit) = &idx.buckets[b];
+                        (rw.clone(), *period, used[b], *limit)
+                    })
+                    .collect(),
+            }
+        } else if feasible.is_empty() {
+            UnmetCause::AllSourcesExhausted { arc_count: source_exhausted }
+        } else if min_arc_cost >= PENALTY_UNMET {
+            UnmetCause::PenaltyCheaperThanArcs {
+                feasible_arcs_count: feasible.len(),
+                min_arc_cost_per_wagon: min_arc_cost,
+            }
+        } else {
+            let mut top: Vec<(String, f64, i32)> = feasible
+                .iter()
+                .map(|&aid| {
+                    let arc = &arcs[aid];
+                    (supply[arc.s_idx].station_to.clone(), arc.cost, rem_supply[arc.s_idx])
+                })
+                .collect();
+            top.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+            top.truncate(3);
+            UnmetCause::UnexpectedNotUsed {
+                feasible_arcs_count: feasible.len(),
+                min_arc_cost_per_wagon: min_arc_cost,
+                top_sources: top,
+            }
+        };
+
+        println!(
+            "  [d_idx {:>4}] {} ({}) | тип={} | ЕТСНГ={} | период={} | отправка={} | не закрыто {} из {} ваг.",
+            d_idx,
+            d.station_name,
+            d.railway_name,
+            d.car_type.as_deref().unwrap_or("—"),
+            d.etsng.as_deref().unwrap_or("—"),
+            d.period,
+            d.shipping_type.as_deref().unwrap_or("—"),
+            rem,
+            d.car_count,
+        );
+        match &cause {
+            UnmetCause::NoFeasibleArcs { supply_nodes_total, no_tariff, bad_type, dirty_etsng, bad_period } => {
+                println!(
+                    "    ПРИЧИНА: нет ни одной допустимой дуги — закрыть невозможно текущими данными. Отбраковка пар со всеми {} узлами предложения:",
+                    supply_nodes_total,
+                );
+                println!(
+                    "             нет тарифа {}, несовм. тип {}, грязный ЕТСНГ {}, нарушение срока {}.",
+                    no_tariff, bad_type, dirty_etsng, bad_period,
+                );
+                add_stat("no_arcs", rem, &mut cause_stats);
+            }
+            UnmetCause::AllSourcesExhausted { arc_count } => {
+                println!(
+                    "    ПРИЧИНА: дуги есть ({} шт.), но все совместимые узлы предложения исчерпаны — вагоны ушли на другие заявки (конкуренция за предложение).",
+                    arc_count,
+                );
+                add_stat("sources_exhausted", rem, &mut cause_stats);
+            }
+            UnmetCause::MinBatchDeadlock { pairs } => {
+                println!(
+                    "    ПРИЧИНА: MIN_BATCH-тупик ({} пар). Все дуги со свободным предложением — пары с потоком ниже порога партии:",
+                    pairs.len(),
+                );
+                for (ss, ds, flow, potential, min_batch) in pairs.iter().take(5) {
+                    println!(
+                        "      · ({ss} → {ds}): текущий поток {flow} ваг., макс. добавим {potential} (порог {min_batch})",
+                    );
+                }
+                if pairs.len() > 5 {
+                    println!("      · ...ещё {} пар", pairs.len() - 5);
+                }
+                add_stat("min_batch_deadlock", rem, &mut cause_stats);
+            }
+            UnmetCause::DmziQuotaExhausted { buckets } => {
+                println!(
+                    "    ПРИЧИНА: квота ДМЗИ исчерпана — все дуги со свободным предложением идут на дороги с выбранным лимитом:"
+                );
+                for (rw, period, used, limit) in buckets.iter().take(5) {
+                    println!(
+                        "      · дорога {rw}, период {period}: использовано {used} из {limit} ваг.",
+                    );
+                }
+                if buckets.len() > 5 {
+                    println!("      · ...ещё {} бакетов", buckets.len() - 5);
+                }
+                add_stat("dmzi_quota", rem, &mut cause_stats);
+            }
+            UnmetCause::PenaltyCheaperThanArcs { feasible_arcs_count, min_arc_cost_per_wagon } => {
+                println!(
+                    "    ПРИЧИНА: дуги со свободным предложением есть ({} шт.), но мин. стоимость {:.0} руб./ваг. ≥ PENALTY_UNMET ({:.0}). Штраф unmet дешевле маршрута.",
+                    feasible_arcs_count, min_arc_cost_per_wagon, PENALTY_UNMET,
+                );
+                add_stat("penalty_cheaper", rem, &mut cause_stats);
+            }
+            UnmetCause::UnexpectedNotUsed { feasible_arcs_count, min_arc_cost_per_wagon, top_sources } => {
+                println!(
+                    "    ПРИЧИНА: дуги со свободным предложением есть ({} шт., мин. стоимость {:.0} руб./ваг. < PENALTY_UNMET {:.0}), но не задействованы.",
+                    feasible_arcs_count, min_arc_cost_per_wagon, PENALTY_UNMET,
+                );
+                println!("             Вероятно, каскадный эффект MIN_BATCH на соседних парах. ТОП-3 самых дешёвых источника:");
+                for (ss, cost, s_rem) in top_sources {
+                    println!("      · ← {ss}: cost={:.0} руб./ваг., rem_supply={}", cost, s_rem);
+                }
+                add_stat("unexpected", rem, &mut cause_stats);
+            }
+        }
+    }
+
+    // Сводка.
+    println!();
+    println!("  СВОДКА ПО ПРИЧИНАМ:");
+    let mut unclosable_cars = 0_i32;
+    let mut closable_cars = 0_i32;
+    for (cause, (n_nodes, n_cars)) in &cause_stats {
+        let label = match *cause {
+            "no_arcs"            => "нет допустимых дуг (структурно)",
+            "sources_exhausted"  => "источники предложения исчерпаны",
+            "min_batch_deadlock" => "MIN_BATCH-тупик",
+            "dmzi_quota"         => "квота ДМЗИ исчерпана",
+            "penalty_cheaper"    => "штраф unmet < стоимости дуг",
+            "unexpected"         => "дуги есть, но не использованы",
+            _                    => cause,
+        };
+        if *cause == "no_arcs" {
+            unclosable_cars += *n_cars;
+        } else {
+            closable_cars += *n_cars;
+        }
+        println!("    {:35} узлов: {:>3}, вагонов: {:>4}", label, n_nodes, n_cars);
+    }
+    println!();
+    println!(
+        "  ЗАКРЫВАЕМОСТЬ: структурно недостижимо {} ваг. (нет дуг — нужны новые тарифы/смягчение фильтров); потенциально закрываемо {} ваг. (партия / ДМЗИ / конкуренция / экономика штрафа).",
+        unclosable_cars, closable_cars,
+    );
+    println!("--------------------------------");
 }

@@ -349,82 +349,25 @@ pub fn build_task_arcs(
 
     for (s_idx, s) in supply.iter().enumerate() {
         for (d_idx, d) in demand.iter().enumerate() {
-            let tariff: &TariffNode = match d.purpose {
-                DemandPurpose::Wash => {
-                    // Вагоны с дорогой образования из NoCleaningRoads — не грязные
-                    // (промывка уже оплачена клиентом на иностранной территории).
-                    if !supply_needs_wash(s, wash_codes, no_cleaning_roads) {
-                        no_tariff += 1;
-                        continue;
-                    }
-                    let key = (s.station_to_code.clone(), d.station_code.clone());
-                    let Some(t) = wash_tariffs.get(&key) else {
-                        no_tariff += 1;
-                        continue;
-                    };
-                    t
-                }
-                DemandPurpose::Load => {
-                    // Ограничение «грязного» вагона:
-                    // если вагон из-под груза, требующего промывки (и не освобождён
-                    // по NoCleaningRoads), он может быть назначен под погрузку
-                    // ТОЛЬКО под тот же ЕТСНГ.
-                    // Альтернативный маршрут — через узел промывки (DemandPurpose::Wash).
-                    if supply_needs_wash(s, wash_codes, no_cleaning_roads) {
-                        let supply_etsng = effective_etsng_for_wash_tariff(s);
-                        let demand_etsng = d.etsng.as_deref().map(normalize_etsng_code);
-                        match (supply_etsng, demand_etsng) {
-                            (Some(se), Some(de)) if se == de => {} // ETSNG совпадает → дуга разрешена
-                            _ => {
-                                dirty_etsng_mismatch += 1;
-                                continue;
-                            }
-                        }
-                    }
-
-                    let key = (s.station_to_code.as_str(), d.station_code.as_str());
-                    let Some(t) = tariff_index.get(&key) else {
-                        no_tariff += 1;
-                        continue;
-                    };
-                    *t
-                }
+            // Жёсткие фильтры пары вынесены в classify_pair — та же логика
+            // переиспользуется в диагностике незакрытого спроса.
+            let (tariff, cost, period_ok) = match classify_pair(
+                s,
+                d,
+                &tariff_index,
+                wash_codes,
+                no_cleaning_roads,
+                wash_tariffs,
+            ) {
+                PairOutcome::Feasible { tariff, cost, period_ok } => (tariff, cost, period_ok),
+                PairOutcome::NoTariff => { no_tariff += 1; continue; }
+                PairOutcome::BadType => { bad_type += 1; continue; }
+                PairOutcome::DirtyEtsngMismatch => { dirty_etsng_mismatch += 1; continue; }
+                PairOutcome::BadPeriod => { bad_period += 1; continue; }
             };
-
-            let car_type_ok = car_type_compatible(s.car_type.as_deref(), d.car_type.as_deref());
-            if !car_type_ok {
-                bad_type += 1;
-                continue;
+            if !period_ok {
+                arcs_period_penalized += 1;
             }
-
-            let (period_ok, cost) = {
-                let penalty_rate = if s.supply_period == 10 {
-                    PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_PERIOD10_RUB
-                } else {
-                    PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_RUB
-                };
-                let Some(violation_days) = delivery_window_violation_days(
-                    tariff.period_of_delivery,
-                    d.period,
-                    s.supply_period,
-                ) else {
-                    bad_period += 1;
-                    continue;
-                };
-                let period_ok = violation_days == 0;
-                if violation_days > 0 {
-                    arcs_period_penalized += 1;
-                }
-                let penalty = violation_days as f64 * penalty_rate;
-                (period_ok, tariff.cost + penalty)
-            };
-
-            // надбавка к стоимости дуг period=10 для приоритизации period=1.
-            let cost = if s.supply_period == 10 {
-                cost + PERIOD10_COST_SURCHARGE_RUB
-            } else {
-                cost
-            };
 
             // Ограничения минимальной партии действуют только для погрузки, не для промывки.
             // Приоритет классов: маршрутная отправка → массовая выгрузка → средние станции.
@@ -477,6 +420,102 @@ pub fn build_task_arcs(
     };
 
     (arcs, stats)
+}
+
+/// Исход классификации пары `(supply, demand)` жёсткими фильтрами построения дуг.
+///
+/// Используется одновременно в [`build_task_arcs`] (создание дуг + статистика) и в
+/// [`crate::solver::diagnose::diagnose_unmet_demand`] (разбор причин незакрытого
+/// спроса). Единый источник логики гарантирует, что счётчики отбраковки в обоих
+/// местах не разойдутся.
+pub enum PairOutcome<'a> {
+    /// Пара допустима — дуга создаётся. `cost` уже включает тариф, штраф за срок
+    /// и надбавку period 10; `period_ok` == `true`, если окно срока не нарушено.
+    Feasible {
+        tariff: &'a TariffNode,
+        cost: f64,
+        period_ok: bool,
+    },
+    /// Нет тарифа (для Wash также: вагон не требует промывки либо нет wash-тарифа).
+    NoTariff,
+    /// Несовместим тип вагона.
+    BadType,
+    /// Грязный вагон → погрузка с несовпадающим ЕТСНГ (без промывки запрещено).
+    DirtyEtsngMismatch,
+    /// Период спроса не имеет табличных границ (жёсткая отбраковка по сроку).
+    BadPeriod,
+}
+
+/// Классифицирует пару `(supply, demand)` теми же жёсткими фильтрами, что и
+/// [`build_task_arcs`]: тариф → грязный ЕТСНГ → тип вагона → окно срока.
+///
+/// `tariff_index` — индекс тарифов погрузки `(код_откуда, код_куда) → тариф`.
+/// `wash_tariffs` — тарифы до промывки с уже учтённой надбавкой [`WASH_PATH_SURCHARGE_RUB`].
+pub fn classify_pair<'a>(
+    s: &SupplyNode,
+    d: &DemandNode,
+    tariff_index: &HashMap<(&str, &str), &'a TariffNode>,
+    wash_codes: &HashSet<String>,
+    no_cleaning_roads: &HashSet<String>,
+    wash_tariffs: &'a HashMap<(String, String), TariffNode>,
+) -> PairOutcome<'a> {
+    let tariff: &TariffNode = match d.purpose {
+        DemandPurpose::Wash => {
+            // Вагоны с дорогой образования из NoCleaningRoads — не грязные
+            // (промывка уже оплачена клиентом на иностранной территории).
+            if !supply_needs_wash(s, wash_codes, no_cleaning_roads) {
+                return PairOutcome::NoTariff;
+            }
+            let key = (s.station_to_code.clone(), d.station_code.clone());
+            match wash_tariffs.get(&key) {
+                Some(t) => t,
+                None => return PairOutcome::NoTariff,
+            }
+        }
+        DemandPurpose::Load => {
+            // Ограничение «грязного» вагона: вагон из-под груза, требующего промывки
+            // (и не освобождённый по NoCleaningRoads), может идти под погрузку
+            // ТОЛЬКО под тот же ЕТСНГ. Альтернатива — маршрут через узел промывки.
+            if supply_needs_wash(s, wash_codes, no_cleaning_roads) {
+                let supply_etsng = effective_etsng_for_wash_tariff(s);
+                let demand_etsng = d.etsng.as_deref().map(normalize_etsng_code);
+                match (supply_etsng, demand_etsng) {
+                    (Some(se), Some(de)) if se == de => {} // ЕТСНГ совпадает → дуга разрешена
+                    _ => return PairOutcome::DirtyEtsngMismatch,
+                }
+            }
+            let key = (s.station_to_code.as_str(), d.station_code.as_str());
+            match tariff_index.get(&key) {
+                Some(t) => *t,
+                None => return PairOutcome::NoTariff,
+            }
+        }
+    };
+
+    if !car_type_compatible(s.car_type.as_deref(), d.car_type.as_deref()) {
+        return PairOutcome::BadType;
+    }
+
+    let penalty_rate = if s.supply_period == 10 {
+        PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_PERIOD10_RUB
+    } else {
+        PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_RUB
+    };
+    let Some(violation_days) = delivery_window_violation_days(
+        tariff.period_of_delivery,
+        d.period,
+        s.supply_period,
+    ) else {
+        return PairOutcome::BadPeriod;
+    };
+    let period_ok = violation_days == 0;
+    let mut cost = tariff.cost + violation_days as f64 * penalty_rate;
+    // надбавка к стоимости дуг period=10 для приоритизации period=1.
+    if s.supply_period == 10 {
+        cost += PERIOD10_COST_SURCHARGE_RUB;
+    }
+
+    PairOutcome::Feasible { tariff, cost, period_ok }
 }
 
 /// Диагностические счётчики из [`build_task_arcs`].

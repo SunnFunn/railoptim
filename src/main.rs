@@ -638,6 +638,24 @@ async fn main() -> Result<()> {
         (optim_result, solution, rem)
     };
 
+    // --- Диагностика незакрытого Load-спроса (зеркально diagnose_excess_supply) ---
+    // Показывает, какие заявки структурно недостижимы (нет дуг — нужны новые
+    // тарифы/смягчение фильтров), а какие потенциально закрываемы (партия / ДМЗИ /
+    // конкуренция за предложение). Помогает понять реальный потолок покрытия.
+    if optim_result.penalty_cars as i32 > 0 {
+        solver::diagnose_unmet_demand(
+            &arcs,
+            &solution,
+            &opt_supply,
+            &demand_lp,
+            &tariff_nodes,
+            &wash_codes,
+            &no_cleaning_roads,
+            &wash_tariff_map,
+            dmzi_limits.as_ref(),
+        );
+    }
+
     // --- Утилизация квот ДМЗИ финальным решением ---
     if let Some(limits) = &dmzi_limits {
         let idx = solver::DmziIndex::build(&arcs, &opt_supply, &demand_lp, limits);

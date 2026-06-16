@@ -18,26 +18,60 @@
 git pull && ./deploy/install_web_service.sh
 ```
 
-## Prod: одна команда
+## Prod: единый установщик `install.sh`
 
-Из корня репозитория на Ubuntu prod (пути в unit — см. [`systemd/railoptim-web.service`](systemd/railoptim-web.service)):
+Из корня репозитория на Ubuntu prod (пути в unit — см. [`systemd/`](systemd/)):
 
 ```bash
-./deploy/install_web_service.sh
+./deploy/install.sh web      # frontend + railoptim-web (long-running сервис)
+./deploy/install.sh optim    # batch railoptim + суточный timer (oneshot)
+./deploy/install.sh all      # всё сразу
 ```
 
-Скрипт:
+Скрипт по режиму:
 
-1. Проверяет `web-ui/dist/index.html` из git (или собирает через npm, если `REBUILD_WEB_UI=1`)
-2. `cargo build --release --bin railoptim --bin railoptim-web`
-3. копирует бинарники в [`app/bin/`](../app/bin/) (`railoptim`, `railoptim-web`)
-4. `ln -sf deploy/systemd/railoptim-web.service` → `/etc/systemd/system/`
-5. `systemctl daemon-reload`, `enable`, `restart`
+1. (`web`) Проверяет `web-ui/dist/index.html` из git (или собирает через npm, если `REBUILD_WEB_UI=1`)
+2. `cargo build --release` нужных бинарников (одним вызовом): `railoptim-web` для `web`, `railoptim` для `optim`, оба для `all`
+3. копирует бинарники в [`app/bin/`](../app/bin/)
+4. `ln -sf` нужных unit'ов → `/etc/systemd/system/`:
+   - `web`   → `railoptim-web.service`
+   - `optim` → `railoptim.service` + `railoptim.timer`
+5. `systemctl daemon-reload`; затем `enable`+`restart railoptim-web` (web) и/или `enable --now railoptim.timer` (optim)
 
-Prod batch (`./run.sh prod`) использует `app/bin/railoptim`.
+> Старые `install_web_service.sh` и `install_optim_services.sh` оставлены как тонкие обёртки (`install.sh web` / `install.sh optim`) для обратной совместимости.
 
-Unit-файл **не копируется** — симлинк на репозиторий, правки в IDE сразу на месте.
-После изменения unit: `sudo systemctl daemon-reload && sudo systemctl restart railoptim-web`.
+Prod batch (`./run.sh prod`) использует `app/bin/railoptim` — его собирает режим `optim`/`all`.
+
+Unit-файлы **не копируются** — симлинк на репозиторий, правки в IDE сразу на месте.
+После изменения unit: `sudo systemctl daemon-reload` и `restart`/`enable --now` соответствующего unit.
+
+## Суточный запуск batch-оптимизации (timer)
+
+`railoptim.timer` запускает `railoptim.service` (`Type=oneshot` → `run.sh prod`) раз в сутки в **11:05**. В одном прогоне сначала собираются все данные и обновляется накопительная БД ёмкостей отстоя (`data/reserves/reserves.sqlite`, upsert по `etran_id`), затем запускается оптимизация, которая читает узлы отстоя уже из БД (с фильтром по истёкшим `date_end`).
+
+Установка и запуск:
+
+```bash
+./deploy/install.sh optim     # соберёт app/bin/railoptim + поставит и включит timer
+```
+
+Проверка, что таймер активен и сервис отрабатывает:
+
+```bash
+systemctl list-timers 'railoptim*'         # NEXT/LAST — ближайший и прошлый запуск
+systemctl status railoptim.timer           # active (waiting) — таймер взведён
+systemctl status railoptim.service         # состояние последнего прогона (oneshot)
+journalctl -u railoptim.service -n 100     # лог последнего прогона
+```
+
+Ручной прогон без ожидания таймера:
+
+```bash
+sudo systemctl start railoptim.service     # как по таймеру (run.sh prod, app/bin)
+# или напрямую:
+./run.sh prod                              # бинарник из app/bin
+./run.sh dev                               # бинарник из target/release
+```
 
 Unit по умолчанию: `User=atretyakov`, `WorkingDirectory=/home/atretyakov/railoptim` — поправить при другом пути.
 Wrapper [`start_web.sh`](start_web.sh) запускает `app/bin/railoptim-web`.

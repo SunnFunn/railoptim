@@ -27,12 +27,12 @@ pub const MIN_BATCH_TO_MIDDLE_DEMAND_STATION: i32 = 3;
 /// при котором станция считается **средней** и попадает под ограничение
 /// [`MIN_BATCH_TO_MIDDLE_DEMAND_STATION`]. Станции массовой выгрузки исключаются
 /// (для них действует [`MIN_BATCH_FROM_MASS_STATION`]). Аналог `_SUPPLY_SIZE_BOUND_`.
-pub const MIDDLE_SUPPLY_STATION_MIN_CARS: i32 = 30;
+pub const MIDDLE_SUPPLY_STATION_MIN_CARS: i32 = 10;
 
 /// Минимальный суммарный Load-спрос на станции погрузки (без маршрутных отправок),
 /// при котором станция считается **средне-крупной** и попадает под ограничение
 /// [`MIN_BATCH_TO_MIDDLE_DEMAND_STATION`]. Аналог `_DEMAND_SIZE_BOUND_`.
-pub const MIDDLE_DEMAND_STATION_MIN_CARS: i32 = 15;
+pub const MIDDLE_DEMAND_STATION_MIN_CARS: i32 = 10;
 
 /// Минимальный размер партии «станция образования → маршрутные узлы станции погрузки»
 /// (`shipping_type == "Маршрутная"`). Аналог `_ROUTE_LOW_BOUND_` из example.py.

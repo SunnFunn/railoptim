@@ -1,0 +1,13 @@
+[Unit]
+Description=Run Railoptim daily batch optimization at 11:05
+After=network-online.target
+
+[Timer]
+Unit=railoptim.service
+OnCalendar=*-*-* 11:05:00
+# Если сервер был выключен в момент срабатывания — запустить сразу после включения
+Persistent=true
+AccuracySec=1m
+
+[Install]
+WantedBy=timers.target

@@ -20,6 +20,8 @@ data/stations/osm_index_report.json
 data/stations/sbin_esr_index.parquet
 data/stations/sbin_index_report.json
 data/stations/stations_geo.sqlite
+# Накопительная БД ёмкостей отстоя (наполняется суточным прогоном, не коммитим)
+data/reserves/*.sqlite
 data/stations/cross_border_esr6_conflicts.csv
 data/map/*.pmtiles
 data/map/*.partial

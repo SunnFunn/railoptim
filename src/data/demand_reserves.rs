@@ -13,8 +13,11 @@
 //!   нераспарсенные даты считаются активными, чтобы не терять ёмкость).
 
 use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 
+use anyhow::Context;
 use chrono::{NaiveDate, NaiveDateTime, Utc};
+use rusqlite::{params, Connection};
 use serde::Deserialize;
 
 use crate::node::ReserveNode;
@@ -224,9 +227,11 @@ pub fn reserve_station_refs(nodes: &[ReserveNode]) -> Vec<StationRef> {
 // ---------------------------------------------------------------------------
 
 impl ApiClient {
-    /// Запрашивает свободные ёмкости отстоя (`GetFreeReserveCapacityData`)
-    /// и строит узлы отстоя на текущую дату.
-    pub async fn fetch_reserve_nodes(&self) -> Result<ReserveData, ApiError> {
+    /// Запрашивает сырые записи ёмкостей отстоя (`GetFreeReserveCapacityData`).
+    ///
+    /// Дедупликация и фильтрация выполняются позже: при upsert в БД ключом служит
+    /// `etran_id` (дубли снимка схлопываются по PK), а при чтении — [`build_reserve_nodes`].
+    async fn fetch_reserve_permits(&self) -> Result<Vec<FreeReserveApiItem>, ApiError> {
         let url = ApiEndpoint::FreeReserves.url(&self.base_url);
         let response = self.client.get(&url).send().await?;
 
@@ -239,9 +244,195 @@ impl ApiClient {
             return Err(ApiError::UnexpectedStatus { status: status.as_u16(), body });
         }
 
-        let items = response.json::<Vec<FreeReserveApiItem>>().await?;
+        Ok(response.json::<Vec<FreeReserveApiItem>>().await?)
+    }
+
+    /// Запрашивает свободные ёмкости отстоя (`GetFreeReserveCapacityData`)
+    /// и строит узлы отстоя на текущую дату.
+    pub async fn fetch_reserve_nodes(&self) -> Result<ReserveData, ApiError> {
+        let items = self.fetch_reserve_permits().await?;
         Ok(build_reserve_nodes(items, Utc::now().date_naive()))
     }
+}
+
+// ---------------------------------------------------------------------------
+// Накопительная SQLite-БД разрешений на отстой
+// ---------------------------------------------------------------------------
+
+/// Путь к БД отстоя по умолчанию (накопительная, не коммитится в git).
+pub const DEFAULT_RESERVES_DB_PATH: &str = "data/reserves/reserves.sqlite";
+
+/// Путь к файлу БД отстоя: env `RESERVES_DB` или [`DEFAULT_RESERVES_DB_PATH`].
+pub fn reserves_db_path() -> PathBuf {
+    std::env::var("RESERVES_DB")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from(DEFAULT_RESERVES_DB_PATH))
+}
+
+const CREATE_TABLE_SQL: &str = "
+CREATE TABLE IF NOT EXISTS reserve_permits (
+    etran_id            INTEGER PRIMARY KEY,
+    division            TEXT,
+    railway             TEXT,
+    railway_code        TEXT,
+    station             TEXT,
+    station_code        TEXT,
+    approvement_doc     TEXT,
+    owner               TEXT,
+    owner_okpo          TEXT,
+    agreement_number    TEXT,
+    date_beg            TEXT,
+    date_end            TEXT,
+    agreement_capacity  REAL,
+    synced_at           TEXT NOT NULL
+);
+";
+
+const UPSERT_SQL: &str = "
+INSERT INTO reserve_permits (
+    etran_id, division, railway, railway_code, station, station_code,
+    approvement_doc, owner, owner_okpo, agreement_number,
+    date_beg, date_end, agreement_capacity, synced_at
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+ON CONFLICT(etran_id) DO UPDATE SET
+    division           = excluded.division,
+    railway            = excluded.railway,
+    railway_code       = excluded.railway_code,
+    station            = excluded.station,
+    station_code       = excluded.station_code,
+    approvement_doc    = excluded.approvement_doc,
+    owner              = excluded.owner,
+    owner_okpo         = excluded.owner_okpo,
+    agreement_number   = excluded.agreement_number,
+    date_beg           = excluded.date_beg,
+    date_end           = excluded.date_end,
+    agreement_capacity = excluded.agreement_capacity,
+    synced_at          = excluded.synced_at;
+";
+
+const SELECT_SQL: &str = "
+SELECT division, railway, railway_code, station, station_code, approvement_doc,
+       etran_id, owner, owner_okpo, agreement_number, date_beg, date_end,
+       agreement_capacity
+FROM reserve_permits;
+";
+
+/// Статистика синхронизации БД отстоя для логов.
+#[derive(Debug, Clone, Default)]
+pub struct ReserveSyncStats {
+    /// Записей получено из API.
+    pub fetched: usize,
+    /// Записей записано/обновлено в БД (по `etran_id`).
+    pub upserted: usize,
+    /// Пропущено записей без `etran_id` (ключ накопления отсутствует).
+    pub skipped_no_etran: usize,
+}
+
+/// Открывает (создаёт при отсутствии) БД отстоя и гарантирует наличие таблицы.
+pub fn open_reserves_db(path: impl AsRef<Path>) -> anyhow::Result<Connection> {
+    let path = path.as_ref();
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("создание каталога {}", parent.display()))?;
+        }
+    }
+    let conn = Connection::open(path)
+        .with_context(|| format!("открытие БД отстоя {}", path.display()))?;
+    conn.execute_batch(CREATE_TABLE_SQL)
+        .context("создание таблицы reserve_permits")?;
+    Ok(conn)
+}
+
+/// Запрашивает свежие разрешения из API и складывает их в БД (upsert по `etran_id`).
+///
+/// Записи без `etran_id` пропускаются (нет стабильного ключа накопления). Ошибка
+/// API распространяется наверх — вызывающий решает, фатально это или нет (в батче —
+/// нет: используются ранее накопленные данные БД).
+pub async fn sync_reserves_to_db(
+    client: &ApiClient,
+    conn: &Connection,
+) -> anyhow::Result<ReserveSyncStats> {
+    let items = client
+        .fetch_reserve_permits()
+        .await
+        .context("запрос ёмкостей отстоя из API")?;
+    upsert_permits(conn, &items)
+}
+
+/// Upsert набора записей в БД отстоя (выделено для тестов без сети).
+fn upsert_permits(conn: &Connection, items: &[FreeReserveApiItem]) -> anyhow::Result<ReserveSyncStats> {
+    let fetched = items.len();
+    let now = Utc::now().to_rfc3339();
+    let mut upserted = 0_usize;
+    let mut skipped_no_etran = 0_usize;
+
+    let tx = conn.unchecked_transaction().context("транзакция БД отстоя")?;
+    {
+        let mut stmt = tx.prepare(UPSERT_SQL).context("подготовка upsert отстоя")?;
+        for item in items {
+            let Some(etran_id) = item.etran_id else {
+                skipped_no_etran += 1;
+                continue;
+            };
+            stmt.execute(params![
+                etran_id,
+                item.division.as_deref(),
+                item.railway.as_deref(),
+                item.railway_code.clone().map(CodeValue::into_string),
+                item.station.as_deref(),
+                item.station_code.clone().map(CodeValue::into_string),
+                item.approvement_doc.as_deref(),
+                item.owner.as_deref(),
+                item.owner_okpo.as_deref(),
+                item.agreement_number.as_deref(),
+                item.date_beg.as_deref(),
+                item.date_end.as_deref(),
+                item.agreement_capacity,
+                now,
+            ])
+            .context("upsert записи отстоя")?;
+            upserted += 1;
+        }
+    }
+    tx.commit().context("commit БД отстоя")?;
+
+    Ok(ReserveSyncStats { fetched, upserted, skipped_no_etran })
+}
+
+fn row_to_item(row: &rusqlite::Row) -> rusqlite::Result<FreeReserveApiItem> {
+    Ok(FreeReserveApiItem {
+        division: row.get::<_, Option<String>>(0)?,
+        railway: row.get::<_, Option<String>>(1)?,
+        railway_code: row.get::<_, Option<String>>(2)?.map(CodeValue::Str),
+        station: row.get::<_, Option<String>>(3)?,
+        station_code: row.get::<_, Option<String>>(4)?.map(CodeValue::Str),
+        approvement_doc: row.get::<_, Option<String>>(5)?,
+        etran_id: row.get::<_, Option<i64>>(6)?,
+        owner: row.get::<_, Option<String>>(7)?,
+        owner_okpo: row.get::<_, Option<String>>(8)?,
+        agreement_number: row.get::<_, Option<String>>(9)?,
+        date_beg: row.get::<_, Option<String>>(10)?,
+        date_end: row.get::<_, Option<String>>(11)?,
+        agreement_capacity: row.get::<_, Option<f64>>(12)?,
+    })
+}
+
+/// Читает накопленные разрешения из БД и строит активные на `today` узлы отстоя.
+///
+/// Фильтрация (ёмкость, пустые коды, активность договора по `date_beg`/`date_end`)
+/// выполняется тем же [`build_reserve_nodes`], что и для прямого ответа API.
+pub fn load_active_reserve_nodes(
+    conn: &Connection,
+    today: NaiveDate,
+) -> anyhow::Result<ReserveData> {
+    let mut stmt = conn.prepare(SELECT_SQL).context("подготовка чтения отстоя")?;
+    let items = stmt
+        .query_map([], row_to_item)
+        .context("чтение записей отстоя")?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .context("разбор записей отстоя")?;
+    Ok(build_reserve_nodes(items, today))
 }
 
 // ---------------------------------------------------------------------------
@@ -358,5 +549,90 @@ mod tests {
         assert_eq!(refs.len(), 2);
         assert_eq!(refs[0].station_code, "111111");
         assert_eq!(refs[1].station_code, "222222");
+    }
+
+    // -----------------------------------------------------------------------
+    // Тесты накопительной БД
+    // -----------------------------------------------------------------------
+
+    fn mem_db() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(CREATE_TABLE_SQL).unwrap();
+        conn
+    }
+
+    /// Повторный снимок с тем же etran_id не плодит строки, а обновляет ёмкость.
+    #[test]
+    fn upsert_updates_capacity_by_etran_id() {
+        let conn = mem_db();
+        let snap1 = parse_items(
+            r#"[
+                {"RailWayReserve": "МСК", "StationReserve": "Отстойная",
+                 "StationReserveCode": "123456", "EtranId": 100,
+                 "AgreementReserveCapacity": 50,
+                 "DateBeg": "2026-06-01T00:00:00.000Z", "DateEnd": "2026-12-31T00:00:00.000Z"}
+            ]"#,
+        );
+        let s1 = upsert_permits(&conn, &snap1).unwrap();
+        assert_eq!((s1.fetched, s1.upserted, s1.skipped_no_etran), (1, 1, 0));
+
+        let snap2 = parse_items(
+            r#"[
+                {"RailWayReserve": "МСК", "StationReserve": "Отстойная",
+                 "StationReserveCode": "123456", "EtranId": 100,
+                 "AgreementReserveCapacity": 80,
+                 "DateBeg": "2026-06-01T00:00:00.000Z", "DateEnd": "2026-12-31T00:00:00.000Z"}
+            ]"#,
+        );
+        upsert_permits(&conn, &snap2).unwrap();
+
+        let data = load_active_reserve_nodes(&conn, today()).unwrap();
+        assert_eq!(data.nodes.len(), 1);
+        assert_eq!(data.total_capacity(), 80);
+    }
+
+    /// При чтении из БД истёкшие по date_end разрешения отбрасываются.
+    #[test]
+    fn load_filters_expired_date_end() {
+        let conn = mem_db();
+        let items = parse_items(
+            r#"[
+                {"RailWayReserve": "МСК", "StationReserve": "Истёк",
+                 "StationReserveCode": "111111", "EtranId": 1,
+                 "AgreementReserveCapacity": 10,
+                 "DateBeg": "2026-01-01T00:00:00.000Z", "DateEnd": "2026-06-10T00:00:00.000Z"},
+                {"RailWayReserve": "МСК", "StationReserve": "Активный",
+                 "StationReserveCode": "222222", "EtranId": 2,
+                 "AgreementReserveCapacity": 10,
+                 "DateBeg": "2026-06-01T00:00:00.000Z", "DateEnd": "2026-06-30T00:00:00.000Z"},
+                {"RailWayReserve": "МСК", "StationReserve": "БезДат",
+                 "StationReserveCode": "333333", "EtranId": 3,
+                 "AgreementReserveCapacity": 10}
+            ]"#,
+        );
+        let s = upsert_permits(&conn, &items).unwrap();
+        assert_eq!(s.upserted, 3);
+
+        let data = load_active_reserve_nodes(&conn, today()).unwrap();
+        let mut names: Vec<&str> = data.nodes.iter().map(|n| n.station_name.as_str()).collect();
+        names.sort();
+        assert_eq!(names, vec!["Активный", "БезДат"]);
+    }
+
+    /// Записи без etran_id не попадают в БД и считаются как skipped_no_etran.
+    #[test]
+    fn upsert_skips_null_etran_id() {
+        let conn = mem_db();
+        let items = parse_items(
+            r#"[
+                {"RailWayReserve": "МСК", "StationReserve": "БезEtran",
+                 "StationReserveCode": "444444", "AgreementReserveCapacity": 10}
+            ]"#,
+        );
+        let s = upsert_permits(&conn, &items).unwrap();
+        assert_eq!((s.fetched, s.upserted, s.skipped_no_etran), (1, 0, 1));
+
+        let data = load_active_reserve_nodes(&conn, today()).unwrap();
+        assert_eq!(data.nodes.len(), 0);
     }
 }

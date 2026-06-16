@@ -1,20 +1,19 @@
 [Unit]
-Description=RZD Conventions parsing service
-After=network-online.target docker.service
+Description=Railoptim daily batch optimization (сбор данных + БД отстоя + оптимизация)
+After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=oneshot
 User=atretyakov
 Group=atretyakov
-WorkingDirectory=/home/atretyakov/railconventions
-# Запускаем 
-ExecStart=/bin/bash /home/atretyakov/railconventions/run.sh prod
-# Инференс обычно быстрее обучения, ставим разумный таймаут
+WorkingDirectory=/home/atretyakov/railoptim
+# run.sh prod: сначала сбор всех данных и обновление БД отстоя, затем оптимизация.
+# Бинарник берётся из app/bin/railoptim (см. run.sh).
+ExecStart=/bin/bash /home/atretyakov/railoptim/run.sh prod
 TimeoutSec=3600
 StandardOutput=journal
 StandardError=journal
-
 
 [Install]
 WantedBy=multi-user.target

@@ -398,6 +398,7 @@ pub fn build_assigned_output_records(
 /// записи с `assignment_type = "В отстой"`. Оставшиеся вагоны получают
 /// отдельную запись с `assignment_type = "Затягивание грузовой операции"` и
 /// `station_to == station_from` (остаются на месте).
+#[allow(clippy::too_many_arguments)]
 pub fn build_output_records(
     solution: &[f64],
     arcs:     &[TaskArc],
@@ -405,6 +406,7 @@ pub fn build_output_records(
     demand:   &[DemandNode],
     wash_codes: &HashSet<String>,
     no_cleaning_roads: &HashSet<String>,
+    washed_empty_codes: &HashSet<String>,
     reserve_assignments: &[ReserveAssignment],
     reserves: &[ReserveNode],
 ) -> Vec<OutputRecord> {
@@ -478,7 +480,7 @@ pub fn build_output_records(
             // - Load-дуга, чистый вагон → «Под погрузку в N сутки»
             let assignment_type = if d.purpose == DemandPurpose::Wash {
                 "в промывку".to_string()
-            } else if wash::supply_needs_wash(s, wash_codes, no_cleaning_roads) {
+            } else if wash::supply_needs_wash(s, wash_codes, no_cleaning_roads, washed_empty_codes) {
                 "под погрузку аналогичного груза".to_string()
             } else {
                 format!("Под погрузку в {period_label} сутки")
@@ -808,7 +810,7 @@ mod tests {
     fn build(solution: &[f64], arcs: &[TaskArc], supply: &[SupplyNode], demand: &[DemandNode]) -> Vec<OutputRecord> {
         build_output_records(
             solution, arcs, supply, demand,
-            &HashSet::new(), &HashSet::new(), &[], &[],
+            &HashSet::new(), &HashSet::new(), &HashSet::new(), &[], &[],
         )
     }
 
@@ -910,7 +912,7 @@ mod tests {
         }];
         let records = build_output_records(
             &[2.0], &arcs, &supply, &demand,
-            &HashSet::new(), &HashSet::new(), &ra, &reserves,
+            &HashSet::new(), &HashSet::new(), &HashSet::new(), &ra, &reserves,
         );
 
         assert_eq!(records.len(), 3);
@@ -947,7 +949,7 @@ mod tests {
         }];
         let records = build_output_records(
             &[0.0], &arcs, &supply, &demand,
-            &HashSet::new(), &HashSet::new(), &ra, &reserves,
+            &HashSet::new(), &HashSet::new(), &HashSet::new(), &ra, &reserves,
         );
 
         assert_eq!(records.len(), 1);

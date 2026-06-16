@@ -284,6 +284,7 @@ pub fn build_task_arcs(
     tariffs: &[TariffNode],
     wash_codes: &HashSet<String>,
     no_cleaning_roads: &HashSet<String>,
+    washed_empty_codes: &HashSet<String>,
     wash_tariffs: &HashMap<(String, String), TariffNode>,
 ) -> (Vec<TaskArc>, ArcStats) {
     // Индекс тарифов погрузки: (код_откуда, код_куда) → TariffNode
@@ -357,6 +358,7 @@ pub fn build_task_arcs(
                 &tariff_index,
                 wash_codes,
                 no_cleaning_roads,
+                washed_empty_codes,
                 wash_tariffs,
             ) {
                 PairOutcome::Feasible { tariff, cost, period_ok } => (tariff, cost, period_ok),
@@ -457,13 +459,15 @@ pub fn classify_pair<'a>(
     tariff_index: &HashMap<(&str, &str), &'a TariffNode>,
     wash_codes: &HashSet<String>,
     no_cleaning_roads: &HashSet<String>,
+    washed_empty_codes: &HashSet<String>,
     wash_tariffs: &'a HashMap<(String, String), TariffNode>,
 ) -> PairOutcome<'a> {
     let tariff: &TariffNode = match d.purpose {
         DemandPurpose::Wash => {
             // Вагоны с дорогой образования из NoCleaningRoads — не грязные
             // (промывка уже оплачена клиентом на иностранной территории).
-            if !supply_needs_wash(s, wash_codes, no_cleaning_roads) {
+            // Вагоны с текущим кодом из WashedEmptyEtsngCodes уже прошли промывку.
+            if !supply_needs_wash(s, wash_codes, no_cleaning_roads, washed_empty_codes) {
                 return PairOutcome::NoTariff;
             }
             let key = (s.station_to_code.clone(), d.station_code.clone());
@@ -476,7 +480,7 @@ pub fn classify_pair<'a>(
             // Ограничение «грязного» вагона: вагон из-под груза, требующего промывки
             // (и не освобождённый по NoCleaningRoads), может идти под погрузку
             // ТОЛЬКО под тот же ЕТСНГ. Альтернатива — маршрут через узел промывки.
-            if supply_needs_wash(s, wash_codes, no_cleaning_roads) {
+            if supply_needs_wash(s, wash_codes, no_cleaning_roads, washed_empty_codes) {
                 let supply_etsng = effective_etsng_for_wash_tariff(s);
                 let demand_etsng = d.etsng.as_deref().map(normalize_etsng_code);
                 match (supply_etsng, demand_etsng) {
@@ -771,6 +775,7 @@ mod tests {
             supply,
             demand,
             tariffs,
+            &HashSet::new(),
             &HashSet::new(),
             &HashSet::new(),
             &HashMap::new(),

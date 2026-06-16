@@ -106,6 +106,18 @@ async fn main() -> Result<()> {
             HashSet::new()
         }
     };
+    // Текущие коды ЕТСНГ «уже промыт/из ремонта» (WashedEmptyEtsngCodes): такие вагоны
+    // считаются чистыми независимо от предыдущего груза (напр. 421208 — из промывки, 421195 — из ремонта).
+    let washed_empty_codes = match data::load_washed_empty_codes("data/references.json") {
+        Ok(c) => {
+            println!("Коды «уже промыт/ремонт» (WashedEmptyEtsngCodes): {}", c.len());
+            c
+        }
+        Err(e) => {
+            eprintln!("  WashedEmptyEtsngCodes из references.json: не загружены ({e})");
+            HashSet::new()
+        }
+    };
     let wash_stations = match data::wash::fetch_wash_stations() {
         Ok(ws) => ws,
         Err(e) => {
@@ -132,14 +144,14 @@ async fn main() -> Result<()> {
     // Все вагоны с «грязным» ETSNG (без учёта NoCleaningRoads).
     let n_supply_wash_raw = opt_supply
         .iter()
-        .filter(|s| data::wash::supply_matches_wash_product_list(s, &wash_codes))
+        .filter(|s| data::wash::supply_matches_wash_product_list(s, &wash_codes, &washed_empty_codes))
         .map(|s| s.car_count)
         .sum::<i32>();
     // Из них освобождены от промывки по дороге образования (NoCleaningRoads).
     let n_supply_wash_exempt = opt_supply
         .iter()
         .filter(|s| {
-            data::wash::supply_matches_wash_product_list(s, &wash_codes)
+            data::wash::supply_matches_wash_product_list(s, &wash_codes, &washed_empty_codes)
                 && no_cleaning_roads.contains(s.railway_to.trim())
         })
         .map(|s| s.car_count)
@@ -150,7 +162,7 @@ async fn main() -> Result<()> {
     let n_supply_wash_skip = opt_supply
         .iter()
         .filter(|s| {
-            data::wash::supply_needs_wash(s, &wash_codes, &no_cleaning_roads)
+            data::wash::supply_needs_wash(s, &wash_codes, &no_cleaning_roads, &washed_empty_codes)
                 && data::wash::load_demand_has_matching_dirty_etsng(s, &demand_nodes, &no_cleaning_roads)
         })
         .map(|s| s.car_count)
@@ -263,7 +275,7 @@ async fn main() -> Result<()> {
     if !wash_station_refs.is_empty() {
         let wash_from: Vec<StationRef> = opt_supply
             .iter()
-            .filter(|s| data::wash::supply_needs_wash(s, &wash_codes, &no_cleaning_roads))
+            .filter(|s| data::wash::supply_needs_wash(s, &wash_codes, &no_cleaning_roads, &washed_empty_codes))
             .map(|s| (s.station_to_code.clone(), s.railway_to.clone()))
             .collect::<HashSet<_>>()
             .into_iter()
@@ -370,6 +382,7 @@ async fn main() -> Result<()> {
         &tariff_nodes,
         &wash_codes,
         &no_cleaning_roads,
+        &washed_empty_codes,
         &wash_tariff_map,
     );
 
@@ -651,6 +664,7 @@ async fn main() -> Result<()> {
             &tariff_nodes,
             &wash_codes,
             &no_cleaning_roads,
+            &washed_empty_codes,
             &wash_tariff_map,
             dmzi_limits.as_ref(),
         );
@@ -777,7 +791,7 @@ async fn main() -> Result<()> {
     // Записи по оптимизированным назначениям (Free / NoNumber) + отстой (этап 2).
     let mut output_records = solver::build_output_records(
         &solution, &arcs, &opt_supply, &demand_lp, &wash_codes, &no_cleaning_roads,
-        &reserve_assignments, &reserve_nodes,
+        &washed_empty_codes, &reserve_assignments, &reserve_nodes,
     );
     // Самопроверка баланса: вагоны не должны «исчезать» из отчёта — каждый вагон
     // предложения либо назначен, либо получает «Затягивание грузовой операции».

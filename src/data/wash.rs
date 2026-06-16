@@ -216,11 +216,39 @@ pub fn code_requires_wash(code: &str, wash_codes: &HashSet<String>) -> bool {
     !n.is_empty() && wash_codes.contains(&n)
 }
 
+/// Текущий код ЕТСНГ вагона (`FrETSNGCode`) означает, что вагон уже в цикле промывки/ремонта
+/// и считается **чистым** (`WashedEmptyEtsngCodes`): например, 421208 (для/из промывки) или
+/// 421195 (в/из ремонта).
+///
+/// Проверяется именно **текущий** `etsng` (а не предыдущий груз): такой код присваивается, когда
+/// вагон уже проследовал станцию промывки/ремонта (для зерновозов — Ружино), поэтому предыдущий
+/// «грязный» груз из [`SupplyNode::prev_etsngs`] больше не требует повторной промывки.
+pub fn is_washed_empty(s: &SupplyNode, washed_empty_codes: &HashSet<String>) -> bool {
+    if washed_empty_codes.is_empty() {
+        return false;
+    }
+    s.etsng
+        .as_deref()
+        .map(normalize_etsng_code)
+        .map(|c| !c.is_empty() && washed_empty_codes.contains(&c))
+        .unwrap_or(false)
+}
+
 /// Узел предложения относится к грузам из списка промывки (по правилу груженый/порожний).
+///
+/// Вагон с текущим кодом из `washed_empty_codes` ([`is_washed_empty`]) считается чистым —
+/// вернётся `false` независимо от предыдущего груза.
 ///
 /// Не учитывает исключения по дороге образования — для полной проверки используй
 /// [`supply_needs_wash`].
-pub fn supply_matches_wash_product_list(s: &SupplyNode, wash_codes: &HashSet<String>) -> bool {
+pub fn supply_matches_wash_product_list(
+    s: &SupplyNode,
+    wash_codes: &HashSet<String>,
+    washed_empty_codes: &HashSet<String>,
+) -> bool {
+    if is_washed_empty(s, washed_empty_codes) {
+        return false;
+    }
     effective_etsng_for_wash_tariff(s)
         .map(|c| code_requires_wash(&c, wash_codes))
         .unwrap_or(false)
@@ -229,6 +257,8 @@ pub fn supply_matches_wash_product_list(s: &SupplyNode, wash_codes: &HashSet<Str
 /// Вагон является «грязным» и требует промывки с точки зрения российского планирования.
 ///
 /// Возвращает `false` если выполнено **любое** из условий:
+/// - текущий код ЕТСНГ вагона входит в `WashedEmptyEtsngCodes` ([`is_washed_empty`])
+///   (вагон уже прошёл промывку/ремонт и считается чистым), или
 /// - груз вагона не входит в список `WashProductCodes`, или
 /// - дорога образования вагона (`railway_to`) входит в `NoCleaningRoads`
 ///   (промывка на иностранной территории уже оплачена клиентом).
@@ -236,11 +266,12 @@ pub fn supply_needs_wash(
     s: &SupplyNode,
     wash_codes: &HashSet<String>,
     no_cleaning_roads: &HashSet<String>,
+    washed_empty_codes: &HashSet<String>,
 ) -> bool {
     if no_cleaning_roads.contains(s.railway_to.trim()) {
         return false;
     }
-    supply_matches_wash_product_list(s, wash_codes)
+    supply_matches_wash_product_list(s, wash_codes, washed_empty_codes)
 }
 
 /// Есть ли среди узлов погрузки (`purpose == Load`) хотя бы один с тем же ЕТСНГ, что и «грязный»

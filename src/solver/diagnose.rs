@@ -501,6 +501,7 @@ pub fn diagnose_unmet_demand(
     tariffs: &[TariffNode],
     wash_codes: &HashSet<String>,
     no_cleaning_roads: &HashSet<String>,
+    washed_empty_codes: &HashSet<String>,
     wash_tariffs: &HashMap<(String, String), TariffNode>,
     dmzi_limits: Option<&DmziLimits>,
 ) {
@@ -662,7 +663,7 @@ pub fn diagnose_unmet_demand(
             // Структурный разбор: почему пара с каждым узлом предложения отброшена.
             let (mut no_tariff, mut bad_type, mut dirty_etsng, mut bad_period) = (0, 0, 0, 0);
             for s in supply.iter() {
-                match classify_pair(s, d, &tariff_index, wash_codes, no_cleaning_roads, wash_tariffs) {
+                match classify_pair(s, d, &tariff_index, wash_codes, no_cleaning_roads, washed_empty_codes, wash_tariffs) {
                     // Feasible здесь невозможен: иначе дуга была бы построена.
                     PairOutcome::Feasible { .. } => {}
                     PairOutcome::NoTariff => no_tariff += 1,

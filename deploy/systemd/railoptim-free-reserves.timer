@@ -1,0 +1,15 @@
+[Unit]
+Description=Run RZD Conventions parsing Daily
+After=network-online.target
+
+[Timer]
+Unit=rzd-conventions.service
+# Mon..Fri означает: Понедельник, Вторник, Среда, Четверг, Пятница
+# OnCalendar=Mon..Fri *-*-* 05:50:00
+OnCalendar=*-*-* 05:50:00
+# Если сервер был выключен ночью, запустить сразу после включения
+Persistent=true
+AccuracySec=1m
+
+[Install]
+WantedBy=timers.target

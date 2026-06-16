@@ -1,0 +1,20 @@
+[Unit]
+Description=RZD Conventions parsing service
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=atretyakov
+Group=atretyakov
+WorkingDirectory=/home/atretyakov/railconventions
+# Запускаем 
+ExecStart=/bin/bash /home/atretyakov/railconventions/run.sh prod
+# Инференс обычно быстрее обучения, ставим разумный таймаут
+TimeoutSec=3600
+StandardOutput=journal
+StandardError=journal
+
+
+[Install]
+WantedBy=multi-user.target

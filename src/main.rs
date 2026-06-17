@@ -118,6 +118,18 @@ async fn main() -> Result<()> {
             HashSet::new()
         }
     };
+    // Allowlist «своих» ёмкостей отстоя: фильтр БД отстоя по паре (код станции, ОКПО владельца).
+    // Пустой allowlist (справочник не загружен) => фильтр по владельцам отключён.
+    let reserve_owners = match data::load_reserve_owners_allowlist("data/reserve_owners.json") {
+        Ok(s) => {
+            println!("Allowlist владельцев отстоя (reserve_owners.json): {} пар (станция+ОКПО)", s.len());
+            s
+        }
+        Err(e) => {
+            eprintln!("  reserve_owners.json не загружен ({e}) — фильтр отстоя по владельцам отключён");
+            HashSet::new()
+        }
+    };
     let wash_stations = match data::wash::fetch_wash_stations() {
         Ok(ws) => ws,
         Err(e) => {
@@ -363,16 +375,17 @@ async fn main() -> Result<()> {
                     "  ВНИМАНИЕ: обновление БД отстоя не удалось ({e}) — используем ранее накопленные данные"
                 ),
             }
-            match data::load_active_reserve_nodes(&conn, chrono::Utc::now().date_naive()) {
+            match data::load_active_reserve_nodes(&conn, chrono::Utc::now().date_naive(), &reserve_owners) {
                 Ok(r) if !r.nodes.is_empty() => {
                     println!(
                         "Узлы отстоя (резервы):       {} узлов / ёмкость {} ваг. \
-                         (записей в БД {}, дублей {}, отфильтровано {})",
+                         (записей в БД {}, дублей {}, отфильтровано {}, чужих по allowlist {})",
                         r.nodes.len(),
                         r.total_capacity(),
                         r.raw_records,
                         r.duplicates,
                         r.filtered,
+                        r.foreign_filtered,
                     );
                     Some(r)
                 }

@@ -272,11 +272,12 @@ AF — ёмкость путей, AO — погрузка в сутки; дан�
 Повторы одной станции (разные грузоотправители/элеваторы) суммируются; диапазон вида `6-11`
 сводится к среднему целому (округление .5 вверх), `31 и более`/`5 и менее` — к самому числу.
 
+Запуск — через раннер, который грузит секреты `MSSQL_*` из Infisical (как `run.sh`/stations ETL);
+прямой `cargo run` секреты не подхватывает и MSSQL-поиск упадёт.
+
 ```bash
-# с секретами MSSQL в окружении (Infisical):
-cargo run --release --bin railoptim-load-stations
-# проверка парсинга без обращения к БД (load_station_code = null):
-cargo run --bin railoptim-load-stations -- --dry-run
+./scripts/load_stations.sh prod          # секреты Infisical → парсинг → ЕСР из MSSQL → data/load_stations.json
+./scripts/load_stations.sh --dry-run     # только парсинг Excel, без БД (load_station_code = null)
 ```
 
 ---

@@ -85,14 +85,15 @@ pub fn load_washed_empty_codes(path: impl AsRef<Path>) -> anyhow::Result<HashSet
     Ok(out)
 }
 
-/// Allowlist «своих» ёмкостей отстоя (`data/reserve_owners.json`).
+/// Ban-list «чужих» ёмкостей отстоя (`data/reserve_owners.json`).
 ///
 /// Файл — плоский JSON-массив объектов вида
 /// `{"railway", "station", "station_code", "owner", "owner_okpo"}`. Возвращает множество
-/// пар `(код станции ЕСР-6, ОКПО владельца)`; фильтрация БД отстоя выполняется строго по
+/// пар `(код станции ЕСР-6, ОКПО владельца)`, которые **запрещены** к использованию как
+/// ёмкости отстоя (чужие станции/владельцы). Фильтрация БД отстоя выполняется строго по
 /// этим двум полям (`station_code` нормализуется до 6 цифр, `owner_okpo` — trim).
 /// Текстовые наименования (`railway`, `station`, `owner`) — справочные, в ключ не входят.
-pub fn load_reserve_owners_allowlist(
+pub fn load_reserve_owners_banlist(
     path: impl AsRef<Path>,
 ) -> anyhow::Result<HashSet<(String, String)>> {
     let path = path.as_ref();
@@ -156,10 +157,10 @@ mod tests {
     use super::*;
     use std::io::Write;
 
-    /// Загрузчик allowlist: ключ — (ЕСР-6, ОКПО), наименования игнорируются,
+    /// Загрузчик ban-list: ключ — (ЕСР-6, ОКПО), наименования игнорируются,
     /// дубли пар схлопываются, неполные записи пропускаются.
     #[test]
-    fn reserve_owners_allowlist_parses_station_and_okpo() {
+    fn reserve_owners_banlist_parses_station_and_okpo() {
         let dir = std::env::temp_dir().join(format!("railoptim_reserve_owners_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("reserve_owners.json");
@@ -176,13 +177,13 @@ mod tests {
         )
         .unwrap();
 
-        let allow = load_reserve_owners_allowlist(&path).unwrap();
+        let ban = load_reserve_owners_banlist(&path).unwrap();
         // 3 уникальные пары (дубль 769500+00203944 схлопнут, запись без ОКПО пропущена).
-        assert_eq!(allow.len(), 3);
-        assert!(allow.contains(&("769002".to_string(), "37011412".to_string())));
-        assert!(allow.contains(&("769002".to_string(), "00203944".to_string())));
-        assert!(allow.contains(&("769500".to_string(), "00203944".to_string())));
-        assert!(!allow.contains(&("769999".to_string(), String::new())));
+        assert_eq!(ban.len(), 3);
+        assert!(ban.contains(&("769002".to_string(), "37011412".to_string())));
+        assert!(ban.contains(&("769002".to_string(), "00203944".to_string())));
+        assert!(ban.contains(&("769500".to_string(), "00203944".to_string())));
+        assert!(!ban.contains(&("769999".to_string(), String::new())));
 
         let _ = std::fs::remove_dir_all(&dir);
     }

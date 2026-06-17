@@ -116,9 +116,9 @@ pub struct ReserveData {
     pub duplicates: usize,
     /// Отброшено фильтрами (ёмкость, пустые коды, неактивный договор).
     pub filtered: usize,
-    /// Отброшено как «чужие» по allowlist владельцев (`reserve_owners.json`):
-    /// пара (код станции, ОКПО) отсутствует в справочнике. 0, если allowlist пуст
-    /// (фильтр по владельцам отключён).
+    /// Отброшено как «чужие» по ban-list владельцев (`reserve_owners.json`):
+    /// пара (код станции, ОКПО) присутствует в справочнике запрещённых. 0, если
+    /// ban-list пуст (фильтр по владельцам отключён).
     pub foreign_filtered: usize,
 }
 
@@ -209,11 +209,11 @@ fn build_reserve_nodes(items: Vec<FreeReserveApiItem>, today: NaiveDate) -> Rese
     ReserveData { nodes, raw_records, duplicates, filtered, foreign_filtered: 0 }
 }
 
-/// Пара-ключ allowlist для записи: `(код станции ЕСР-6, ОКПО владельца)`.
+/// Пара-ключ ban-list для записи: `(код станции ЕСР-6, ОКПО владельца)`.
 ///
-/// Нормализация идентична [`load_reserve_owners_allowlist`]: код станции → 6 цифр,
-/// ОКПО → trim. Пустые значения дают пустые строки (в allowlist не попадут).
-fn owner_allowlist_key(item: &FreeReserveApiItem) -> (String, String) {
+/// Нормализация идентична [`load_reserve_owners_banlist`]: код станции → 6 цифр,
+/// ОКПО → trim. Пустые значения дают пустые строки.
+fn owner_filter_key(item: &FreeReserveApiItem) -> (String, String) {
     let station_code = item
         .station_code
         .clone()
@@ -447,15 +447,16 @@ fn row_to_item(row: &rusqlite::Row) -> rusqlite::Result<FreeReserveApiItem> {
 /// Фильтрация (ёмкость, пустые коды, активность договора по `date_beg`/`date_end`)
 /// выполняется тем же [`build_reserve_nodes`], что и для прямого ответа API.
 ///
-/// Дополнительно применяется allowlist «своих» владельцев `owners_allowlist`
-/// (`reserve_owners.json`): остаются только записи, у которых пара
-/// `(код станции, ОКПО владельца)` есть в справочнике — «чужие» ёмкости отстоя
-/// отбрасываются (счётчик [`ReserveData::foreign_filtered`]). Если allowlist **пуст**
-/// (справочник не загружен), фильтр по владельцам отключается и проходят все записи.
+/// Дополнительно применяется ban-list «чужих» владельцев `owners_banlist`
+/// (`reserve_owners.json`): отбрасываются записи, у которых пара
+/// `(код станции, ОКПО владельца)` присутствует в справочнике запрещённых —
+/// «чужие» ёмкости отстоя исключаются (счётчик [`ReserveData::foreign_filtered`]).
+/// Если ban-list **пуст** (справочник не загружен), фильтр по владельцам отключается
+/// и проходят все записи.
 pub fn load_active_reserve_nodes(
     conn: &Connection,
     today: NaiveDate,
-    owners_allowlist: &HashSet<(String, String)>,
+    owners_banlist: &HashSet<(String, String)>,
 ) -> anyhow::Result<ReserveData> {
     let mut stmt = conn.prepare(SELECT_SQL).context("подготовка чтения отстоя")?;
     let items = stmt
@@ -464,13 +465,13 @@ pub fn load_active_reserve_nodes(
         .collect::<rusqlite::Result<Vec<_>>>()
         .context("разбор записей отстоя")?;
 
-    let (items, foreign_filtered) = if owners_allowlist.is_empty() {
+    let (items, foreign_filtered) = if owners_banlist.is_empty() {
         (items, 0)
     } else {
         let before = items.len();
         let kept: Vec<FreeReserveApiItem> = items
             .into_iter()
-            .filter(|item| owners_allowlist.contains(&owner_allowlist_key(item)))
+            .filter(|item| !owners_banlist.contains(&owner_filter_key(item)))
             .collect();
         let dropped = before - kept.len();
         (kept, dropped)
@@ -682,42 +683,43 @@ mod tests {
         assert_eq!(data.nodes.len(), 0);
     }
 
-    /// Непустой allowlist оставляет только «свои» (станция+ОКПО), чужие отбрасывает.
+    /// Непустой ban-list отбрасывает «чужие» (станция+ОКПО), остальные оставляет.
     #[test]
-    fn load_filters_foreign_owners_by_allowlist() {
+    fn load_drops_foreign_owners_by_banlist() {
         let conn = mem_db();
         let items = parse_items(
             r#"[
-                {"RailWayReserve": "СВР", "StationReserve": "Березники-Сортировочная",
-                 "StationReserveCode": "769002", "EtranId": 1,
-                 "ReserveOwnerOKPO": "00203944", "AgreementReserveCapacity": 10},
-                {"RailWayReserve": "СВР", "StationReserve": "Соликамск 2",
-                 "StationReserveCode": "769500", "EtranId": 2,
-                 "ReserveOwnerOKPO": "00203944", "AgreementReserveCapacity": 20},
+                {"RailWayReserve": "СВР", "StationReserve": "Своя 1",
+                 "StationReserveCode": "769001", "EtranId": 1,
+                 "ReserveOwnerOKPO": "11111111", "AgreementReserveCapacity": 10},
+                {"RailWayReserve": "СВР", "StationReserve": "Своя 2",
+                 "StationReserveCode": "769002", "EtranId": 2,
+                 "ReserveOwnerOKPO": "22222222", "AgreementReserveCapacity": 20},
                 {"RailWayReserve": "СВР", "StationReserve": "Чужая",
                  "StationReserveCode": "769002", "EtranId": 3,
-                 "ReserveOwnerOKPO": "99999999", "AgreementReserveCapacity": 30}
+                 "ReserveOwnerOKPO": "00203944", "AgreementReserveCapacity": 30}
             ]"#,
         );
         upsert_permits(&conn, &items).unwrap();
 
-        let mut allow = HashSet::new();
-        allow.insert(("769002".to_string(), "00203944".to_string()));
-        allow.insert(("769500".to_string(), "00203944".to_string()));
+        // Запрещаем только пару 769002 + 00203944.
+        let mut ban = HashSet::new();
+        ban.insert(("769002".to_string(), "00203944".to_string()));
 
-        let data = load_active_reserve_nodes(&conn, today(), &allow).unwrap();
+        let data = load_active_reserve_nodes(&conn, today(), &ban).unwrap();
         assert_eq!(data.nodes.len(), 2);
         assert_eq!(data.foreign_filtered, 1);
         assert_eq!(data.total_capacity(), 30);
+        // Станция 769002 со «своим» ОКПО осталась, запрещённая пара ушла.
         assert!(data
             .nodes
             .iter()
-            .all(|n| n.owner_okpo.as_deref() == Some("00203944")));
+            .all(|n| n.owner_okpo.as_deref() != Some("00203944")));
     }
 
-    /// Пустой allowlist отключает фильтр по владельцам — проходят все записи.
+    /// Пустой ban-list отключает фильтр по владельцам — проходят все записи.
     #[test]
-    fn empty_allowlist_keeps_all_owners() {
+    fn empty_banlist_keeps_all_owners() {
         let conn = mem_db();
         let items = parse_items(
             r#"[

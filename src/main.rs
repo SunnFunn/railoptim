@@ -118,11 +118,11 @@ async fn main() -> Result<()> {
             HashSet::new()
         }
     };
-    // Allowlist «своих» ёмкостей отстоя: фильтр БД отстоя по паре (код станции, ОКПО владельца).
-    // Пустой allowlist (справочник не загружен) => фильтр по владельцам отключён.
-    let reserve_owners = match data::load_reserve_owners_allowlist("data/reserve_owners.json") {
+    // Ban-list «чужих» ёмкостей отстоя: фильтр БД отстоя по паре (код станции, ОКПО владельца).
+    // Записи из справочника отбрасываются. Пустой ban-list (справочник не загружен) => фильтр отключён.
+    let reserve_owners = match data::load_reserve_owners_banlist("data/reserve_owners.json") {
         Ok(s) => {
-            println!("Allowlist владельцев отстоя (reserve_owners.json): {} пар (станция+ОКПО)", s.len());
+            println!("Ban-list чужих владельцев отстоя (reserve_owners.json): {} пар (станция+ОКПО)", s.len());
             s
         }
         Err(e) => {
@@ -379,7 +379,7 @@ async fn main() -> Result<()> {
                 Ok(r) if !r.nodes.is_empty() => {
                     println!(
                         "Узлы отстоя (резервы):       {} узлов / ёмкость {} ваг. \
-                         (записей в БД {}, дублей {}, отфильтровано {}, чужих по allowlist {})",
+                         (записей в БД {}, дублей {}, отфильтровано {}, чужих по ban-list {})",
                         r.nodes.len(),
                         r.total_capacity(),
                         r.raw_records,

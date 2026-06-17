@@ -263,6 +263,22 @@ cargo run --release --bin railoptim
 export STATIONS_GEO_DB=data/stations/stations_geo.sqlite   # опционально для railoptim
 ```
 
+### Справочник станций погрузки (`data/load_stations.json`)
+
+Разовая генерация из Excel `data/LoadStations.xlsx` (колонки: D — станция, E — дорога,
+AF — ёмкость путей, AO — погрузка в сутки; данные строки 8..=1296). Excel парсится на Rust
+(`calamine`), коды ЕСР-6 подбираются по имени станции + дороге в MSSQL через хелпер
+`src/data/load_stations_esr.py` (нужны секреты `MSSQL_*`, как у `dislocations.py`/`wash.py`).
+Повторы одной станции (разные грузоотправители/элеваторы) суммируются; диапазон вида `6-11`
+сводится к среднему целому (округление .5 вверх), `31 и более`/`5 и менее` — к самому числу.
+
+```bash
+# с секретами MSSQL в окружении (Infisical):
+cargo run --release --bin railoptim-load-stations
+# проверка парсинга без обращения к БД (load_station_code = null):
+cargo run --bin railoptim-load-stations -- --dry-run
+```
+
 ---
 
 ## Web-сервер (`railoptim-web`)

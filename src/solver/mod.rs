@@ -1,6 +1,7 @@
 pub mod alns;
 pub mod diagnose;
 pub mod greedy;
+pub mod loadroads;
 pub mod lp;
 pub mod mip;
 pub mod model;
@@ -22,6 +23,9 @@ pub use model::{
     PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_PERIOD10_RUB,
     PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_RUB, WASH_PATH_SURCHARGE_RUB,
     WASH_PROCEDURE_AVG_COST_RUB, build_task_arcs,
+};
+pub use loadroads::{
+    solve_loadroad_assignment, LoadRoadAssignment, LOADROAD_MIN_BATCH, LOADROAD_PLACEMENT_REWARD,
 };
 pub use reserve::{solve_reserve_assignment, ReserveAssignment, RESERVE_PLACEMENT_REWARD};
 pub use result::{

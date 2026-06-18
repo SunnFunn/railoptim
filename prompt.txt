@@ -2,91 +2,18 @@
 
 Если забыл структуру проекта, то пробегись по readme.md. Если контекст предыдущих работ доступен, то его достаочно.
 
-Преамбула задачи: В низкий сезон перевозки зерновых грузов железной дороги, вагоны-зерновозы буквально некуда девать.
-Емкостей отстоя вагонов остается мало, зачвок клиентов на погрузку почти нет. В бизнес-практике в этом случае используется договоренность с клиентами, имеющими \
-на станции погрузки свободные большие емкости подъездных ж-д путей временно размещать на них невостребованные вагоны.
-Необходимо определить емкости таких путей для крупных станций погрузки (именно свободные емкости, не забитые вагонами).
-Далее эти емкости можно будет использовать для размещения вагонов в оптимизационной задаче (но это следующая задача для тебя).
 
-Твоя текущая задача - дополнить функционал проекта созданием нового справочника данных в папке /data в корне проекта.
-Справочник данных должен быть файлом формата json, содержащим списко объектов, позволяющих определить для каждой станции погрузки свободные емкости на подъездных путях.
-Формат объекта - словарь вида:
-{
-  LoadRoadName: ... (3-letter name),
-  LoadStationName: ....,
-  LoadStationCode: ... (6-digit esr code),
-  RailRoadCapacity: ... (number of cars that can be placed),
-  CarsOnRailRoads: ... (already placed cars),
-  FreeRailRoadCapacity: ... (available capacity to place cars)
-}
-Файл со списком таких объектов разместить в папке /data
+Преамбула перед задачей:
+Тестовый прогон на прод сервере прошел успешно. Можешь посмотреть результат прогона в файле /data/load_stations_free_capacity.json
+Теперь список в этом файле необходимо использовать в главном оптимизационном цикле.
 
-Алгоритм формирования такого списка:
+Как сейчас построена цепочка:
+ - Решение оптимизационной задачи (Greedy->MIP->ALNS if needed) с узлами supply и узлами demand, включая погрузку, промывку и ремонт
+ - Нераспределенные вагоны распределяются в отстой по доступным емкостям
+ - остальные идут в dummy узел в назначением "Затягивание грузовой операции" (по сути это вагоны, которые некуда девать и они временно остаются после выгрузки на путях клиента)
 
-Шаг 1 - запрашиваем MSSQL DB и получаем список станций погрузки за предыдущие 6 месяцев (на них можно разместить вагоны). SQL запрос вида:
-stmt_load_stations = \
-    f'''
-    SELECT
-        ACL.RailwayFromShortName, ACL.StationFromName, SF.Code6,
-        ACL.ETSNGName, ACL.ETSNGCode,
-        SUM(CLD.CarCount) AS TotalCars
-    FROM dbo.vwASUVPClaim ACL (NOLOCK)
-    JOIN dbo.Claim CL (NOLOCK) ON CL.ClaimId = ACL.Id
-    JOIN dbo.ClaimLoadingSchedule CLS (NOLOCK) ON CLS.ClaimId = ACL.Id
-    JOIN dbo.ClaimLoadingScheduleDate CLD (NOLOCK) ON CLS.Id = CLD.LoadingScheduleId
-    JOIN NSI.Station SF (NOLOCK)  ON SF.Id = CL.StationFromId
-    JOIN NSI.Station ST (NOLOCK)  ON ST.Id = CL.StationToId
-    JOIN dbo.Company CPF (NOLOCK) ON CPF.Id = CL.LoaderFromId
-    WHERE
-        CLS.Version = 1
-        AND ACL.ScheduleStatusName = 'Согласованный'
-        AND CLD.LoadDate <= '2026-06-18'
-        AND CLD.LoadDate >= '2026-01-01'
-        AND ACL.CarParkName != 'Инвентарный'
-        AND (ACL.ETSNGCode LIKE '0%' OR ACL.ETSNGCode LIKE '5%')
-    GROUP BY
-        ACL.RailwayFromShortName, ACL.StationFromName, SF.Code6, ACL.ETSNGName, ACL.ETSNGCode;
-    '''
-  
-  Из этого запроса можно сформировать Rust структуру с полями SQL запроса и далее использовать ее.
-  Запрос выполняетс я секретами Infisical, имя БД должно быть MSSQL_DB_SLP (берется как переменная окружения)
-
-  Шаг 2 - получаем данные о уже находящихся на станциях вагонов из MSSQL DB запросом:
-   f'''
-    SELECT
-        DP.StationToCode,
-        COUNT (DP.CarNumber) AS Cars
-    FROM DislocationPreview DP (NOLOCK)
-    WHERE DP.Distance = 0
-    GROUP BY
-        DP.StationToCode;
-    '''
-Из этого запроса можно сформировать Rust HashSet (код станции, количество вагонов на станции).
-Запрос выполняетс я секретами Infisical, имя БД должно быть MSSQL_DB_ASUVP (берется как переменная окружения)
-
-Шаг 3 - формируем финальную структуру:
-   {
-  LoadRoadName: ... (3-letter name),
-  LoadStationName: ....,
-  LoadStationCode: ... (6-digit esr code),
-  RailRoadCapacity: ... (number of cars that can be placed),
-  CarsOnRailRoads: ... (already placed cars),
-  FreeRailRoadCapacity: ... (available capacity to place cars)
-}
-
-В структуры должны входить только крупные станции погрузки!!!тОпределять по критерию мощности подъездных путей больше 50 вагонов.
-Мощность брать из файла load_stations.json в папке /data и там же отбирать имя и коды станций и дорогу.
-RailRoadCapacity будет соответствовать полю station_road_capacity из объекта файла load_stations.json
-{
-    "rail_road": "ПРВ",
-    "load_station": "Абганерово",
-    "load_station_code": "612408",
-    "station_road_capacity": 8,
-    "station_load_capacity": 16
-  }
-
-  Поле CarsOnRailRoads необходимо заполнить из данных Шага 2 (найти по коду станции количество вагонов на этой станции)
-
-  Поле FreeRailRoadCapacity будет простой разницей между значениями полей RailRoadCapacity и CarsOnRailRoads.
-
-  В окончательный список@ должны войти только те станции у которых FreeRailRoadCapacity составлят больше 20 вагонов (это вообще должен быть отдельная константа для управления)
+Твоя задача - встроить в этот цикл данные из файла /data/load_stations_free_capacity.json следующим образом:
+ - Решение оптимизационной задачи (Greedy->MIP->ALNS if needed) с узлами supply и узлами demand, включая погрузку, промывку и ремонт
+ - Нераспределенные вагоны распределяются в отстой по доступным емкостям
+ - Если еще остались нераспределенные вагоны, то распределять их на пути станций погрузки из файла /data/load_stations_free_capacity.json. При этом предварительно надо направить запрос в АПИ на тарифы ко всем этим станциям. При назначении поставить ограничении, что назначать не менее 5 вагонов на одну станцию.
+ - остальные идут в dummy узел в назначением "Затягивание грузовой операции" (по сути это вагоны, которые некуда девать и они временно остаются после выгрузки на путях клиента)

@@ -417,19 +417,23 @@ async fn main() -> Result<()> {
     //     использован для размещения невостребованных вагонов (следующая задача).
     //     Недоступность БД не блокирует прогон.
     // -----------------------------------------------------------------------
-    match data::build_free_loadroads(
+    let free_loadroads: Vec<data::FreeLoadRoad> = match data::build_free_loadroads(
         data::free_loadroads::DEFAULT_LOAD_STATIONS_PATH,
         data::free_loadroads::DEFAULT_OUTPUT_PATH,
     ) {
-        Ok(records) => println!(
-            "Свободные ёмкости путей:     {} крупных станций -> {}",
-            records.len(),
-            data::free_loadroads::DEFAULT_OUTPUT_PATH,
-        ),
-        Err(e) => eprintln!(
-            "  ВНИМАНИЕ: справочник свободных ёмкостей путей не построен ({e})"
-        ),
-    }
+        Ok(records) => {
+            println!(
+                "Свободные ёмкости путей:     {} крупных станций -> {}",
+                records.len(),
+                data::free_loadroads::DEFAULT_OUTPUT_PATH,
+            );
+            records
+        }
+        Err(e) => {
+            eprintln!("  ВНИМАНИЕ: справочник свободных ёмкостей путей не построен ({e})");
+            Vec::new()
+        }
+    };
 
     // -----------------------------------------------------------------------
     // 4. Построение дуг транспортной задачи
@@ -844,12 +848,97 @@ async fn main() -> Result<()> {
     }
 
     // -----------------------------------------------------------------------
+    // 6б. Этап 3: размещение оставшегося излишка на свободных подъездных путях
+    //     крупных станций погрузки (data/load_stations_free_capacity.json).
+    //     На вход — остаток ПОСЛЕ отстоя. Тарифы запрашиваются от станций излишка
+    //     ко всем станциям погрузки из справочника. Ограничение: на одну станцию
+    //     не менее LOADROAD_MIN_BATCH (=5) вагонов. ДМЗИ не расходуется.
+    // -----------------------------------------------------------------------
+    let mut loadroad_assignments: Vec<solver::LoadRoadAssignment> = Vec::new();
+    // Остаток после отстоя: вычитаем размещённое в резервы из остатка основного решения.
+    let mut excess_after_reserve = remaining_supply_vec.clone();
+    for ra in &reserve_assignments {
+        if let Some(rem) = excess_after_reserve.get_mut(ra.s_idx) {
+            *rem -= ra.quantity;
+        }
+    }
+    let total_excess_after_reserve: i32 = excess_after_reserve.iter().map(|&r| r.max(0)).sum();
+    if !free_loadroads.is_empty() && total_excess_after_reserve > 0 {
+        let excess_from: Vec<StationRef> = opt_supply
+            .iter()
+            .zip(excess_after_reserve.iter())
+            .filter(|&(_, &rem)| rem > 0)
+            .map(|(s, _)| (s.station_to_code.clone(), s.railway_to.clone()))
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .map(|(code, rw)| StationRef::new(code, rw))
+            .collect();
+        // Тарифы ко ВСЕМ станциям погрузки из справочника (уникальные код+дорога).
+        let loadroad_refs: Vec<StationRef> = free_loadroads
+            .iter()
+            .map(|l| (l.load_station_code.clone(), l.load_road_name.clone()))
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .map(|(code, rw)| StationRef::new(code, rw))
+            .collect();
+
+        match client.fetch_tariffs(&excess_from, &loadroad_refs).await {
+            Ok(items) => {
+                let loadroad_tariff_map: HashMap<(String, String), TariffNode> = items
+                    .into_iter()
+                    .map(|t| ((t.station_from_code.clone(), t.station_to_code.clone()), t))
+                    .collect();
+                println!(
+                    "Тарифов до путей погрузки:   {} (станций излишка {}, станций погрузки {})",
+                    loadroad_tariff_map.len(),
+                    excess_from.len(),
+                    loadroad_refs.len(),
+                );
+                loadroad_assignments = solver::solve_loadroad_assignment(
+                    &excess_after_reserve,
+                    &opt_supply,
+                    &free_loadroads,
+                    &loadroad_tariff_map,
+                );
+            }
+            Err(e) => eprintln!(
+                "  тарифы до путей погрузки: {e} — остаток остаётся «Затягивание грузовой операции»"
+            ),
+        }
+
+        let placed: i32 = loadroad_assignments.iter().map(|a| a.quantity).sum();
+        let used_stations: HashSet<&str> = loadroad_assignments
+            .iter()
+            .map(|a| free_loadroads[a.l_idx].load_station_code.as_str())
+            .collect();
+        let loadroad_cost: f64 = loadroad_assignments
+            .iter()
+            .map(|a| a.cost * a.quantity as f64)
+            .sum();
+        println!(
+            "На пути погрузки: {} из {} ваг. остатка → {} станций (≥{} ваг./станция), тариф {:.0} руб.; не размещено {} ваг.",
+            placed,
+            total_excess_after_reserve,
+            used_stations.len(),
+            solver::LOADROAD_MIN_BATCH,
+            loadroad_cost,
+            total_excess_after_reserve - placed,
+        );
+    } else if total_excess_after_reserve > 0 {
+        println!(
+            "На пути погрузки: пропущено (справочник пуст), остаток {} ваг. остаётся «Затягивание»",
+            total_excess_after_reserve,
+        );
+    }
+
+    // -----------------------------------------------------------------------
     // 7. Построение выходных записей + сохранение чекпоинта и отправка в АПИ
     // -----------------------------------------------------------------------
-    // Записи по оптимизированным назначениям (Free / NoNumber) + отстой (этап 2).
+    // Записи: оптимизация (Free / NoNumber) + отстой (этап 2) + пути погрузки (этап 3).
     let mut output_records = solver::build_output_records(
         &solution, &arcs, &opt_supply, &demand_lp, &wash_codes, &no_cleaning_roads,
         &washed_empty_codes, &reserve_assignments, &reserve_nodes,
+        &loadroad_assignments, &free_loadroads,
     );
     // Самопроверка баланса: вагоны не должны «исчезать» из отчёта — каждый вагон
     // предложения либо назначен, либо получает «Затягивание грузовой операции».
@@ -963,6 +1052,10 @@ async fn main() -> Result<()> {
         let reserve_placed: i32 = reserve_assignments.iter().map(|a| a.quantity).sum();
         if reserve_placed > 0 {
             println!("  из них в отстой (этап 2): {} ваг.", reserve_placed);
+        }
+        let loadroad_placed: i32 = loadroad_assignments.iter().map(|a| a.quantity).sum();
+        if loadroad_placed > 0 {
+            println!("  из них на пути погрузки (этап 3): {} ваг.", loadroad_placed);
         }
     }
     if optim_result.penalty_cars > 1e-4 {

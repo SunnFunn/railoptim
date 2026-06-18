@@ -1,0 +1,5112 @@
+[
+  {
+    "rail_road": "КРС",
+    "load_station": "Абакан",
+    "load_station_code": "888004",
+    "station_road_capacity": 76,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Абганерово",
+    "load_station_code": "612408",
+    "station_road_capacity": 8,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Абрамовка",
+    "load_station_code": "583600",
+    "station_road_capacity": 16,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Ададурово",
+    "load_station_code": "622202",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Азов",
+    "load_station_code": "510806",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЮУР",
+    "load_station": "Айдырля",
+    "load_station_code": "815802",
+    "station_road_capacity": 57,
+    "station_load_capacity": 29
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Акташ",
+    "load_station_code": "648005",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ГОР",
+    "load_station": "Албаба",
+    "load_station_code": "249108",
+    "station_road_capacity": 8,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Албаши",
+    "load_station_code": "515804",
+    "station_road_capacity": 36,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Алейская",
+    "load_station_code": "844307",
+    "station_road_capacity": 128,
+    "station_load_capacity": 26
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Александров",
+    "load_station_code": "237007",
+    "station_road_capacity": 5,
+    "station_load_capacity": 2
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Алексеевка",
+    "load_station_code": "581407",
+    "station_road_capacity": 101,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Алексиково",
+    "load_station_code": "612906",
+    "station_road_capacity": 60,
+    "station_load_capacity": 40
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Аллагуват",
+    "load_station_code": "652808",
+    "station_road_capacity": 16,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "ГОР",
+    "load_station": "Алнаши",
+    "load_station_code": "255109",
+    "station_road_capacity": 5,
+    "station_load_capacity": 2
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Алтайская",
+    "load_station_code": "840005",
+    "station_road_capacity": 84,
+    "station_load_capacity": 39
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Алтата",
+    "load_station_code": "628209",
+    "station_road_capacity": 36,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЮУР",
+    "load_station": "Альмухамедово",
+    "load_station_code": "818209",
+    "station_road_capacity": 72,
+    "station_load_capacity": 32
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Андреедмитриевка",
+    "load_station_code": "536007",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Анжерская",
+    "load_station_code": "875907",
+    "station_road_capacity": 202,
+    "station_load_capacity": 24
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Анисовка",
+    "load_station_code": "625501",
+    "station_road_capacity": 32,
+    "station_load_capacity": 24
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Анна",
+    "load_station_code": "591201",
+    "station_road_capacity": 72,
+    "station_load_capacity": 31
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Аполлонская",
+    "load_station_code": "537300",
+    "station_road_capacity": 96,
+    "station_load_capacity": 40
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Арбузовка",
+    "load_station_code": "846105",
+    "station_road_capacity": 36,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Ардон",
+    "load_station_code": "538303",
+    "station_road_capacity": 36,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Аркадак",
+    "load_station_code": "605809",
+    "station_road_capacity": 40,
+    "station_load_capacity": 29
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Армавир-Туапсинский",
+    "load_station_code": "530301",
+    "station_road_capacity": 152,
+    "station_load_capacity": 45
+  },
+  {
+    "rail_road": "ГОР",
+    "load_station": "Арск",
+    "load_station_code": "253508",
+    "station_road_capacity": 16,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ДВС",
+    "load_station": "АРХАРА",
+    "load_station_code": "960601",
+    "station_road_capacity": 21,
+    "station_load_capacity": 13
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Арчеда",
+    "load_station_code": "613805",
+    "station_road_capacity": 68,
+    "station_load_capacity": 32
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Асекеево",
+    "load_station_code": "659601",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Асино",
+    "load_station_code": "875108",
+    "station_road_capacity": 36,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "КРС",
+    "load_station": "Аскиз",
+    "load_station_code": "887001",
+    "station_road_capacity": 16,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Астрахань 1",
+    "load_station_code": "616803",
+    "station_road_capacity": 36,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Атаман",
+    "load_station_code": "517504",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "КЗХ",
+    "load_station": "Атбасар",
+    "load_station_code": "691503",
+    "station_road_capacity": 16,
+    "station_load_capacity": 26
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Аткарск",
+    "load_station_code": "608807",
+    "station_road_capacity": 76,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ГОР",
+    "load_station": "Атяшево",
+    "load_station_code": "247309",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "КРС",
+    "load_station": "Ачинск 1",
+    "load_station_code": "880002",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "КРС",
+    "load_station": "Ачинск 2",
+    "load_station_code": "883809",
+    "station_road_capacity": 104,
+    "station_load_capacity": 56
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Бабарыкино",
+    "load_station_code": "593508",
+    "station_road_capacity": 32,
+    "station_load_capacity": 24
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Баган",
+    "load_station_code": "837500",
+    "station_road_capacity": 52,
+    "station_load_capacity": 24
+  },
+  {
+    "rail_road": "КРС",
+    "load_station": "Базаиха",
+    "load_station_code": "892103",
+    "station_road_capacity": 44,
+    "station_load_capacity": 10
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Байчурово",
+    "load_station_code": "605103",
+    "station_road_capacity": 8,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Балаково",
+    "load_station_code": "625107",
+    "station_road_capacity": 168,
+    "station_load_capacity": 44
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Балашов 1",
+    "load_station_code": "605300",
+    "station_road_capacity": 64,
+    "station_load_capacity": 37
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Балашов-Пассажирский",
+    "load_station_code": "605404",
+    "station_road_capacity": 16,
+    "station_load_capacity": 13
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Барабинск",
+    "load_station_code": "833603",
+    "station_road_capacity": 120,
+    "station_load_capacity": 42
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Барнаул",
+    "load_station_code": "840109",
+    "station_road_capacity": 168,
+    "station_load_capacity": 37
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Барнуковка",
+    "load_station_code": "609801",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Башмаково",
+    "load_station_code": "632906",
+    "station_road_capacity": 32,
+    "station_load_capacity": 24
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Безенчук",
+    "load_station_code": "638501",
+    "station_road_capacity": 317,
+    "station_load_capacity": 93
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Безымянная",
+    "load_station_code": "626006",
+    "station_road_capacity": 10,
+    "station_load_capacity": 4
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Беково",
+    "load_station_code": "607503",
+    "station_road_capacity": 24,
+    "station_load_capacity": 10
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Белгород",
+    "load_station_code": "434509",
+    "station_road_capacity": 36,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Белев",
+    "load_station_code": "213500",
+    "station_road_capacity": 5,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Белинская",
+    "load_station_code": "633300",
+    "station_road_capacity": 44,
+    "station_load_capacity": 13
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Белово",
+    "load_station_code": "862305",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Белоглинская",
+    "load_station_code": "518102",
+    "station_road_capacity": 117,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ЗАБ",
+    "load_station": "Белогорск 2",
+    "load_station_code": "950101",
+    "station_road_capacity": 108,
+    "station_load_capacity": 20
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Белое Озеро",
+    "load_station_code": "652301",
+    "station_road_capacity": 41,
+    "station_load_capacity": 7
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Бердия",
+    "load_station_code": "622607",
+    "station_road_capacity": 36,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Бердск",
+    "load_station_code": "853109",
+    "station_road_capacity": 24,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ЗАБ",
+    "load_station": "Березовский-Восточный",
+    "load_station_code": "954403",
+    "station_road_capacity": 49,
+    "station_load_capacity": 29
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Беслан",
+    "load_station_code": "538500",
+    "station_road_capacity": 36,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Бийск",
+    "load_station_code": "843200",
+    "station_road_capacity": 172,
+    "station_load_capacity": 71
+  },
+  {
+    "rail_road": "ДВС",
+    "load_station": "БИРОБИДЖАН 2",
+    "load_station_code": "963008",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Бирюч",
+    "load_station_code": "581209",
+    "station_road_capacity": 8,
+    "station_load_capacity": 2
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Битюг",
+    "load_station_code": "582607",
+    "station_road_capacity": 41,
+    "station_load_capacity": 13
+  },
+  {
+    "rail_road": "ЗАБ",
+    "load_station": "Благовещенск",
+    "load_station_code": "954704",
+    "station_road_capacity": 29,
+    "station_load_capacity": 18
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Благодарное",
+    "load_station_code": "527703",
+    "station_road_capacity": 124,
+    "station_load_capacity": 45
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Блохино",
+    "load_station_code": "207800",
+    "station_road_capacity": 8,
+    "station_load_capacity": 2
+  },
+  {
+    "rail_road": "ЮУР",
+    "load_station": "Богатое",
+    "load_station_code": "810404",
+    "station_road_capacity": 94,
+    "station_load_capacity": 25
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "БОКИНО",
+    "load_station_code": "601507",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Болотная",
+    "load_station_code": "854402",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Борисоглебск",
+    "load_station_code": "599006",
+    "station_road_capacity": 48,
+    "station_load_capacity": 29
+  },
+  {
+    "rail_road": "ЮУР",
+    "load_station": "Бреды",
+    "load_station_code": "816006",
+    "station_road_capacity": 24,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Бронницы",
+    "load_station_code": "195001",
+    "station_road_capacity": 36,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Брюховецкая",
+    "load_station_code": "516107",
+    "station_road_capacity": 32,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Бряндино",
+    "load_station_code": "646103",
+    "station_road_capacity": 8,
+    "station_load_capacity": 13
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Брянск-Льговский",
+    "load_station_code": "200002",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ГОР",
+    "load_station": "Буа",
+    "load_station_code": "249409",
+    "station_road_capacity": 80,
+    "station_load_capacity": 24
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Бугульма",
+    "load_station_code": "648607",
+    "station_road_capacity": 57,
+    "station_load_capacity": 21
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Бугуруслан",
+    "load_station_code": "659404",
+    "station_road_capacity": 32,
+    "station_load_capacity": 32
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Бударино",
+    "load_station_code": "613203",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Буденновск",
+    "load_station_code": "537007",
+    "station_road_capacity": 160,
+    "station_load_capacity": 53
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Буздяк",
+    "load_station_code": "651309",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЮУР",
+    "load_station": "Бузулук",
+    "load_station_code": "810809",
+    "station_road_capacity": 68,
+    "station_load_capacity": 24
+  },
+  {
+    "rail_road": "ЮУР",
+    "load_station": "Булаево 1",
+    "load_station_code": "825202",
+    "station_road_capacity": 52,
+    "station_load_capacity": 34
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Булычево",
+    "load_station_code": "631004",
+    "station_road_capacity": 8,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Бурасы",
+    "load_station_code": "609509",
+    "station_road_capacity": 16,
+    "station_load_capacity": 13
+  },
+  {
+    "rail_road": "ЗАБ",
+    "load_station": "Бурея",
+    "load_station_code": "956305",
+    "station_road_capacity": 52,
+    "station_load_capacity": 24
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Бурла",
+    "load_station_code": "837407",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Бурсак",
+    "load_station_code": "525106",
+    "station_road_capacity": 16,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "ГОР",
+    "load_station": "Бурундуки",
+    "load_station_code": "249502",
+    "station_road_capacity": 36,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Бутурлиновка",
+    "load_station_code": "583101",
+    "station_road_capacity": 44,
+    "station_load_capacity": 13
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Валуйки",
+    "load_station_code": "438302",
+    "station_road_capacity": 40,
+    "station_load_capacity": 24
+  },
+  {
+    "rail_road": "ЮУР",
+    "load_station": "Варгаши",
+    "load_station_code": "826900",
+    "station_road_capacity": 52,
+    "station_load_capacity": 24
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Варениковская",
+    "load_station_code": "522606",
+    "station_road_capacity": 36,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Величковка",
+    "load_station_code": "522409",
+    "station_road_capacity": 36,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Верда",
+    "load_station_code": "631502",
+    "station_road_capacity": 52,
+    "station_load_capacity": 18
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Вернадовка",
+    "load_station_code": "632401",
+    "station_road_capacity": 16,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Вертуновская",
+    "load_station_code": "607400",
+    "station_road_capacity": 52,
+    "station_load_capacity": 10
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Верховье",
+    "load_station_code": "217709",
+    "station_road_capacity": 21,
+    "station_load_capacity": 13
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Виноградная",
+    "load_station_code": "536204",
+    "station_road_capacity": 24,
+    "station_load_capacity": 24
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Владикавказ",
+    "load_station_code": "538708",
+    "station_road_capacity": 16,
+    "station_load_capacity": 2
+  },
+  {
+    "rail_road": "ГОР",
+    "load_station": "Владимир",
+    "load_station_code": "262704",
+    "station_road_capacity": 5,
+    "station_load_capacity": 2
+  },
+  {
+    "rail_road": "ГОР",
+    "load_station": "Вожой",
+    "load_station_code": "255607",
+    "station_road_capacity": 5,
+    "station_load_capacity": 2
+  },
+  {
+    "rail_road": "ЗАБ",
+    "load_station": "Возжаевка",
+    "load_station_code": "955209",
+    "station_road_capacity": 24,
+    "station_load_capacity": 21
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Возрождение",
+    "load_station_code": "624509",
+    "station_road_capacity": 5,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Волгодонская",
+    "load_station_code": "519707",
+    "station_road_capacity": 52,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Волово",
+    "load_station_code": "224806",
+    "station_road_capacity": 36,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "СЕВ",
+    "load_station": "Вологда-Пристань",
+    "load_station_code": "300200",
+    "station_road_capacity": 8,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Волоконовка",
+    "load_station_code": "439201",
+    "station_road_capacity": 36,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "ВОРОНЕЖ 1",
+    "load_station_code": "596506",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Воронеж-Курский",
+    "load_station_code": "596402",
+    "station_road_capacity": 16,
+    "station_load_capacity": 13
+  },
+  {
+    "rail_road": "ГОР",
+    "load_station": "Восстание",
+    "load_station_code": "250904",
+    "station_road_capacity": 8,
+    "station_load_capacity": 2
+  },
+  {
+    "rail_road": "ГОР",
+    "load_station": "Воткинск",
+    "load_station_code": "255804",
+    "station_road_capacity": 5,
+    "station_load_capacity": 2
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Выселки",
+    "load_station_code": "525002",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "БЕЛ",
+    "load_station": "Высоко-Литовск",
+    "load_station_code": "131705",
+    "station_road_capacity": 16,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ГОР",
+    "load_station": "Вятка",
+    "load_station_code": "273304",
+    "station_road_capacity": 5,
+    "station_load_capacity": 2
+  },
+  {
+    "rail_road": "ГОР",
+    "load_station": "Вятские Поляны",
+    "load_station_code": "253809",
+    "station_road_capacity": 5,
+    "station_load_capacity": 0
+  },
+  {
+    "rail_road": "ЮУР",
+    "load_station": "ГАЙ",
+    "load_station_code": "814104",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Георгиевск",
+    "load_station_code": "536308",
+    "station_road_capacity": 32,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Гетмановская",
+    "load_station_code": "526202",
+    "station_road_capacity": 16,
+    "station_load_capacity": 2
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Гилевка",
+    "load_station_code": "845704",
+    "station_road_capacity": 72,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Гирей",
+    "load_station_code": "529501",
+    "station_road_capacity": 36,
+    "station_load_capacity": 26
+  },
+  {
+    "rail_road": "ГОР",
+    "load_station": "Глазов",
+    "load_station_code": "275704",
+    "station_road_capacity": 36,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Глазуновка",
+    "load_station_code": "216903",
+    "station_road_capacity": 16,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Глубокая",
+    "load_station_code": "587009",
+    "station_road_capacity": 44,
+    "station_load_capacity": 10
+  },
+  {
+    "rail_road": "КРС",
+    "load_station": "Глядень",
+    "load_station_code": "884107",
+    "station_road_capacity": 32,
+    "station_load_capacity": 10
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Гмелинская",
+    "load_station_code": "619106",
+    "station_road_capacity": 44,
+    "station_load_capacity": 42
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Гнилоаксайская",
+    "load_station_code": "612304",
+    "station_road_capacity": 24,
+    "station_load_capacity": 24
+  },
+  {
+    "rail_road": "ЮУР",
+    "load_station": "Гогино",
+    "load_station_code": "816109",
+    "station_road_capacity": 36,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "СВР",
+    "load_station": "Голышманово",
+    "load_station_code": "791400",
+    "station_road_capacity": 8,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "ГОРБАЧЕВО",
+    "load_station_code": "214700",
+    "station_road_capacity": 36,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Горшечное",
+    "load_station_code": "595202",
+    "station_road_capacity": 32,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Готня",
+    "load_station_code": "436400",
+    "station_road_capacity": 36,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Гречишкино",
+    "load_station_code": "526005",
+    "station_road_capacity": 224,
+    "station_load_capacity": 40
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Грибановка",
+    "load_station_code": "598906",
+    "station_road_capacity": 92,
+    "station_load_capacity": 10
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Грязи-Волгоградские",
+    "load_station_code": "597706",
+    "station_road_capacity": 92,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Грязи-Воронежские",
+    "load_station_code": "591907",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Гулькевичи",
+    "load_station_code": "529605",
+    "station_road_capacity": 36,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Гурьевск",
+    "load_station_code": "862502",
+    "station_road_capacity": 36,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Давлеканово",
+    "load_station_code": "657108",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Давыдовка",
+    "load_station_code": "597509",
+    "station_road_capacity": 36,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ЮУР",
+    "load_station": "Далматово",
+    "load_station_code": "827602",
+    "station_road_capacity": 5,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Данков",
+    "load_station_code": "594206",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Двойная",
+    "load_station_code": "519001",
+    "station_road_capacity": 44,
+    "station_load_capacity": 13
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Демьяс",
+    "load_station_code": "628302",
+    "station_road_capacity": 36,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Дивное",
+    "load_station_code": "528509",
+    "station_road_capacity": 120,
+    "station_load_capacity": 32
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Димитровград",
+    "load_station_code": "646207",
+    "station_road_capacity": 100,
+    "station_load_capacity": 50
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Динская",
+    "load_station_code": "524601",
+    "station_road_capacity": 36,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Дмитриев-Льговский",
+    "load_station_code": "204906",
+    "station_road_capacity": 56,
+    "station_load_capacity": 56
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Добринка",
+    "load_station_code": "598003",
+    "station_road_capacity": 52,
+    "station_load_capacity": 13
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Долгая",
+    "load_station_code": "219009",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Долгоруково",
+    "load_station_code": "596807",
+    "station_road_capacity": 24,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Дондуковская",
+    "load_station_code": "535305",
+    "station_road_capacity": 16,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Донская",
+    "load_station_code": "615500",
+    "station_road_capacity": 44,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ЗАБ",
+    "load_station": "Досатуй",
+    "load_station_code": "946002",
+    "station_road_capacity": 13,
+    "station_load_capacity": 13
+  },
+  {
+    "rail_road": "КРС",
+    "load_station": "ДУБИНИНО",
+    "load_station_code": "884501",
+    "station_road_capacity": 16,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "ЮУР",
+    "load_station": "Дубиновка",
+    "load_station_code": "813205",
+    "station_road_capacity": 8,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "СЕВ",
+    "load_station": "Дунайка",
+    "load_station_code": "315121",
+    "station_road_capacity": 36,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Дягилево",
+    "load_station_code": "220203",
+    "station_road_capacity": 36,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Евсино",
+    "load_station_code": "852801",
+    "station_road_capacity": 36,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Екатериновка",
+    "load_station_code": "608606",
+    "station_road_capacity": 92,
+    "station_load_capacity": 36
+  },
+  {
+    "rail_road": "ЗАБ",
+    "load_station": "Екатеринославка",
+    "load_station_code": "955406",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Елань-Камышинская",
+    "load_station_code": "606801",
+    "station_road_capacity": 164,
+    "station_load_capacity": 64
+  },
+  {
+    "rail_road": "ЛАТ",
+    "load_station": "Елгава",
+    "load_station_code": "091809",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Елец",
+    "load_station_code": "593000",
+    "station_road_capacity": 153,
+    "station_load_capacity": 48
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Ельшанка",
+    "load_station_code": "611509",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "КРС",
+    "load_station": "Енисей",
+    "load_station_code": "891401",
+    "station_road_capacity": 16,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Ермолаево",
+    "load_station_code": "653541",
+    "station_road_capacity": 202,
+    "station_load_capacity": 32
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Ершов",
+    "load_station_code": "627206",
+    "station_road_capacity": 60,
+    "station_load_capacity": 34
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Ефремов",
+    "load_station_code": "225300",
+    "station_road_capacity": 128,
+    "station_load_capacity": 40
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Ея",
+    "load_station_code": "518009",
+    "station_road_capacity": 32,
+    "station_load_capacity": 24
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Жатва",
+    "load_station_code": "834606",
+    "station_road_capacity": 32,
+    "station_load_capacity": 32
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Жданка",
+    "load_station_code": "224609",
+    "station_road_capacity": 8,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Жердевка",
+    "load_station_code": "598501",
+    "station_road_capacity": 132,
+    "station_load_capacity": 34
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Жигулевское Море",
+    "load_station_code": "636807",
+    "station_road_capacity": 92,
+    "station_load_capacity": 13
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Жутово",
+    "load_station_code": "612501",
+    "station_road_capacity": 112,
+    "station_load_capacity": 34
+  },
+  {
+    "rail_road": "ЗАБ",
+    "load_station": "ЗАБАЙКАЛЬСК",
+    "load_station_code": "946801",
+    "station_road_capacity": 76,
+    "station_load_capacity": 31
+  },
+  {
+    "rail_road": "СВР",
+    "load_station": "Заводоуковская",
+    "load_station_code": "790906",
+    "station_road_capacity": 16,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Заглядино",
+    "load_station_code": "659508",
+    "station_road_capacity": 52,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Заинск",
+    "load_station_code": "648109",
+    "station_road_capacity": 68,
+    "station_load_capacity": 24
+  },
+  {
+    "rail_road": "ВСБ",
+    "load_station": "Залари",
+    "load_station_code": "930409",
+    "station_road_capacity": 29,
+    "station_load_capacity": 42
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Залегощь",
+    "load_station_code": "217605",
+    "station_road_capacity": 21,
+    "station_load_capacity": 15
+  },
+  {
+    "rail_road": "КРС",
+    "load_station": "Заозерная",
+    "load_station_code": "893106",
+    "station_road_capacity": 32,
+    "station_load_capacity": 21
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Зарайск",
+    "load_station_code": "234301",
+    "station_road_capacity": 16,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Заречная",
+    "load_station_code": "510702",
+    "station_road_capacity": 128,
+    "station_load_capacity": 73
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Заринская",
+    "load_station_code": "841402",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЮУР",
+    "load_station": "Зауралье",
+    "load_station_code": "827208",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Зверево",
+    "load_station_code": "512002",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Зеленокумск",
+    "load_station_code": "536702",
+    "station_road_capacity": 188,
+    "station_load_capacity": 88
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Земетчино",
+    "load_station_code": "632505",
+    "station_road_capacity": 177,
+    "station_load_capacity": 24
+  },
+  {
+    "rail_road": "ЛАТ",
+    "load_station": "Земитаны 3 Км (Рига-Краста) Эксп.",
+    "load_station_code": null,
+    "station_road_capacity": 76,
+    "station_load_capacity": 31
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Зензеватка",
+    "load_station_code": "622804",
+    "station_road_capacity": 36,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Зерноград",
+    "load_station_code": "517307",
+    "station_road_capacity": 36,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Зимовники",
+    "load_station_code": "519209",
+    "station_road_capacity": 52,
+    "station_load_capacity": 24
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Зирган",
+    "load_station_code": "653156",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Змиевка",
+    "load_station_code": "216800",
+    "station_road_capacity": 76,
+    "station_load_capacity": 39
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Золотая Степь",
+    "load_station_code": "626107",
+    "station_road_capacity": 16,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Золотухино",
+    "load_station_code": "217304",
+    "station_road_capacity": 76,
+    "station_load_capacity": 48
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Зольский",
+    "load_station_code": "537207",
+    "station_road_capacity": 52,
+    "station_load_capacity": 24
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Зубково",
+    "load_station_code": "835905",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ГОР",
+    "load_station": "Зуевка",
+    "load_station_code": "274006",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЛАТ",
+    "load_station": "Иецава",
+    "load_station_code": "092407",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ОКТ",
+    "load_station": "Ижоры",
+    "load_station_code": "030805",
+    "station_road_capacity": 36,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Избердей",
+    "load_station_code": "600307",
+    "station_road_capacity": 76,
+    "station_load_capacity": 31
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Измалково",
+    "load_station_code": "218101",
+    "station_road_capacity": 8,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Изобильная",
+    "load_station_code": "526700",
+    "station_road_capacity": 148,
+    "station_load_capacity": 60
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Икорец",
+    "load_station_code": "582503",
+    "station_road_capacity": 16,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "КРС",
+    "load_station": "Иланка",
+    "load_station_code": "893604",
+    "station_road_capacity": 44,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "КРС",
+    "load_station": "Иланская",
+    "load_station_code": "893708",
+    "station_road_capacity": 16,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ГОР",
+    "load_station": "Ильино",
+    "load_station_code": "264108",
+    "station_road_capacity": 16,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Ильмень",
+    "load_station_code": "622005",
+    "station_road_capacity": 29,
+    "station_load_capacity": 29
+  },
+  {
+    "rail_road": "КРС",
+    "load_station": "Ингашская",
+    "load_station_code": "893905",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Иноковка",
+    "load_station_code": "602503",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Инская",
+    "load_station_code": "850007",
+    "station_road_capacity": 8,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Ипатово",
+    "load_station_code": "528301",
+    "station_road_capacity": 268,
+    "station_load_capacity": 110
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Иртышское",
+    "load_station_code": "835007",
+    "station_road_capacity": 5,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Исилькуль",
+    "load_station_code": "832009",
+    "station_road_capacity": 36,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Искитим",
+    "load_station_code": "853005",
+    "station_road_capacity": 228,
+    "station_load_capacity": 18
+  },
+  {
+    "rail_road": "СВР",
+    "load_station": "Ишим",
+    "load_station_code": "791608",
+    "station_road_capacity": 184,
+    "station_load_capacity": 29
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Кавказская",
+    "load_station_code": "520009",
+    "station_road_capacity": 113,
+    "station_load_capacity": 42
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Кагальник",
+    "load_station_code": "517203",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ГОР",
+    "load_station": "Казань",
+    "load_station_code": "250302",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Калач",
+    "load_station_code": "583506",
+    "station_road_capacity": 128,
+    "station_load_capacity": 15
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Калачинская",
+    "load_station_code": "832808",
+    "station_road_capacity": 104,
+    "station_load_capacity": 56
+  },
+  {
+    "rail_road": "КЛГ",
+    "load_station": "Калининград-Сортировочный",
+    "load_station_code": "100001",
+    "station_road_capacity": 16,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Калининск-Саратовский",
+    "load_station_code": "609104",
+    "station_road_capacity": 57,
+    "station_load_capacity": 34
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Калманка",
+    "load_station_code": "844627",
+    "station_road_capacity": 0,
+    "station_load_capacity": 0
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Камень-На-Оби",
+    "load_station_code": "836601",
+    "station_road_capacity": 32,
+    "station_load_capacity": 42
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Камышин",
+    "load_station_code": "623008",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "КАНДРЫ",
+    "load_station_code": "651205",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Каневская",
+    "load_station_code": "516003",
+    "station_road_capacity": 24,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "КРС",
+    "load_station": "Канск-Енисейский",
+    "load_station_code": "893500",
+    "station_road_capacity": 89,
+    "station_load_capacity": 44
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Кантемировка",
+    "load_station_code": "586006",
+    "station_road_capacity": 32,
+    "station_load_capacity": 32
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Карабулак",
+    "load_station_code": "609602",
+    "station_road_capacity": 32,
+    "station_load_capacity": 32
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Карамыш",
+    "load_station_code": "621303",
+    "station_road_capacity": 36,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Карасук 1",
+    "load_station_code": "835609",
+    "station_road_capacity": 92,
+    "station_load_capacity": 32
+  },
+  {
+    "rail_road": "ГОР",
+    "load_station": "Каратун",
+    "load_station_code": "249305",
+    "station_road_capacity": 24,
+    "station_load_capacity": 10
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Карачев",
+    "load_station_code": "200500",
+    "station_road_capacity": 16,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Карбышево 1",
+    "load_station_code": "830304",
+    "station_road_capacity": 332,
+    "station_load_capacity": 135
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Карбышево 2",
+    "load_station_code": "832600",
+    "station_road_capacity": 36,
+    "station_load_capacity": 26
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Карбышево II",
+    "load_station_code": "832600",
+    "station_road_capacity": 52,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ЮУР",
+    "load_station": "Каргала",
+    "load_station_code": "811801",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Каргат",
+    "load_station_code": "834108",
+    "station_road_capacity": 36,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Кардаил",
+    "load_station_code": "605000",
+    "station_road_capacity": 36,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Кариан-Строганово",
+    "load_station_code": "601600",
+    "station_road_capacity": 32,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Карламан",
+    "load_station_code": "652000",
+    "station_road_capacity": 76,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Карповская",
+    "load_station_code": "615904",
+    "station_road_capacity": 36,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ЮУР",
+    "load_station": "Карталы 1",
+    "load_station_code": "816203",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Касторная-Курская",
+    "load_station_code": "595503",
+    "station_road_capacity": 24,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Касторная-Новая",
+    "load_station_code": "595401",
+    "station_road_capacity": 36,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Качалино",
+    "load_station_code": "614600",
+    "station_road_capacity": 36,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Кашпир",
+    "load_station_code": "636101",
+    "station_road_capacity": 5,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "ВСБ",
+    "load_station": "Кая",
+    "load_station_code": "932809",
+    "station_road_capacity": 36,
+    "station_load_capacity": 2
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Кензино",
+    "load_station_code": "631108",
+    "station_road_capacity": 16,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Кимовск",
+    "load_station_code": "227202",
+    "station_road_capacity": 8,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Кинель",
+    "load_station_code": "657305",
+    "station_road_capacity": 24,
+    "station_load_capacity": 13
+  },
+  {
+    "rail_road": "СЕВ",
+    "load_station": "Кинешма",
+    "load_station_code": "316707",
+    "station_road_capacity": 152,
+    "station_load_capacity": 32
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Кирсанов",
+    "load_station_code": "602800",
+    "station_road_capacity": 36,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Кистендей",
+    "load_station_code": "606002",
+    "station_road_capacity": 16,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Ключи-Славгородские",
+    "load_station_code": "844909",
+    "station_road_capacity": 72,
+    "station_load_capacity": 7
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Ключики",
+    "load_station_code": "635109",
+    "station_road_capacity": 5,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Клявлино",
+    "load_station_code": "647407",
+    "station_road_capacity": 8,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "КОЛЕНО",
+    "load_station_code": "583807",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Колодезная",
+    "load_station_code": "597301",
+    "station_road_capacity": 218,
+    "station_load_capacity": 40
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Колония",
+    "load_station_code": "832870",
+    "station_road_capacity": 36,
+    "station_load_capacity": 26
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Колпны",
+    "load_station_code": "208907",
+    "station_road_capacity": 32,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Колышлей",
+    "load_station_code": "608101",
+    "station_road_capacity": 40,
+    "station_load_capacity": 32
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Комаричи",
+    "load_station_code": "204709",
+    "station_road_capacity": 32,
+    "station_load_capacity": 32
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Коноково",
+    "load_station_code": "530405",
+    "station_road_capacity": 36,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Конышевка",
+    "load_station_code": "205805",
+    "station_road_capacity": 8,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Кораблино",
+    "load_station_code": "223705",
+    "station_road_capacity": 16,
+    "station_load_capacity": 10
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Коренево",
+    "load_station_code": "194314",
+    "station_road_capacity": 32,
+    "station_load_capacity": 24
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Кореновск",
+    "load_station_code": "524902",
+    "station_road_capacity": 36,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Кормиловка",
+    "load_station_code": "832704",
+    "station_road_capacity": 44,
+    "station_load_capacity": 24
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Коротыш",
+    "load_station_code": "218805",
+    "station_road_capacity": 16,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Корчино",
+    "load_station_code": "845901",
+    "station_road_capacity": 72,
+    "station_load_capacity": 24
+  },
+  {
+    "rail_road": "ЮУР",
+    "load_station": "Кособродск",
+    "load_station_code": "828107",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ГОР",
+    "load_station": "Котельнич 2",
+    "load_station_code": "267708",
+    "station_road_capacity": 5,
+    "station_load_capacity": 2
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Коченево",
+    "load_station_code": "852200",
+    "station_road_capacity": 37,
+    "station_load_capacity": 23
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Красивая Меча",
+    "load_station_code": "594604",
+    "station_road_capacity": 76,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Красная Гвардия",
+    "load_station_code": "518600",
+    "station_road_capacity": 36,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Красная Заря",
+    "load_station_code": "218006",
+    "station_road_capacity": 16,
+    "station_load_capacity": 13
+  },
+  {
+    "rail_road": "КРС",
+    "load_station": "Красная Сопка",
+    "load_station_code": "884200",
+    "station_road_capacity": 16,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "ЮУР",
+    "load_station": "Красногвардеец",
+    "load_station_code": "810902",
+    "station_road_capacity": 36,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Краснозерское",
+    "load_station_code": "836000",
+    "station_road_capacity": 52,
+    "station_load_capacity": 32
+  },
+  {
+    "rail_road": "КРС",
+    "load_station": "Красноярск",
+    "load_station_code": "890004",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "КРС",
+    "load_station": "Красноярск-Северный",
+    "load_station_code": "890108",
+    "station_road_capacity": 101,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Красный Кут",
+    "load_station_code": "626504",
+    "station_road_capacity": 52,
+    "station_load_capacity": 34
+  },
+  {
+    "rail_road": "ГОР",
+    "load_station": "Красный Узел",
+    "load_station_code": "247009",
+    "station_road_capacity": 112,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "КРЕЙДА",
+    "load_station_code": "435906",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Кресты",
+    "load_station_code": "181403",
+    "station_road_capacity": 41,
+    "station_load_capacity": 13
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Кривецкая",
+    "load_station_code": "437808",
+    "station_road_capacity": 40,
+    "station_load_capacity": 26
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Криволучье",
+    "load_station_code": "211806",
+    "station_road_capacity": 21,
+    "station_load_capacity": 10
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Кромская",
+    "load_station_code": "216104",
+    "station_road_capacity": 5,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Кромы",
+    "load_station_code": "205504",
+    "station_road_capacity": 24,
+    "station_load_capacity": 13
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Кротовка",
+    "load_station_code": "658401",
+    "station_road_capacity": 8,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Круглое Поле",
+    "load_station_code": "648400",
+    "station_road_capacity": 5,
+    "station_load_capacity": 2
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Крыловская",
+    "load_station_code": "514703",
+    "station_road_capacity": 36,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Крымская",
+    "load_station_code": "521603",
+    "station_road_capacity": 16,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Кубанская",
+    "load_station_code": "529802",
+    "station_road_capacity": 36,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Кузнецк",
+    "load_station_code": "634801",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ВСБ",
+    "load_station": "Куйтун",
+    "load_station_code": "922703",
+    "station_road_capacity": 21,
+    "station_load_capacity": 18
+  },
+  {
+    "rail_road": "ГОР",
+    "load_station": "Кукмор",
+    "load_station_code": "253705",
+    "station_road_capacity": 13,
+    "station_load_capacity": 7
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Кулатка (Рзд)",
+    "load_station_code": "624405",
+    "station_road_capacity": 5,
+    "station_load_capacity": 2
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Кулунда",
+    "load_station_code": "844701",
+    "station_road_capacity": 44,
+    "station_load_capacity": 13
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Кума",
+    "load_station_code": "536609",
+    "station_road_capacity": 36,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Кумертау",
+    "load_station_code": "653408",
+    "station_road_capacity": 101,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "СВР",
+    "load_station": "Кунгур",
+    "load_station_code": "763701",
+    "station_road_capacity": 8,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Купино",
+    "load_station_code": "837604",
+    "station_road_capacity": 32,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "КРС",
+    "load_station": "Курагино",
+    "load_station_code": "888409",
+    "station_road_capacity": 32,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Курбатово",
+    "load_station_code": "596008",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЮУР",
+    "load_station": "Курган",
+    "load_station_code": "828501",
+    "station_road_capacity": 93,
+    "station_load_capacity": 82
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Курганная",
+    "load_station_code": "535502",
+    "station_road_capacity": 180,
+    "station_load_capacity": 64
+  },
+  {
+    "rail_road": "ГОР",
+    "load_station": "Куркачи",
+    "load_station_code": "253404",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Курсавка",
+    "load_station_code": "531408",
+    "station_road_capacity": 36,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Курск",
+    "load_station_code": "208201",
+    "station_road_capacity": 16,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Курумоч",
+    "load_station_code": "637509",
+    "station_road_capacity": 32,
+    "station_load_capacity": 13
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Курундус",
+    "load_station_code": "860600",
+    "station_road_capacity": 0,
+    "station_load_capacity": 0
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Кущевка",
+    "load_station_code": "514402",
+    "station_road_capacity": 36,
+    "station_load_capacity": 26
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Кшень",
+    "load_station_code": "209401",
+    "station_road_capacity": 209,
+    "station_load_capacity": 68
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Лабинская",
+    "load_station_code": "535706",
+    "station_road_capacity": 144,
+    "station_load_capacity": 37
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Ладожская",
+    "load_station_code": "525905",
+    "station_road_capacity": 36,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Лапшинская",
+    "load_station_code": "622405",
+    "station_road_capacity": 36,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Латная",
+    "load_station_code": "596205",
+    "station_road_capacity": 72,
+    "station_load_capacity": 32
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Лебедево",
+    "load_station_code": "625520",
+    "station_road_capacity": 36,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Лебедянь",
+    "load_station_code": "594500",
+    "station_road_capacity": 40,
+    "station_load_capacity": 21
+  },
+  {
+    "rail_road": "ЮУР",
+    "load_station": "Лебяжья-Сибирская",
+    "load_station_code": "826807",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Лев Толстой",
+    "load_station_code": "594303",
+    "station_road_capacity": 8,
+    "station_load_capacity": 2
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Леньки",
+    "load_station_code": "845600",
+    "station_road_capacity": 76,
+    "station_load_capacity": 26
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Летяжевка",
+    "load_station_code": "605601",
+    "station_road_capacity": 16,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "СВР",
+    "load_station": "Лечебный",
+    "load_station_code": "794201",
+    "station_road_capacity": 36,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Ливны 1",
+    "load_station_code": "218608",
+    "station_road_capacity": 84,
+    "station_load_capacity": 40
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Липецк",
+    "load_station_code": "592505",
+    "station_road_capacity": 133,
+    "station_load_capacity": 58
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Лиски",
+    "load_station_code": "582005",
+    "station_road_capacity": 8,
+    "station_load_capacity": 2
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Лопуховка",
+    "load_station_code": "608900",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Лукашевка",
+    "load_station_code": "207904",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Лунино",
+    "load_station_code": "630707",
+    "station_road_capacity": 16,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Лутошкино",
+    "load_station_code": "594801",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Луховицы",
+    "load_station_code": "234206",
+    "station_road_capacity": 24,
+    "station_load_capacity": 10
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Лысые Горы",
+    "load_station_code": "609000",
+    "station_road_capacity": 16,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Любинская",
+    "load_station_code": "831805",
+    "station_road_capacity": 68,
+    "station_load_capacity": 21
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Любовка",
+    "load_station_code": "834700",
+    "station_road_capacity": 60,
+    "station_load_capacity": 29
+  },
+  {
+    "rail_road": "ГОР",
+    "load_station": "Люкшудья",
+    "load_station_code": "276904",
+    "station_road_capacity": 5,
+    "station_load_capacity": 2
+  },
+  {
+    "rail_road": "ЮУР",
+    "load_station": "Магнай",
+    "load_station_code": "803608",
+    "station_road_capacity": 16,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ЮУР",
+    "load_station": "Магнитогорск-Грузовой",
+    "load_station_code": "817600",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Майна",
+    "load_station_code": "643707",
+    "station_road_capacity": 24,
+    "station_load_capacity": 21
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Маклец",
+    "load_station_code": "226500",
+    "station_road_capacity": 16,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ЮУР",
+    "load_station": "Макушино",
+    "load_station_code": "826600",
+    "station_road_capacity": 16,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Малинов Яр",
+    "load_station_code": "436504",
+    "station_road_capacity": 16,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Малоархангельск",
+    "load_station_code": "217003",
+    "station_road_capacity": 5,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Малороссийская",
+    "load_station_code": "520308",
+    "station_road_capacity": 36,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Мальчевская",
+    "load_station_code": "586400",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЮУР",
+    "load_station": "Мамлютка",
+    "load_station_code": "826205",
+    "station_road_capacity": 36,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Мариановка",
+    "load_station_code": "832403",
+    "station_road_capacity": 101,
+    "station_load_capacity": 26
+  },
+  {
+    "rail_road": "КРС",
+    "load_station": "Мариинск",
+    "load_station_code": "880106",
+    "station_road_capacity": 16,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Маслов Кут",
+    "load_station_code": "536806",
+    "station_road_capacity": 52,
+    "station_load_capacity": 24
+  },
+  {
+    "rail_road": "СВР",
+    "load_station": "Маслянская",
+    "load_station_code": "791805",
+    "station_road_capacity": 16,
+    "station_load_capacity": 10
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Матвеев Курган",
+    "load_station_code": "511103",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Матышево",
+    "load_station_code": "607005",
+    "station_road_capacity": 16,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "ВСБ",
+    "load_station": "Мегет",
+    "load_station_code": "932508",
+    "station_road_capacity": 72,
+    "station_load_capacity": 21
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Медведица",
+    "load_station_code": "622109",
+    "station_road_capacity": 50,
+    "station_load_capacity": 50
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Мелеуз",
+    "load_station_code": "653200",
+    "station_road_capacity": 72,
+    "station_load_capacity": 24
+  },
+  {
+    "rail_road": "ЮУР",
+    "load_station": "Меновой Двор",
+    "load_station_code": "812005",
+    "station_road_capacity": 36,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ГОР",
+    "load_station": "Металлист",
+    "load_station_code": "269101",
+    "station_road_capacity": 8,
+    "station_load_capacity": 2
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Мечетинская",
+    "load_station_code": "517400",
+    "station_road_capacity": 16,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Миллерово",
+    "load_station_code": "586504",
+    "station_road_capacity": 248,
+    "station_load_capacity": 82
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Милославское",
+    "load_station_code": "603201",
+    "station_road_capacity": 24,
+    "station_load_capacity": 13
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Минеральные Воды",
+    "load_station_code": "530000",
+    "station_road_capacity": 76,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "КРС",
+    "load_station": "Минусинск",
+    "load_station_code": "888305",
+    "station_road_capacity": 24,
+    "station_load_capacity": 13
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Михайло-Леонтьевская",
+    "load_station_code": "512208",
+    "station_road_capacity": 8,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Михайлов",
+    "load_station_code": "228402",
+    "station_road_capacity": 36,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Михайловка-Алтайская",
+    "load_station_code": "845009",
+    "station_road_capacity": 32,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Мичуринск-Уральский",
+    "load_station_code": "600909",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ГОР",
+    "load_station": "Можга",
+    "load_station_code": "254604",
+    "station_road_capacity": 8,
+    "station_load_capacity": 2
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Мокроус",
+    "load_station_code": "627009",
+    "station_road_capacity": 32,
+    "station_load_capacity": 24
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Морец",
+    "load_station_code": "606905",
+    "station_road_capacity": 16,
+    "station_load_capacity": 7
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Морозовская",
+    "load_station_code": "588302",
+    "station_road_capacity": 36,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Моршанск",
+    "load_station_code": "632007",
+    "station_road_capacity": 32,
+    "station_load_capacity": 29
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Москаленки",
+    "load_station_code": "832206",
+    "station_road_capacity": 44,
+    "station_load_capacity": 32
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Москва-Товарная-Смоленская",
+    "load_station_code": "198207",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Моховая",
+    "load_station_code": "217501",
+    "station_road_capacity": 5,
+    "station_load_capacity": 2
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Мучкап",
+    "load_station_code": "606106",
+    "station_road_capacity": 5,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Мценск",
+    "load_station_code": "215506",
+    "station_road_capacity": 24,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ДВС",
+    "load_station": "Мылки",
+    "load_station_code": "965501",
+    "station_road_capacity": 16,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Набережное",
+    "load_station_code": "596607",
+    "station_road_capacity": 16,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Набережные Челны",
+    "load_station_code": "648503",
+    "station_road_capacity": 111,
+    "station_load_capacity": 15
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Навля",
+    "load_station_code": "203803",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Нагутская",
+    "load_station_code": "531501",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Назаровка",
+    "load_station_code": "221600",
+    "station_road_capacity": 5,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "КРС",
+    "load_station": "Назарово",
+    "load_station_code": "884003",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Называевская",
+    "load_station_code": "831608",
+    "station_road_capacity": 21,
+    "station_load_capacity": 10
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Народная",
+    "load_station_code": "598802",
+    "station_road_capacity": 32,
+    "station_load_capacity": 10
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Нарышкино",
+    "load_station_code": "200708",
+    "station_road_capacity": 13,
+    "station_load_capacity": 7
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Невинномысская",
+    "load_station_code": "531304",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Нежеголь",
+    "load_station_code": "434104",
+    "station_road_capacity": 41,
+    "station_load_capacity": 18
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Неклиновка",
+    "load_station_code": "511207",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Некрылово",
+    "load_station_code": "583900",
+    "station_road_capacity": 8,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "ЗАБ",
+    "load_station": "НЕРЧИНСК",
+    "load_station_code": "948309",
+    "station_road_capacity": 36,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Нижнемальцево",
+    "load_station_code": "221808",
+    "station_road_capacity": 57,
+    "station_load_capacity": 47
+  },
+  {
+    "rail_road": "ЮУР",
+    "load_station": "Нижнеувельская",
+    "load_station_code": "804102",
+    "station_road_capacity": 16,
+    "station_load_capacity": 2
+  },
+  {
+    "rail_road": "ГОР",
+    "load_station": "Нижний-Новгород-Московский",
+    "load_station_code": null,
+    "station_road_capacity": 8,
+    "station_load_capacity": 0
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Никифоровка",
+    "load_station_code": "601102",
+    "station_road_capacity": 236,
+    "station_load_capacity": 79
+  },
+  {
+    "rail_road": "СВР",
+    "load_station": "Новая Заимка",
+    "load_station_code": "791006",
+    "station_road_capacity": 41,
+    "station_load_capacity": 7
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Новоблаговещенка",
+    "load_station_code": "845403",
+    "station_road_capacity": 37,
+    "station_load_capacity": 15
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Новоборисовка",
+    "load_station_code": "436307",
+    "station_road_capacity": 5,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "НОВОКУЗНЕЦК-ВОСТОЧНЫЙ",
+    "load_station_code": "860206",
+    "station_road_capacity": 16,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "ЮУР",
+    "load_station": "Новоорск",
+    "load_station_code": "815304",
+    "station_road_capacity": 44,
+    "station_load_capacity": 34
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Новоперелюбская",
+    "load_station_code": "628105",
+    "station_road_capacity": 21,
+    "station_load_capacity": 18
+  },
+  {
+    "rail_road": "ЮУР",
+    "load_station": "Новосергиевская",
+    "load_station_code": "811407",
+    "station_road_capacity": 36,
+    "station_load_capacity": 26
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Новосибирск-Западный",
+    "load_station_code": "851207",
+    "station_road_capacity": 16,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Новосибирск-Южный",
+    "load_station_code": "850505",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Новоспасское",
+    "load_station_code": "635306",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Новоузенск",
+    "load_station_code": "626805",
+    "station_road_capacity": 72,
+    "station_load_capacity": 24
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Новохоперск",
+    "load_station_code": "584000",
+    "station_road_capacity": 16,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Новый Оскол",
+    "load_station_code": "439004",
+    "station_road_capacity": 52,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ОКТ",
+    "load_station": "Новый Порт (ЭКСП.)",
+    "load_station_code": null,
+    "station_road_capacity": 101,
+    "station_load_capacity": 26
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Нурлат",
+    "load_station_code": "646902",
+    "station_road_capacity": 52,
+    "station_load_capacity": 24
+  },
+  {
+    "rail_road": "ГОР",
+    "load_station": "Нуя",
+    "load_station_code": "247206",
+    "station_road_capacity": 36,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Обливская",
+    "load_station_code": "614901",
+    "station_road_capacity": 16,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Обловка",
+    "load_station_code": "602001",
+    "station_road_capacity": 60,
+    "station_load_capacity": 18
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Оборона",
+    "load_station_code": "598107",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Обоянь",
+    "load_station_code": "435304",
+    "station_road_capacity": 68,
+    "station_load_capacity": 32
+  },
+  {
+    "rail_road": "ГОР",
+    "load_station": "Оброчное",
+    "load_station_code": "246805",
+    "station_road_capacity": 5,
+    "station_load_capacity": 0
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Обшаровка",
+    "load_station_code": "638304",
+    "station_road_capacity": 68,
+    "station_load_capacity": 24
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Овчинниково",
+    "load_station_code": "842208",
+    "station_road_capacity": 32,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Озимая",
+    "load_station_code": "843821",
+    "station_road_capacity": 36,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Озинки",
+    "load_station_code": "628406",
+    "station_road_capacity": 36,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Ольгинская",
+    "load_station_code": "516408",
+    "station_road_capacity": 36,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Ольха",
+    "load_station_code": "583703",
+    "station_road_capacity": 76,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Ольховатка",
+    "load_station_code": "585605",
+    "station_road_capacity": 92,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "ОМСК-СЕВЕРНЫЙ",
+    "load_station_code": "831400",
+    "station_road_capacity": 92,
+    "station_load_capacity": 21
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "ОРЕЛ",
+    "load_station_code": "216000",
+    "station_road_capacity": 132,
+    "station_load_capacity": 47
+  },
+  {
+    "rail_road": "ЮУР",
+    "load_station": "Оренбург",
+    "load_station_code": "811905",
+    "station_road_capacity": 36,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ЮУР",
+    "load_station": "Орск",
+    "load_station_code": "810006",
+    "station_road_capacity": 36,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Острогожск",
+    "load_station_code": "581708",
+    "station_road_capacity": 152,
+    "station_load_capacity": 32
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Отрада",
+    "load_station_code": "215605",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Отрешково",
+    "load_station_code": "208502",
+    "station_road_capacity": 101,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Охотничья",
+    "load_station_code": "643976",
+    "station_road_capacity": 16,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Павловск-Воронежский",
+    "load_station_code": "583205",
+    "station_road_capacity": 16,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Палагиада",
+    "load_station_code": "526908",
+    "station_road_capacity": 72,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Палатовка",
+    "load_station_code": "581106",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Палласовка",
+    "load_station_code": "619002",
+    "station_road_capacity": 36,
+    "station_load_capacity": 26
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Панкрушиха",
+    "load_station_code": "836300",
+    "station_road_capacity": 36,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Панфилово",
+    "load_station_code": "613400",
+    "station_road_capacity": 36,
+    "station_load_capacity": 26
+  },
+  {
+    "rail_road": "ОКТ",
+    "load_station": "Парнас",
+    "load_station_code": "038309",
+    "station_road_capacity": 84,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Пачелма",
+    "load_station_code": "633001",
+    "station_road_capacity": 40,
+    "station_load_capacity": 24
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Пенза-4",
+    "load_station_code": null,
+    "station_road_capacity": 5,
+    "station_load_capacity": 2
+  },
+  {
+    "rail_road": "СВР",
+    "load_station": "Перебор",
+    "load_station_code": "794907",
+    "station_road_capacity": 36,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ГОР",
+    "load_station": "Перевозская",
+    "load_station_code": "244602",
+    "station_road_capacity": 5,
+    "station_load_capacity": 2
+  },
+  {
+    "rail_road": "ЮУР",
+    "load_station": "Переволоцкая",
+    "load_station_code": "811604",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Передовая",
+    "load_station_code": "526607",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Перелешино",
+    "load_station_code": "590904",
+    "station_road_capacity": 84,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "СВР",
+    "load_station": "Пермь2",
+    "load_station_code": null,
+    "station_road_capacity": 36,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Песчанокопская",
+    "load_station_code": "518206",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "ПЕТРОВСК-САРАТОВСКИЙ",
+    "load_station_code": "609301",
+    "station_road_capacity": 81,
+    "station_load_capacity": 33
+  },
+  {
+    "rail_road": "ЮУР",
+    "load_station": "Петропавловск",
+    "load_station_code": "820001",
+    "station_road_capacity": 169,
+    "station_load_capacity": 66
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Пикетное",
+    "load_station_code": "832329",
+    "station_road_capacity": 44,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ГОР",
+    "load_station": "Пильна",
+    "load_station_code": "245107",
+    "station_road_capacity": 24,
+    "station_load_capacity": 10
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Пинеровка",
+    "load_station_code": "606303",
+    "station_road_capacity": 36,
+    "station_load_capacity": 2
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Питерка",
+    "load_station_code": "626701",
+    "station_road_capacity": 36,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Плавица",
+    "load_station_code": "597903",
+    "station_road_capacity": 92,
+    "station_load_capacity": 24
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Плавск",
+    "load_station_code": "214306",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Плаксейка",
+    "load_station_code": "536901",
+    "station_road_capacity": 24,
+    "station_load_capacity": 24
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Платоновка",
+    "load_station_code": "602406",
+    "station_road_capacity": 52,
+    "station_load_capacity": 21
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Плес",
+    "load_station_code": "627102",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Поворино",
+    "load_station_code": "584405",
+    "station_road_capacity": 36,
+    "station_load_capacity": 26
+  },
+  {
+    "rail_road": "ЮУР",
+    "load_station": "Погромное",
+    "load_station_code": "811002",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Погрузная",
+    "load_station_code": "646809",
+    "station_road_capacity": 32,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Подбельская",
+    "load_station_code": "659245",
+    "station_road_capacity": 16,
+    "station_load_capacity": 10
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Подгорное",
+    "load_station_code": "585003",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "КРС",
+    "load_station": "Подсиний",
+    "load_station_code": "888201",
+    "station_road_capacity": 101,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Подснежная",
+    "load_station_code": "609405",
+    "station_road_capacity": 36,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЗАБ",
+    "load_station": "Поздеевка",
+    "load_station_code": "955302",
+    "station_road_capacity": 5,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "ГОР",
+    "load_station": "Позимь",
+    "load_station_code": "255503",
+    "station_road_capacity": 10,
+    "station_load_capacity": 7
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Полевая",
+    "load_station_code": "437403",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Политово",
+    "load_station_code": "594002",
+    "station_road_capacity": 8,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Полтавская",
+    "load_station_code": "522201",
+    "station_road_capacity": 36,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Порошинская",
+    "load_station_code": "517805",
+    "station_road_capacity": 36,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Посевная",
+    "load_station_code": "852500",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Поспелиха",
+    "load_station_code": "843906",
+    "station_road_capacity": 60,
+    "station_load_capacity": 18
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Похвистнево",
+    "load_station_code": "659300",
+    "station_road_capacity": 8,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "ЗАБ",
+    "load_station": "Поярково",
+    "load_station_code": "956004",
+    "station_road_capacity": 40,
+    "station_load_capacity": 40
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Правая Волга",
+    "load_station_code": "638200",
+    "station_road_capacity": 76,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Правый Берег",
+    "load_station_code": "616502",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ОКТ",
+    "load_station": "Предпортовая",
+    "load_station_code": "035004",
+    "station_road_capacity": 36,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Придача",
+    "load_station_code": "597104",
+    "station_road_capacity": 117,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Придонская",
+    "load_station_code": "582404",
+    "station_road_capacity": 76,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Приютово",
+    "load_station_code": "656406",
+    "station_road_capacity": 24,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Пролетарская",
+    "load_station_code": "518901",
+    "station_road_capacity": 44,
+    "station_load_capacity": 13
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Промышленная",
+    "load_station_code": "861209",
+    "station_road_capacity": 8,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Протока",
+    "load_station_code": "522108",
+    "station_road_capacity": 36,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "ЮУР",
+    "load_station": "Профинтерн",
+    "load_station_code": "814808",
+    "station_road_capacity": 60,
+    "station_load_capacity": 40
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Прохладная",
+    "load_station_code": "537601",
+    "station_road_capacity": 52,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Прохоровка",
+    "load_station_code": "435003",
+    "station_road_capacity": 0,
+    "station_load_capacity": 0
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Псел",
+    "load_station_code": "206704",
+    "station_road_capacity": 16,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Пугачевск",
+    "load_station_code": "627704",
+    "station_road_capacity": 137,
+    "station_load_capacity": 104
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "ПУХОВО",
+    "load_station_code": "584763",
+    "station_road_capacity": 0,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Раевка",
+    "load_station_code": "657004",
+    "station_road_capacity": 44,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Развильная",
+    "load_station_code": "518300",
+    "station_road_capacity": 52,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ЮУР",
+    "load_station": "Разъезд №20 (Меновой Двор)",
+    "load_station_code": null,
+    "station_road_capacity": 36,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Рай",
+    "load_station_code": "439305",
+    "station_road_capacity": 76,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Ракша",
+    "load_station_code": "632059",
+    "station_road_capacity": 16,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Рамонь",
+    "load_station_code": "590707",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Раненбург",
+    "load_station_code": "603409",
+    "station_road_capacity": 52,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Расшеватка",
+    "load_station_code": "526503",
+    "station_road_capacity": 169,
+    "station_load_capacity": 66
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Ребриха",
+    "load_station_code": "846001",
+    "station_road_capacity": 148,
+    "station_load_capacity": 24
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Ремонтная",
+    "load_station_code": "519302",
+    "station_road_capacity": 72,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Ржава",
+    "load_station_code": "435107",
+    "station_road_capacity": 8,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Ржакса",
+    "load_station_code": "601901",
+    "station_road_capacity": 72,
+    "station_load_capacity": 32
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Ровное",
+    "load_station_code": "517909",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Роговская",
+    "load_station_code": "516709",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Романовка",
+    "load_station_code": "606205",
+    "station_road_capacity": 32,
+    "station_load_capacity": 24
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Россошь",
+    "load_station_code": "585107",
+    "station_road_capacity": 36,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "СЕВ",
+    "load_station": "Ростов-Ярославский",
+    "load_station_code": null,
+    "station_road_capacity": 16,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "РТИЩЕВО 1",
+    "load_station_code": "607607",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Рубцовск",
+    "load_station_code": "843408",
+    "station_road_capacity": 36,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЮУР",
+    "load_station": "Рудный Клад",
+    "load_station_code": "815107",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Рузаевка",
+    "load_station_code": "640003",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Русский Брод",
+    "load_station_code": "218504",
+    "station_road_capacity": 8,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "СЕВ",
+    "load_station": "Рыбинск-Товарный",
+    "load_station_code": "312301",
+    "station_road_capacity": 68,
+    "station_load_capacity": 34
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Рыльск",
+    "load_station_code": "207603",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Рышково",
+    "load_station_code": "208108",
+    "station_road_capacity": 100,
+    "station_load_capacity": 39
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "РЯБИНА",
+    "load_station_code": "635946",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Ряжск 1",
+    "load_station_code": "223803",
+    "station_road_capacity": 44,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Ряжск-2",
+    "load_station_code": null,
+    "station_road_capacity": 36,
+    "station_load_capacity": 26
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Рязань 1",
+    "load_station_code": "220307",
+    "station_road_capacity": 16,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Рязань 2",
+    "load_station_code": "222800",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Сабурово",
+    "load_station_code": "601206",
+    "station_road_capacity": 76,
+    "station_load_capacity": 31
+  },
+  {
+    "rail_road": "ГОР",
+    "load_station": "Сайгатка",
+    "load_station_code": "256703",
+    "station_road_capacity": 5,
+    "station_load_capacity": 0
+  },
+  {
+    "rail_road": "ЮУР",
+    "load_station": "Сакмарская",
+    "load_station_code": "812503",
+    "station_road_capacity": 32,
+    "station_load_capacity": 32
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Салават",
+    "load_station_code": "653003",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Саловка",
+    "load_station_code": "608205",
+    "station_road_capacity": 8,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Сальск",
+    "load_station_code": "518403",
+    "station_road_capacity": 108,
+    "station_load_capacity": 40
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Сампур",
+    "load_station_code": "601704",
+    "station_road_capacity": 52,
+    "station_load_capacity": 10
+  },
+  {
+    "rail_road": "ОКТ",
+    "load_station": "Санкт-Петербург-Товарный-Московский",
+    "load_station_code": "031808",
+    "station_road_capacity": 76,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ЮУР",
+    "load_station": "Сара",
+    "load_station_code": "813703",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Сарай-Гир",
+    "load_station_code": "659809",
+    "station_road_capacity": 24,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Сарайский",
+    "load_station_code": "846209",
+    "station_road_capacity": 76,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЮУР",
+    "load_station": "Саракташ",
+    "load_station_code": "812908",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Саранск",
+    "load_station_code": "641608",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ГОР",
+    "load_station": "Сарапул",
+    "load_station_code": "256205",
+    "station_road_capacity": 16,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Саратов-Порт",
+    "load_station_code": "620404",
+    "station_road_capacity": 5,
+    "station_load_capacity": 2
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Сасово",
+    "load_station_code": "222001",
+    "station_road_capacity": 36,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "САХАНСКАЯ",
+    "load_station_code": "216301",
+    "station_road_capacity": 5,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Свекловичная",
+    "load_station_code": "436701",
+    "station_road_capacity": 44,
+    "station_load_capacity": 10
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Светлоград",
+    "load_station_code": "527402",
+    "station_road_capacity": 192,
+    "station_load_capacity": 85
+  },
+  {
+    "rail_road": "ГОР",
+    "load_station": "СВИЯЖСК",
+    "load_station_code": "249004",
+    "station_road_capacity": 36,
+    "station_load_capacity": 31
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Свобода",
+    "load_station_code": "217408",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Святославка",
+    "load_station_code": "606604",
+    "station_road_capacity": 5,
+    "station_load_capacity": 2
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Себряково",
+    "load_station_code": "613608",
+    "station_road_capacity": 32,
+    "station_load_capacity": 32
+  },
+  {
+    "rail_road": "ГОР",
+    "load_station": "Сейма",
+    "load_station_code": "264502",
+    "station_road_capacity": 13,
+    "station_load_capacity": 2
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Селезни",
+    "load_station_code": "601308",
+    "station_road_capacity": 76,
+    "station_load_capacity": 31
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Сенцово",
+    "load_station_code": "592609",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ГОР",
+    "load_station": "Сергач",
+    "load_station_code": "245003",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Сердобск",
+    "load_station_code": "607804",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Серебряные Пруды",
+    "load_station_code": "228807",
+    "station_road_capacity": 13,
+    "station_load_capacity": 7
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Серные Воды -1",
+    "load_station_code": null,
+    "station_road_capacity": 36,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЗАБ",
+    "load_station": "Серышево",
+    "load_station_code": "954102",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЮУР",
+    "load_station": "Сибай",
+    "load_station_code": "818302",
+    "station_road_capacity": 68,
+    "station_load_capacity": 32
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Скопин",
+    "load_station_code": "228008",
+    "station_road_capacity": 16,
+    "station_load_capacity": 10
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Славгород",
+    "load_station_code": "837106",
+    "station_road_capacity": 29,
+    "station_load_capacity": 18
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Солнцево",
+    "load_station_code": "437206",
+    "station_road_capacity": 24,
+    "station_load_capacity": 13
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Солодча",
+    "load_station_code": "622700",
+    "station_road_capacity": 36,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Соломатино",
+    "load_station_code": "622908",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЮУР",
+    "load_station": "Сорочинская",
+    "load_station_code": "811201",
+    "station_road_capacity": 68,
+    "station_load_capacity": 32
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Спицевка",
+    "load_station_code": "527205",
+    "station_road_capacity": 52,
+    "station_load_capacity": 24
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Среднесибирская",
+    "load_station_code": "840804",
+    "station_road_capacity": 16,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Становая",
+    "load_station_code": "593404",
+    "station_road_capacity": 100,
+    "station_load_capacity": 66
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Становой Колодезь",
+    "load_station_code": "216602",
+    "station_road_capacity": 21,
+    "station_load_capacity": 15
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Стародуб",
+    "load_station_code": "203104",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Старое Юрьево",
+    "load_station_code": "604204",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Старомарьевская",
+    "load_station_code": "527101",
+    "station_road_capacity": 44,
+    "station_load_capacity": 24
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Старощербиновская",
+    "load_station_code": "515602",
+    "station_road_capacity": 36,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Старый Оскол",
+    "load_station_code": "438506",
+    "station_road_capacity": 92,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Степная",
+    "load_station_code": "514309",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Стерлитамак",
+    "load_station_code": "652706",
+    "station_road_capacity": 21,
+    "station_load_capacity": 13
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Стрела",
+    "load_station_code": "834502",
+    "station_road_capacity": 60,
+    "station_load_capacity": 37
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Студенец",
+    "load_station_code": "633404",
+    "station_road_capacity": 16,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Студенческая",
+    "load_station_code": "644004",
+    "station_road_capacity": 48,
+    "station_load_capacity": 20
+  },
+  {
+    "rail_road": "ЮУР",
+    "load_station": "Субутак",
+    "load_station_code": "817206",
+    "station_road_capacity": 44,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Суджа",
+    "load_station_code": "206507",
+    "station_road_capacity": 52,
+    "station_load_capacity": 36
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Сулин",
+    "load_station_code": "512106",
+    "station_road_capacity": 8,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Суровикино",
+    "load_station_code": "615001",
+    "station_road_capacity": 36,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ГОР",
+    "load_station": "Сурок",
+    "load_station_code": "252100",
+    "station_road_capacity": 5,
+    "station_load_capacity": 0
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Сызрань 1",
+    "load_station_code": "635607",
+    "station_road_capacity": 16,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Сызрань I",
+    "load_station_code": "635607",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Сызрань-Город",
+    "load_station_code": "636205",
+    "station_road_capacity": 52,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Табуны",
+    "load_station_code": "837002",
+    "station_road_capacity": 52,
+    "station_load_capacity": 21
+  },
+  {
+    "rail_road": "ВСБ",
+    "load_station": "Тайшет",
+    "load_station_code": "920002",
+    "station_road_capacity": 13,
+    "station_load_capacity": 4
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Таловая",
+    "load_station_code": "582908",
+    "station_road_capacity": 52,
+    "station_load_capacity": 32
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Тамала",
+    "load_station_code": "607202",
+    "station_road_capacity": 52,
+    "station_load_capacity": 34
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Тамбов 1",
+    "load_station_code": "601403",
+    "station_road_capacity": 16,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "ЮУР",
+    "load_station": "Тамерлан",
+    "load_station_code": "803400",
+    "station_road_capacity": 16,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Тарасовка",
+    "load_station_code": "586909",
+    "station_road_capacity": 8,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Татарская",
+    "load_station_code": "833001",
+    "station_road_capacity": 44,
+    "station_load_capacity": 24
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Татищево",
+    "load_station_code": "623506",
+    "station_road_capacity": 16,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Тацинская",
+    "load_station_code": "588105",
+    "station_road_capacity": 36,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Тащиловка",
+    "load_station_code": "607908",
+    "station_road_capacity": 8,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Телегино",
+    "load_station_code": "593300",
+    "station_road_capacity": 112,
+    "station_load_capacity": 34
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Темижбекская",
+    "load_station_code": "526306",
+    "station_road_capacity": 16,
+    "station_load_capacity": 26
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Тербуны",
+    "load_station_code": "596703",
+    "station_road_capacity": 112,
+    "station_load_capacity": 40
+  },
+  {
+    "rail_road": "ЮУР",
+    "load_station": "Теренсай",
+    "load_station_code": "815605",
+    "station_road_capacity": 32,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Терновка",
+    "load_station_code": "434551",
+    "station_road_capacity": 8,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Тимашевская",
+    "load_station_code": "516200",
+    "station_road_capacity": 100,
+    "station_load_capacity": 24
+  },
+  {
+    "rail_road": "ГОР",
+    "load_station": "Тихорецкая",
+    "load_station_code": "250603",
+    "station_road_capacity": 88,
+    "station_load_capacity": 26
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Тихорецкая",
+    "load_station_code": "520102",
+    "station_road_capacity": 76,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Товарково",
+    "load_station_code": "224702",
+    "station_road_capacity": 21,
+    "station_load_capacity": 9
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Тогучин",
+    "load_station_code": "853908",
+    "station_road_capacity": 5,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Токаревка",
+    "load_station_code": "598408",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Толкай",
+    "load_station_code": "659103",
+    "station_road_capacity": 32,
+    "station_load_capacity": 18
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Толоконное",
+    "load_station_code": "434301",
+    "station_road_capacity": 36,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "ТОЛЬЯТТИ",
+    "load_station_code": "637301",
+    "station_road_capacity": 44,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Томаровка",
+    "load_station_code": "435605",
+    "station_road_capacity": 36,
+    "station_load_capacity": 2
+  },
+  {
+    "rail_road": "ЗАБ",
+    "load_station": "Томичи",
+    "load_station_code": "954206",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Томылово",
+    "load_station_code": "639307",
+    "station_road_capacity": 32,
+    "station_load_capacity": 10
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Топки",
+    "load_station_code": "871107",
+    "station_road_capacity": 21,
+    "station_load_capacity": 13
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Тополек",
+    "load_station_code": "627901",
+    "station_road_capacity": 56,
+    "station_load_capacity": 56
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Топчиха",
+    "load_station_code": "844504",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЮУР",
+    "load_station": "Тоцкая",
+    "load_station_code": "811106",
+    "station_road_capacity": 32,
+    "station_load_capacity": 32
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Тресвятская",
+    "load_station_code": "590302",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Три Острова",
+    "load_station_code": "606708",
+    "station_road_capacity": 24,
+    "station_load_capacity": 10
+  },
+  {
+    "rail_road": "ЮУР",
+    "load_station": "Троицк",
+    "load_station_code": "803909",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Трубецкая",
+    "load_station_code": "517701",
+    "station_road_capacity": 32,
+    "station_load_capacity": 13
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Туймазы",
+    "load_station_code": "651008",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Тула-Лихвинская",
+    "load_station_code": "210108",
+    "station_road_capacity": 36,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Тулиново",
+    "load_station_code": "591004",
+    "station_road_capacity": 24,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ВСБ",
+    "load_station": "ТУЛУН",
+    "load_station_code": "922008",
+    "station_road_capacity": 125,
+    "station_load_capacity": 47
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Тутальская",
+    "load_station_code": "872909",
+    "station_road_capacity": 0,
+    "station_load_capacity": 0
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "ТЮЛЬГАН",
+    "load_station_code": "654400",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "СВР",
+    "load_station": "ТЮМЕНЬ",
+    "load_station_code": "790003",
+    "station_road_capacity": 32,
+    "station_load_capacity": 10
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Убинская",
+    "load_station_code": "834004",
+    "station_road_capacity": 16,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Удобрительная",
+    "load_station_code": "209100",
+    "station_road_capacity": 101,
+    "station_load_capacity": 31
+  },
+  {
+    "rail_road": "ГОР",
+    "load_station": "Ужовка",
+    "load_station_code": "246608",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "КРС",
+    "load_station": "Ужур",
+    "load_station_code": "885100",
+    "station_road_capacity": 109,
+    "station_load_capacity": 49
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Узловая 1",
+    "load_station_code": "224204",
+    "station_road_capacity": 5,
+    "station_load_capacity": 2
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Улусарка",
+    "load_station_code": "597000",
+    "station_road_capacity": 76,
+    "station_load_capacity": 26
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Уманская",
+    "load_station_code": "516802",
+    "station_road_capacity": 36,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Умет",
+    "load_station_code": "607109",
+    "station_road_capacity": 32,
+    "station_load_capacity": 24
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Урбах",
+    "load_station_code": "626307",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Урюпино",
+    "load_station_code": "613006",
+    "station_road_capacity": 68,
+    "station_load_capacity": 32
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Усмань",
+    "load_station_code": "591606",
+    "station_road_capacity": 68,
+    "station_load_capacity": 40
+  },
+  {
+    "rail_road": "ДВС",
+    "load_station": "Уссурийск",
+    "load_station_code": "988306",
+    "station_road_capacity": 152,
+    "station_load_capacity": 10
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Усть-Лабинская",
+    "load_station_code": "525801",
+    "station_road_capacity": 52,
+    "station_load_capacity": 13
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Усть-Тальменская",
+    "load_station_code": "840908",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЮУР",
+    "load_station": "Учалы",
+    "load_station_code": "805707",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "КРС",
+    "load_station": "Уяр",
+    "load_station_code": "892705",
+    "station_road_capacity": 5,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Филоново",
+    "load_station_code": "613307",
+    "station_road_capacity": 140,
+    "station_load_capacity": 72
+  },
+  {
+    "rail_road": "ДВС",
+    "load_station": "Хабаровск 1",
+    "load_station_code": "970406",
+    "station_road_capacity": 8,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Хабары",
+    "load_station_code": "836103",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Хава",
+    "load_station_code": "590800",
+    "station_road_capacity": 24,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ЮУР",
+    "load_station": "Халилово",
+    "load_station_code": "813807",
+    "station_road_capacity": 5,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Химическая",
+    "load_station_code": "637104",
+    "station_road_capacity": 16,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Хоботово",
+    "load_station_code": "603907",
+    "station_road_capacity": 8,
+    "station_load_capacity": 2
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "ХОЛЩЕВИКИ",
+    "load_station_code": "197308",
+    "station_road_capacity": 117,
+    "station_load_capacity": 10
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Хомутово",
+    "load_station_code": "217906",
+    "station_road_capacity": 16,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Хомяково",
+    "load_station_code": "210502",
+    "station_road_capacity": 10,
+    "station_load_capacity": 10
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Хотмыжск",
+    "load_station_code": "436203",
+    "station_road_capacity": 8,
+    "station_load_capacity": 2
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Хотынец",
+    "load_station_code": "200604",
+    "station_road_capacity": 32,
+    "station_load_capacity": 10
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Хохольская",
+    "load_station_code": "596101",
+    "station_road_capacity": 108,
+    "station_load_capacity": 40
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Хрущево",
+    "load_station_code": "223409",
+    "station_road_capacity": 5,
+    "station_load_capacity": 2
+  },
+  {
+    "rail_road": "КЗХ",
+    "load_station": "Цвилинга",
+    "load_station_code": "666802",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Целина",
+    "load_station_code": "517608",
+    "station_road_capacity": 145,
+    "station_load_capacity": 32
+  },
+  {
+    "rail_road": "ГОР",
+    "load_station": "Цивильск",
+    "load_station_code": "248302",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Цильна",
+    "load_station_code": "645308",
+    "station_road_capacity": 36,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Цна",
+    "load_station_code": "602209",
+    "station_road_capacity": 32,
+    "station_load_capacity": 13
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Чагра",
+    "load_station_code": "639104",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Чаны",
+    "load_station_code": "833302",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Чаплыжное",
+    "load_station_code": "437901",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЮУР",
+    "load_station": "Чебеньки",
+    "load_station_code": "812700",
+    "station_road_capacity": 16,
+    "station_load_capacity": 2
+  },
+  {
+    "rail_road": "ГОР",
+    "load_station": "Чебоксары",
+    "load_station_code": "248504",
+    "station_road_capacity": 16,
+    "station_load_capacity": 24
+  },
+  {
+    "rail_road": "КЗХ",
+    "load_station": "Челгаши",
+    "load_station_code": "682006",
+    "station_road_capacity": 36,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Челна",
+    "load_station_code": "647002",
+    "station_road_capacity": 5,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Челновая",
+    "load_station_code": "604401",
+    "station_road_capacity": 24,
+    "station_load_capacity": 13
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Червленная",
+    "load_station_code": "542506",
+    "station_road_capacity": 36,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Чердаклы",
+    "load_station_code": "646009",
+    "station_road_capacity": 60,
+    "station_load_capacity": 24
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Черемисиново",
+    "load_station_code": "209204",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Черкасская",
+    "load_station_code": "588507",
+    "station_road_capacity": 36,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Черкесск",
+    "load_station_code": "531003",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Черлак",
+    "load_station_code": "835308",
+    "station_road_capacity": 72,
+    "station_load_capacity": 24
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Чернавка",
+    "load_station_code": "624208",
+    "station_road_capacity": 16,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ЮУР",
+    "load_station": "Черниговка",
+    "load_station_code": "818800",
+    "station_road_capacity": 40,
+    "station_load_capacity": 18
+  },
+  {
+    "rail_road": "ЮУР",
+    "load_station": "Черный Отрог",
+    "load_station_code": "812804",
+    "station_road_capacity": 16,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "ЗАБ",
+    "load_station": "Чернышевск-Забайкальский",
+    "load_station_code": "949104",
+    "station_road_capacity": 5,
+    "station_load_capacity": 2
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Чернышков",
+    "load_station_code": "614808",
+    "station_road_capacity": 16,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Чернянка",
+    "load_station_code": "438800",
+    "station_road_capacity": 76,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Чертково",
+    "load_station_code": "586203",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Чик",
+    "load_station_code": "852303",
+    "station_road_capacity": 36,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Чилеково",
+    "load_station_code": "615406",
+    "station_road_capacity": 36,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Чистоозерная",
+    "load_station_code": "837708",
+    "station_road_capacity": 36,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Чишмы",
+    "load_station_code": "651506",
+    "station_road_capacity": 104,
+    "station_load_capacity": 40
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Чулымская",
+    "load_station_code": "852106",
+    "station_road_capacity": 0,
+    "station_load_capacity": 0
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Чуфарово",
+    "load_station_code": "643603",
+    "station_road_capacity": 32,
+    "station_load_capacity": 21
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Чучково",
+    "load_station_code": "221672",
+    "station_road_capacity": 13,
+    "station_load_capacity": 10
+  },
+  {
+    "rail_road": "ЮУР",
+    "load_station": "Шагол",
+    "load_station_code": "803307",
+    "station_road_capacity": 36,
+    "station_load_capacity": 26
+  },
+  {
+    "rail_road": "ЮУР",
+    "load_station": "Шадринск",
+    "load_station_code": "827805",
+    "station_road_capacity": 16,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "ШАРДАНОВО",
+    "load_station_code": "537508",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "КРС",
+    "load_station": "Шарыпово",
+    "load_station_code": "884304",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ГОР",
+    "load_station": "Шатки",
+    "load_station_code": "245802",
+    "station_road_capacity": 8,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Шебекино",
+    "load_station_code": "434208",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "СЕВ",
+    "load_station": "Шексна",
+    "load_station_code": "302102",
+    "station_road_capacity": 36,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ГОР",
+    "load_station": "Шемордан",
+    "load_station_code": "253601",
+    "station_road_capacity": 36,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "ШЕНТАЛА",
+    "load_station_code": "647204",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Шерекино",
+    "load_station_code": "205909",
+    "station_road_capacity": 21,
+    "station_load_capacity": 13
+  },
+  {
+    "rail_road": "ЮУР",
+    "load_station": "Шильда",
+    "load_station_code": "815709",
+    "station_road_capacity": 16,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "КЛГ",
+    "load_station": "Шиповка",
+    "load_station_code": "103103",
+    "station_road_capacity": 101,
+    "station_load_capacity": 31
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Шипуново",
+    "load_station_code": "844100",
+    "station_road_capacity": 36,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "КРС",
+    "load_station": "Шира",
+    "load_station_code": "885504",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "ШТАБКА",
+    "load_station_code": "846302",
+    "station_road_capacity": 8,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "ОКТ",
+    "load_station": "Шувалово",
+    "load_station_code": "038506",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЮУР",
+    "load_station": "Шумиха",
+    "load_station_code": "829307",
+    "station_road_capacity": 32,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Щекино",
+    "load_station_code": "214109",
+    "station_road_capacity": 5,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "ЮУР",
+    "load_station": "Щучье",
+    "load_station_code": "829400",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Элиста",
+    "load_station_code": "528706",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "СКВ",
+    "load_station": "Эльхотово",
+    "load_station_code": "538106",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЮВС",
+    "load_station": "Эртиль",
+    "load_station_code": "598304",
+    "station_road_capacity": 104,
+    "station_load_capacity": 29
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Ютаза",
+    "load_station_code": "650503",
+    "station_road_capacity": 8,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ЗСБ",
+    "load_station": "Язевка-Сибирская",
+    "load_station_code": "844152",
+    "station_road_capacity": 52,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Якушка",
+    "load_station_code": "646601",
+    "station_road_capacity": 16,
+    "station_load_capacity": 5
+  },
+  {
+    "rail_road": "КБШ",
+    "load_station": "Ялга",
+    "load_station_code": "641504",
+    "station_road_capacity": 76,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "СВР",
+    "load_station": "Ялуторовск",
+    "load_station_code": "790802",
+    "station_road_capacity": 16,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ГОР",
+    "load_station": "Янаул",
+    "load_station_code": "257800",
+    "station_road_capacity": 16,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "БЕЛ",
+    "load_station": "Янов-Полесский",
+    "load_station_code": "133109",
+    "station_road_capacity": 36,
+    "station_load_capacity": 16
+  },
+  {
+    "rail_road": "СЕВ",
+    "load_station": "Ярославль",
+    "load_station_code": "310109",
+    "station_road_capacity": 76,
+    "station_load_capacity": 8
+  },
+  {
+    "rail_road": "ПРВ",
+    "load_station": "Ярыженская",
+    "load_station_code": "613100",
+    "station_road_capacity": 36,
+    "station_load_capacity": 26
+  },
+  {
+    "rail_road": "МСК",
+    "load_station": "Ясногорск",
+    "load_station_code": "210708",
+    "station_road_capacity": 8,
+    "station_load_capacity": 5
+  }
+]

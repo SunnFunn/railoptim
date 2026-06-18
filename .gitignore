@@ -23,6 +23,8 @@ data/stations/stations_geo.sqlite
 data/LoadStations.xlsx
 # Накопительная БД ёмкостей отстоя (наполняется суточным прогоном, не коммитим)
 data/reserves/*.sqlite
+# Справочник свободных ёмкостей путей (пересобирается суточным прогоном railoptim)
+# data/load_stations_free_capacity.json
 data/stations/cross_border_esr6_conflicts.csv
 data/map/*.pmtiles
 data/map/*.partial

@@ -280,6 +280,17 @@ AF — ёмкость путей, AO — погрузка в сутки; дан�
 ./scripts/load_stations.sh --dry-run     # только парсинг Excel, без БД (load_station_code = null)
 ```
 
+### Свободные ёмкости путей (`data/load_stations_free_capacity.json`)
+
+Пересобирается **каждым суточным прогоном** `railoptim` (вшито в основной бинарник,
+`src/data/free_loadroads.rs` + хелпер `src/data/free_loadroads.py`). Берёт ёмкость путей из
+`data/load_stations.json` и данные MSSQL: Шаг 1 — станции погрузки зерна за 6 мес. (`MSSQL_DB_SLP`),
+Шаг 2 — вагоны на станции `DislocationPreview.Distance=0` (`MSSQL_DB_ASUVP`). В справочник идут
+только крупные станции погрузки (`station_road_capacity > 50`), присутствующие в Шаге 1, с
+`FreeRailRoadCapacity > 20` (`FreeRailRoadCapacity = RailRoadCapacity − CarsOnRailRoads`).
+Пороги — константы `LARGE_STATION_MIN_ROAD_CAPACITY` и `FREE_CAPACITY_MIN`. Недоступность БД
+не блокирует оптимизацию. Файл регенерируется ежедневно и не коммитится.
+
 ---
 
 ## Web-сервер (`railoptim-web`)

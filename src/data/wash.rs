@@ -6,6 +6,8 @@ use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result};
 
+use serde::{Deserialize, Deserializer};
+
 use crate::node::{DemandNode, DemandPurpose, SupplyNode};
 
 use super::references::normalize_etsng_code;
@@ -17,17 +19,52 @@ fn wash_script_path() -> Result<PathBuf> {
         .join("src/data/wash.py"))
 }
 
-#[derive(Debug, Clone)]
+// #[derive(Debug, Clone)]
+// pub struct WashStation {
+//     pub station_name: String,
+//     pub station_code: String,
+//     pub railway_short: String,
+//     pub railway_code: String,
+//     pub capacity_per_day: i32,
+//     pub railway_wash_division: Option<String>,
+// }
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct WashStation {
+    #[serde(rename = "StationWash", default)]
     pub station_name: String,
+    #[serde(rename = "StationWashCode")] // Обязательное поле для валидации
     pub station_code: String,
+    #[serde(rename = "RailWayWash")] // Обязательное поле для валидации
     pub railway_short: String,
+    // Решаем проблему "строка или число" с помощью гибкого десериализатора
+    #[serde(rename = "RailWayWashCode", deserialize_with = "deserialize_string_or_number", default)]
     pub railway_code: String,
+    // Автоматически маппим из числа JSON и задаем дефолт 0, если поля нет
+    #[serde(rename = "WashCapacity", default)]
     pub capacity_per_day: i32,
+    #[serde(rename = "RailWayWashDivision", default)]
     pub railway_wash_division: Option<String>,
 }
 
-/// Запускает `wash.py json`, читает JSON со stdout.
+/// Помощник для обработки кривого API (когда код дороги то число, то строка)
+fn deserialize_string_or_number<'de, D>(deserializer: D) -> Result<String, D::Error> where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum StringOrNumber {
+        String(String),
+        Number(i64),
+    }
+
+    match StringOrNumber::deserialize(deserializer) {
+        Ok(StringOrNumber::String(s)) => Ok(s),
+        Ok(StringOrNumber::Number(n)) => Ok(n.to_string()),
+        Err(_) => Ok(String::new()), // если пришел null или тип не совпал
+    }
+}
+
 pub fn fetch_wash_stations() -> Result<Vec<WashStation>> {
     let script = wash_script_path()?;
     let output = Command::new("python3")
@@ -46,61 +83,95 @@ pub fn fetch_wash_stations() -> Result<Vec<WashStation>> {
         );
     }
 
-    let stdout = String::from_utf8(output.stdout).context("stdout wash.py UTF-8")?;
-    let trimmed = stdout.trim();
-    if trimmed.is_empty() || trimmed == "[]" {
-        return Ok(Vec::new());
-    }
+    // 1. Парсим напрямую из вектора байт (&[u8]), минуя создание промежуточной String
+    let mut stations: Vec<WashStation> = serde_json::from_slice(&output.stdout)
+        .context("Ошибка десериализации JSON станций промывки")?;
 
-    let rows: Vec<serde_json::Value> =
-        serde_json::from_str(trimmed).context("JSON станций промывки")?;
+    // 2. Твоя валидация: удаляем пустые и гарантируем, что вместимость >= 0
+    stations.retain_mut(|s| {
+        s.capacity_per_day = s.capacity_per_day.max(0);
+        !s.station_code.is_empty() && !s.railway_short.is_empty()
+    });
 
-    let mut out = Vec::new();
-    for r in rows {
-        let obj = r.as_object().context("элемент wash JSON — не объект")?;
-        let station_name = obj
-            .get("StationWash")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        let station_code = obj
-            .get("StationWashCode")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        let railway_short = obj
-            .get("RailWayWash")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        let railway_code = match obj.get("RailWayWashCode") {
-            Some(serde_json::Value::String(s)) => s.clone(),
-            Some(serde_json::Value::Number(n)) => n.to_string(),
-            _ => String::new(),
-        };
-        let cap = obj
-            .get("WashCapacity")
-            .and_then(|v| v.as_i64().or_else(|| v.as_u64().map(|u| u as i64)))
-            .unwrap_or(0) as i32;
-        let railway_wash_division = obj
-            .get("RailWayWashDivision")
-            .and_then(|v| v.as_str())
-            .map(str::to_string);
-
-        if station_code.is_empty() || railway_short.is_empty() {
-            continue;
-        }
-        out.push(WashStation {
-            station_name,
-            station_code,
-            railway_short,
-            railway_code,
-            capacity_per_day: cap.max(0),
-            railway_wash_division,
-        });
-    }
-    Ok(out)
+    Ok(stations)
 }
+
+
+
+// /// Запускает `wash.py json`, читает JSON со stdout.
+// pub fn fetch_wash_stations() -> Result<Vec<WashStation>> {
+//     let script = wash_script_path()?;
+//     let output = Command::new("python3")
+//         .arg(&script)
+//         .arg("json")
+//         .stdout(Stdio::piped())
+//         .stderr(Stdio::piped())
+//         .output()
+//         .with_context(|| format!("python3 {}", script.display()))?;
+
+//     if !output.status.success() {
+//         anyhow::bail!(
+//             "wash.py json: {:?}\n{}",
+//             output.status.code(),
+//             String::from_utf8_lossy(&output.stderr)
+//         );
+//     }
+
+//     let stdout = String::from_utf8(output.stdout).context("stdout wash.py UTF-8")?;
+//     let trimmed = stdout.trim();
+//     if trimmed.is_empty() || trimmed == "[]" {
+//         return Ok(Vec::new());
+//     }
+
+//     let rows: Vec<serde_json::Value> =
+//         serde_json::from_str(trimmed).context("JSON станций промывки")?;
+
+//     let mut out = Vec::new();
+//     for r in rows {
+//         let obj = r.as_object().context("элемент wash JSON — не объект")?;
+//         let station_name = obj
+//             .get("StationWash")
+//             .and_then(|v| v.as_str())
+//             .unwrap_or("")
+//             .to_string();
+//         let station_code = obj
+//             .get("StationWashCode")
+//             .and_then(|v| v.as_str())
+//             .unwrap_or("")
+//             .to_string();
+//         let railway_short = obj
+//             .get("RailWayWash")
+//             .and_then(|v| v.as_str())
+//             .unwrap_or("")
+//             .to_string();
+//         let railway_code = match obj.get("RailWayWashCode") {
+//             Some(serde_json::Value::String(s)) => s.clone(),
+//             Some(serde_json::Value::Number(n)) => n.to_string(),
+//             _ => String::new(),
+//         };
+//         let cap = obj
+//             .get("WashCapacity")
+//             .and_then(|v| v.as_i64().or_else(|| v.as_u64().map(|u| u as i64)))
+//             .unwrap_or(0) as i32;
+//         let railway_wash_division = obj
+//             .get("RailWayWashDivision")
+//             .and_then(|v| v.as_str())
+//             .map(str::to_string);
+
+//         if station_code.is_empty() || railway_short.is_empty() {
+//             continue;
+//         }
+//         out.push(WashStation {
+//             station_name,
+//             station_code,
+//             railway_short,
+//             railway_code,
+//             capacity_per_day: cap.max(0),
+//             railway_wash_division,
+//         });
+//     }
+//     Ok(out)
+// }
 
 /// Верхняя граница суток планирования по периодам спроса (как в `demand::DEMAND_PERIODS`): 0..14 → 15 суток.
 // const PLANNING_HORIZON_DAYS: i32 = 15;

@@ -1,6 +1,6 @@
 use secrecy::SecretString;
 use thiserror::Error;
-use zeroize::Zeroize;
+// use zeroize::Zeroize;
 
 #[derive(Debug, Error)]
 pub enum ConfigError {
@@ -39,7 +39,7 @@ impl Config {
             source: e,
         })?;
 
-        let mut raw_token = std::env::var("API_TOKEN").map_err(|e| ConfigError::MissingVar {
+        let raw_token = std::env::var("API_TOKEN").map_err(|e| ConfigError::MissingVar {
             var: "API_TOKEN",
             source: e,
         })?;

@@ -4,7 +4,9 @@ After=network-online.target
 
 [Timer]
 Unit=railoptim.service
-OnCalendar=*-*-* 11:05:00
+# Mon..Fri означает: Понедельник, Вторник, Среда, Четверг, Пятница
+OnCalendar=Mon..Fri *-*-* 11:05:00
+#OnCalendar=Mon..Fri *-*-* 21:10:00
 # Если сервер был выключен в момент срабатывания — запустить сразу после включения
 Persistent=true
 AccuracySec=1m

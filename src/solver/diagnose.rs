@@ -14,8 +14,8 @@ use crate::node::{DemandNode, DemandPurpose, SupplyNode, TariffNode};
 
 use super::lp::PENALTY_UNMET;
 use super::model::{
-    classify_pair, DmziIndex, DmziLimits, PairKey, PairOutcome, TaskArc,
-    MIN_BATCH_FROM_MASS_STATION, MIN_BATCH_TO_MIDDLE_DEMAND_STATION,
+    classify_pair, wash_route_min_cost_by_station, DmziIndex, DmziLimits, PairKey, PairOutcome,
+    TaskArc, MIN_BATCH_FROM_MASS_STATION, MIN_BATCH_TO_MIDDLE_DEMAND_STATION,
     MIN_BATCH_TO_ROUTE_DEMAND_STATION,
 };
 
@@ -578,6 +578,9 @@ pub fn diagnose_unmet_demand(
         .map(|t| ((t.station_from_code.as_str(), t.station_to_code.as_str()), t))
         .collect();
 
+    // Порог «cap» промывочного маршрута по станции образования (как в build_task_arcs).
+    let wash_min_cost = wash_route_min_cost_by_station(wash_tariffs);
+
     let mut cause_stats: BTreeMap<&'static str, (usize, i32)> = BTreeMap::new();
     let add_stat = |key: &'static str, rem: i32, stats: &mut BTreeMap<&'static str, (usize, i32)>| {
         let e = stats.entry(key).or_insert((0, 0));
@@ -663,12 +666,16 @@ pub fn diagnose_unmet_demand(
             // Структурный разбор: почему пара с каждым узлом предложения отброшена.
             let (mut no_tariff, mut bad_type, mut dirty_etsng, mut bad_period) = (0, 0, 0, 0);
             for s in supply.iter() {
-                match classify_pair(s, d, &tariff_index, wash_codes, no_cleaning_roads, washed_empty_codes, wash_tariffs) {
+                let s_wash_min = wash_min_cost.get(s.station_to_code.as_str()).copied();
+                match classify_pair(s, d, &tariff_index, wash_codes, no_cleaning_roads, washed_empty_codes, wash_tariffs, s_wash_min) {
                     // Feasible здесь невозможен: иначе дуга была бы построена.
                     PairOutcome::Feasible { .. } => {}
                     PairOutcome::NoTariff => no_tariff += 1,
                     PairOutcome::BadType => bad_type += 1,
+                    // Грязный вагон: и несовпадение ЕТСНГ, и «дальняя погрузка дороже промывки»
+                    // объединяем в один счётчик «грязный не может ехать под эту погрузку».
                     PairOutcome::DirtyEtsngMismatch => dirty_etsng += 1,
+                    PairOutcome::DirtyFarLoadPreferWash => dirty_etsng += 1,
                     PairOutcome::BadPeriod => bad_period += 1,
                 }
             }

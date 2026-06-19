@@ -471,6 +471,11 @@ async fn main() -> Result<()> {
         100.0 * arc_stats.dirty_etsng_mismatch as f64 / total.max(1) as f64,
     );
     println!(
+        "  грязный: дальняя погрузка дороже промывки → в промывку: {} ({:.1}%)",
+        arc_stats.dirty_far_prefer_wash,
+        100.0 * arc_stats.dirty_far_prefer_wash as f64 / total.max(1) as f64,
+    );
+    println!(
         "  допустимых дуг со штрафом за срок:   {} ({:.1}%)",
         arc_stats.arcs_period_penalized,
         100.0 * arc_stats.arcs_period_penalized as f64 / total.max(1) as f64,

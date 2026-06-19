@@ -346,9 +346,15 @@ pub fn build_task_arcs(
     let mut bad_period = 0usize;
     let mut bad_type   = 0usize;
     let mut dirty_etsng_mismatch = 0usize;
+    let mut dirty_far_prefer_wash = 0usize;
     let mut arcs_period_penalized = 0usize;
 
+    // Порог «cap» для грязных вагонов: минимальная стоимость промывочного маршрута
+    // по станции образования (см. classify_pair). Считается один раз.
+    let wash_min_cost = wash_route_min_cost_by_station(wash_tariffs);
+
     for (s_idx, s) in supply.iter().enumerate() {
+        let s_wash_min = wash_min_cost.get(s.station_to_code.as_str()).copied();
         for (d_idx, d) in demand.iter().enumerate() {
             // Жёсткие фильтры пары вынесены в classify_pair — та же логика
             // переиспользуется в диагностике незакрытого спроса.
@@ -360,11 +366,13 @@ pub fn build_task_arcs(
                 no_cleaning_roads,
                 washed_empty_codes,
                 wash_tariffs,
+                s_wash_min,
             ) {
                 PairOutcome::Feasible { tariff, cost, period_ok } => (tariff, cost, period_ok),
                 PairOutcome::NoTariff => { no_tariff += 1; continue; }
                 PairOutcome::BadType => { bad_type += 1; continue; }
                 PairOutcome::DirtyEtsngMismatch => { dirty_etsng_mismatch += 1; continue; }
+                PairOutcome::DirtyFarLoadPreferWash => { dirty_far_prefer_wash += 1; continue; }
                 PairOutcome::BadPeriod => { bad_period += 1; continue; }
             };
             if !period_ok {
@@ -417,6 +425,7 @@ pub fn build_task_arcs(
         bad_period,
         bad_type,
         dirty_etsng_mismatch,
+        dirty_far_prefer_wash,
         feasible: arcs.len(),
         arcs_period_penalized,
     };
@@ -444,6 +453,9 @@ pub enum PairOutcome<'a> {
     BadType,
     /// Грязный вагон → погрузка с несовпадающим ЕТСНГ (без промывки запрещено).
     DirtyEtsngMismatch,
+    /// Грязный вагон → погрузка аналогичного груза дороже промывочного маршрута:
+    /// дальний подсыл под тот же груз не делаем, вагон должен идти в промывку.
+    DirtyFarLoadPreferWash,
     /// Период спроса не имеет табличных границ (жёсткая отбраковка по сроку).
     BadPeriod,
 }
@@ -461,7 +473,11 @@ pub fn classify_pair<'a>(
     no_cleaning_roads: &HashSet<String>,
     washed_empty_codes: &HashSet<String>,
     wash_tariffs: &'a HashMap<(String, String), TariffNode>,
+    wash_route_min_cost: Option<f64>,
 ) -> PairOutcome<'a> {
+    // Грязный вагон, едущий под погрузку аналогичного груза (Load + same ЕТСНГ).
+    // Для такой пары применяется «cap»: см. ниже после расчёта стоимости.
+    let mut dirty_load = false;
     let tariff: &TariffNode = match d.purpose {
         DemandPurpose::Wash => {
             // Вагоны с дорогой образования из NoCleaningRoads — не грязные
@@ -484,7 +500,7 @@ pub fn classify_pair<'a>(
                 let supply_etsng = effective_etsng_for_wash_tariff(s);
                 let demand_etsng = d.etsng.as_deref().map(normalize_etsng_code);
                 match (supply_etsng, demand_etsng) {
-                    (Some(se), Some(de)) if se == de => {} // ЕТСНГ совпадает → дуга разрешена
+                    (Some(se), Some(de)) if se == de => { dirty_load = true; } // ЕТСНГ совпадает → дуга разрешена
                     _ => return PairOutcome::DirtyEtsngMismatch,
                 }
             }
@@ -519,7 +535,46 @@ pub fn classify_pair<'a>(
         cost += PERIOD10_COST_SURCHARGE_RUB;
     }
 
+    // --- Cap: грязный вагон не едет «через всю страну» под аналогичный груз ---
+    // Бизнес-правило: дальний подсыл порожнего под погрузку того же груза без промывки
+    // не практикуется — если промывочный маршрут (тариф до промывки + надбавка
+    // WASH_PATH_SURCHARGE_RUB, т.е. промывка + порожний пробег под погрузку) дешевле
+    // прямой погрузки, вагон должен идти в промывку. Дугу прямой погрузки в этом случае
+    // не создаём, и пара относится к причине DirtyFarLoadPreferWash.
+    // Применяется только когда промывка для вагона вообще доступна (есть wash-тариф):
+    // иначе прямая погрузка — единственный шанс закрыть спрос, и её сохраняем.
+    if dirty_load {
+        if let Some(wash_cost) = wash_route_min_cost {
+            if cost > wash_cost {
+                return PairOutcome::DirtyFarLoadPreferWash;
+            }
+        }
+    }
+
     PairOutcome::Feasible { tariff, cost, period_ok }
+}
+
+/// Минимальная стоимость промывочного маршрута по станциям образования.
+///
+/// Ключ — код станции дислокации порожнего (`SupplyNode::station_to_code`),
+/// значение — минимальный `cost` среди всех wash-тарифов из этой станции
+/// (тариф уже включает надбавку [`WASH_PATH_SURCHARGE_RUB`]). Используется как
+/// порог «cap» в [`classify_pair`] для грязных вагонов под аналогичный груз.
+pub fn wash_route_min_cost_by_station(
+    wash_tariffs: &HashMap<(String, String), TariffNode>,
+) -> HashMap<String, f64> {
+    let mut min_cost: HashMap<String, f64> = HashMap::new();
+    for ((from_code, _to_code), t) in wash_tariffs {
+        min_cost
+            .entry(from_code.clone())
+            .and_modify(|c| {
+                if t.cost < *c {
+                    *c = t.cost;
+                }
+            })
+            .or_insert(t.cost);
+    }
+    min_cost
 }
 
 /// Диагностические счётчики из [`build_task_arcs`].
@@ -535,6 +590,8 @@ pub struct ArcStats {
     pub bad_type:   usize,
     /// Пар «грязный» вагон → погрузка с несовпадающим ЕТСНГ (запрещено без промывки).
     pub dirty_etsng_mismatch: usize,
+    /// Пар «грязный» вагон → погрузка аналогичного груза дороже промывки (предпочтена промывка).
+    pub dirty_far_prefer_wash: usize,
     /// Допустимых дуг (вошли в LP).
     pub feasible:   usize,
     /// Дуг с ненулевым штрафом за срок подсыла (`supply_period != 10`, вне `[L−3, U+3]`).
@@ -953,5 +1010,73 @@ mod tests {
 
         let ok = collect_pair_min_batch_violations([(0_usize, B_MID)].into_iter(), &arcs);
         assert!(ok.is_empty());
+    }
+
+    /// Грязный вагон + аналогичный груз, но прямая погрузка (1000) дороже
+    /// промывочного маршрута (500): дуга прямой погрузки не создаётся,
+    /// пара относится к причине DirtyFarLoadPreferWash.
+    #[test]
+    fn dirty_far_load_dropped_when_wash_cheaper() {
+        let mut s = dummy_supply(5, "S1", 1, false);
+        s.prev_etsngs = vec!["421034".to_string()];
+        let mut d = dummy_demand(5, "D1", None);
+        d.etsng = Some("421034".to_string());
+
+        let wash_codes: HashSet<String> = ["421034".to_string()].into_iter().collect();
+        let mut wash_tariffs: HashMap<(String, String), TariffNode> = HashMap::new();
+        let mut wt = dummy_tariff("S1", "WASH");
+        wt.cost = 500.0; // промывочный маршрут дешевле прямой погрузки (1000)
+        wash_tariffs.insert(("S1".to_string(), "WASH".to_string()), wt);
+
+        let (arcs, stats) = build_task_arcs(
+            &[s], &[d], &[dummy_tariff("S1", "D1")],
+            &wash_codes, &HashSet::new(), &HashSet::new(), &wash_tariffs,
+        );
+        assert!(arcs.is_empty(), "дальняя погрузка дороже промывки — дуги быть не должно");
+        assert_eq!(stats.dirty_far_prefer_wash, 1);
+        assert_eq!(stats.dirty_etsng_mismatch, 0);
+    }
+
+    /// Грязный вагон + аналогичный груз, прямая погрузка (1000) дешевле
+    /// промывочного маршрута (2000): дуга прямой погрузки сохраняется.
+    #[test]
+    fn dirty_load_kept_when_direct_cheaper() {
+        let mut s = dummy_supply(5, "S1", 1, false);
+        s.prev_etsngs = vec!["421034".to_string()];
+        let mut d = dummy_demand(5, "D1", None);
+        d.etsng = Some("421034".to_string());
+
+        let wash_codes: HashSet<String> = ["421034".to_string()].into_iter().collect();
+        let mut wash_tariffs: HashMap<(String, String), TariffNode> = HashMap::new();
+        let mut wt = dummy_tariff("S1", "WASH");
+        wt.cost = 2000.0; // промывочный маршрут дороже прямой погрузки (1000)
+        wash_tariffs.insert(("S1".to_string(), "WASH".to_string()), wt);
+
+        let (arcs, stats) = build_task_arcs(
+            &[s], &[d], &[dummy_tariff("S1", "D1")],
+            &wash_codes, &HashSet::new(), &HashSet::new(), &wash_tariffs,
+        );
+        assert_eq!(arcs.len(), 1, "прямая погрузка дешевле промывки — дуга должна остаться");
+        assert_eq!(stats.dirty_far_prefer_wash, 0);
+    }
+
+    /// Грязный вагон без доступной промывки (нет wash-тарифа): cap не применяется,
+    /// прямая погрузка под аналогичный груз сохраняется даже если она дорогая.
+    #[test]
+    fn dirty_load_kept_when_no_wash_available() {
+        let mut s = dummy_supply(5, "S1", 1, false);
+        s.prev_etsngs = vec!["421034".to_string()];
+        let mut d = dummy_demand(5, "D1", None);
+        d.etsng = Some("421034".to_string());
+
+        let wash_codes: HashSet<String> = ["421034".to_string()].into_iter().collect();
+        let wash_tariffs: HashMap<(String, String), TariffNode> = HashMap::new();
+
+        let (arcs, stats) = build_task_arcs(
+            &[s], &[d], &[dummy_tariff("S1", "D1")],
+            &wash_codes, &HashSet::new(), &HashSet::new(), &wash_tariffs,
+        );
+        assert_eq!(arcs.len(), 1);
+        assert_eq!(stats.dirty_far_prefer_wash, 0);
     }
 }

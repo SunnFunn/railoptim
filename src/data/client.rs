@@ -85,6 +85,9 @@ impl ApiClient {
 
         let client = Client::builder()
             .default_headers(headers)
+            // 502 IIS иначе возвращает соединение в пул; следующий fetch_tariffs
+            // (ремонт/промывка/отстой) переиспользует его и падает на send.
+            .pool_max_idle_per_host(0)
             .build()
             .map_err(ApiError::Http)?;
 

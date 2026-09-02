@@ -1,0 +1,21 @@
+[Пн 31 авг 2026 11:05:00 MSK] Запуск: /home/atretyakov/railoptim/app/bin/railoptim (env=prod, MIP_WARM_START=on)
+stations_geo: 19494 записей, data/stations/stations_geo.sqlite (baltic=671, china_mongolia=339, cis=6263, ru=11848, south_caucasus=373)
+Получено узлов спроса (погрузка): 451 или 6050 вагонов
+Получено узлов предложения 1 сут.:  347 или 1140 вагонов
+Получено узлов предложения всего:  347 или 1140 вагонов
+  свободных для назначения:  206 или 779 вагонов
+  требуют ремонта (В ремонт):25 или 29 вагонов
+  по факту (Assigned):       116 или 332 вагонов
+Дороги без промывки (NoCleaningRoads): 8
+Коды «уже промыт/ремонт» (WashedEmptyEtsngCodes): 2
+Ban-list чужих владельцев отстоя (reserve_owners.json): 4 пар (станция+ОКПО)
+Узлов спроса (промывка):     36 или мощность в период 5 суток 2795 вагонов
+  предложений с ЕТСНГ из списка промывки: 22 вагонов (освобождены по NoCleaningRoads: 17; из них есть узел погрузки с тем же ЕТСНГ на любой станции — альтернатива промывке по спросу: 24 вагонов)
+Error: HTTP-запрос завершился ошибкой: error sending request for url (https://isupv-api.rusagrotrans.ru:2555/isupv/IsupvApi/GetRailTariffRouteDataTransmission)
+
+Caused by:
+    0: error sending request for url (https://isupv-api.rusagrotrans.ru:2555/isupv/IsupvApi/GetRailTariffRouteDataTransmission)
+    1: client error (SendRequest)
+    2: connection error
+    3: timed out
+[ERROR] railoptim завершился с ошибкой!

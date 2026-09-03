@@ -4,8 +4,8 @@
     "LoadStationName": "Безенчук",
     "LoadStationCode": "638501",
     "RailRoadCapacity": 317,
-    "CarsOnRailRoads": 147,
-    "FreeRailRoadCapacity": 170
+    "CarsOnRailRoads": 140,
+    "FreeRailRoadCapacity": 177
   },
   {
     "LoadRoadName": "ЮВС",
@@ -60,8 +60,16 @@
     "LoadStationName": "Кинешма",
     "LoadStationCode": "316707",
     "RailRoadCapacity": 152,
-    "CarsOnRailRoads": 8,
-    "FreeRailRoadCapacity": 144
+    "CarsOnRailRoads": 9,
+    "FreeRailRoadCapacity": 143
+  },
+  {
+    "LoadRoadName": "СКВ",
+    "LoadStationName": "Светлоград",
+    "LoadStationCode": "527402",
+    "RailRoadCapacity": 192,
+    "CarsOnRailRoads": 50,
+    "FreeRailRoadCapacity": 142
   },
   {
     "LoadRoadName": "КБШ",
@@ -76,16 +84,16 @@
     "LoadStationName": "Никифоровка",
     "LoadStationCode": "601102",
     "RailRoadCapacity": 236,
-    "CarsOnRailRoads": 96,
-    "FreeRailRoadCapacity": 140
+    "CarsOnRailRoads": 95,
+    "FreeRailRoadCapacity": 141
   },
   {
     "LoadRoadName": "СКВ",
     "LoadStationName": "Миллерово",
     "LoadStationCode": "586504",
     "RailRoadCapacity": 248,
-    "CarsOnRailRoads": 112,
-    "FreeRailRoadCapacity": 136
+    "CarsOnRailRoads": 114,
+    "FreeRailRoadCapacity": 134
   },
   {
     "LoadRoadName": "СКВ",
@@ -94,14 +102,6 @@
     "RailRoadCapacity": 188,
     "CarsOnRailRoads": 57,
     "FreeRailRoadCapacity": 131
-  },
-  {
-    "LoadRoadName": "СКВ",
-    "LoadStationName": "Светлоград",
-    "LoadStationCode": "527402",
-    "RailRoadCapacity": 192,
-    "CarsOnRailRoads": 63,
-    "FreeRailRoadCapacity": 129
   },
   {
     "LoadRoadName": "МСК",
@@ -132,24 +132,24 @@
     "LoadStationName": "Карбышево 1",
     "LoadStationCode": "830304",
     "RailRoadCapacity": 332,
-    "CarsOnRailRoads": 217,
-    "FreeRailRoadCapacity": 115
+    "CarsOnRailRoads": 215,
+    "FreeRailRoadCapacity": 117
   },
   {
     "LoadRoadName": "СКВ",
     "LoadStationName": "Расшеватка",
     "LoadStationCode": "526503",
     "RailRoadCapacity": 169,
-    "CarsOnRailRoads": 55,
-    "FreeRailRoadCapacity": 114
+    "CarsOnRailRoads": 56,
+    "FreeRailRoadCapacity": 113
   },
   {
     "LoadRoadName": "МСК",
     "LoadStationName": "Кшень",
     "LoadStationCode": "209401",
     "RailRoadCapacity": 209,
-    "CarsOnRailRoads": 99,
-    "FreeRailRoadCapacity": 110
+    "CarsOnRailRoads": 100,
+    "FreeRailRoadCapacity": 109
   },
   {
     "LoadRoadName": "ЗСБ",
@@ -164,8 +164,8 @@
     "LoadStationName": "Острогожск",
     "LoadStationCode": "581708",
     "RailRoadCapacity": 152,
-    "CarsOnRailRoads": 54,
-    "FreeRailRoadCapacity": 98
+    "CarsOnRailRoads": 55,
+    "FreeRailRoadCapacity": 97
   },
   {
     "LoadRoadName": "ЗСБ",
@@ -200,20 +200,20 @@
     "FreeRailRoadCapacity": 87
   },
   {
-    "LoadRoadName": "ЮВС",
-    "LoadStationName": "Телегино",
-    "LoadStationCode": "593300",
-    "RailRoadCapacity": 112,
-    "CarsOnRailRoads": 26,
-    "FreeRailRoadCapacity": 86
-  },
-  {
     "LoadRoadName": "ЗСБ",
     "LoadStationName": "Алейская",
     "LoadStationCode": "844307",
     "RailRoadCapacity": 128,
-    "CarsOnRailRoads": 42,
-    "FreeRailRoadCapacity": 86
+    "CarsOnRailRoads": 43,
+    "FreeRailRoadCapacity": 85
+  },
+  {
+    "LoadRoadName": "ЮВС",
+    "LoadStationName": "Телегино",
+    "LoadStationCode": "593300",
+    "RailRoadCapacity": 112,
+    "CarsOnRailRoads": 28,
+    "FreeRailRoadCapacity": 84
   },
   {
     "LoadRoadName": "МСК",
@@ -240,14 +240,6 @@
     "FreeRailRoadCapacity": 80
   },
   {
-    "LoadRoadName": "ВСБ",
-    "LoadStationName": "ТУЛУН",
-    "LoadStationCode": "922008",
-    "RailRoadCapacity": 125,
-    "CarsOnRailRoads": 45,
-    "FreeRailRoadCapacity": 80
-  },
-  {
     "LoadRoadName": "СКВ",
     "LoadStationName": "Сальск",
     "LoadStationCode": "518403",
@@ -256,12 +248,20 @@
     "FreeRailRoadCapacity": 76
   },
   {
+    "LoadRoadName": "ВСБ",
+    "LoadStationName": "ТУЛУН",
+    "LoadStationCode": "922008",
+    "RailRoadCapacity": 125,
+    "CarsOnRailRoads": 49,
+    "FreeRailRoadCapacity": 76
+  },
+  {
     "LoadRoadName": "ЮВС",
     "LoadStationName": "Плавица",
     "LoadStationCode": "597903",
     "RailRoadCapacity": 92,
-    "CarsOnRailRoads": 18,
-    "FreeRailRoadCapacity": 74
+    "CarsOnRailRoads": 19,
+    "FreeRailRoadCapacity": 73
   },
   {
     "LoadRoadName": "ЗСБ",
@@ -296,6 +296,14 @@
     "FreeRailRoadCapacity": 70
   },
   {
+    "LoadRoadName": "ЮВС",
+    "LoadStationName": "Хохольская",
+    "LoadStationCode": "596101",
+    "RailRoadCapacity": 108,
+    "CarsOnRailRoads": 41,
+    "FreeRailRoadCapacity": 67
+  },
+  {
     "LoadRoadName": "ГОР",
     "LoadStationName": "Красный Узел",
     "LoadStationCode": "247009",
@@ -318,6 +326,14 @@
     "RailRoadCapacity": 101,
     "CarsOnRailRoads": 35,
     "FreeRailRoadCapacity": 66
+  },
+  {
+    "LoadRoadName": "КБШ",
+    "LoadStationName": "Карламан",
+    "LoadStationCode": "652000",
+    "RailRoadCapacity": 76,
+    "CarsOnRailRoads": 12,
+    "FreeRailRoadCapacity": 64
   },
   {
     "LoadRoadName": "ЗСБ",
@@ -344,44 +360,12 @@
     "FreeRailRoadCapacity": 60
   },
   {
-    "LoadRoadName": "ЮВС",
-    "LoadStationName": "Хохольская",
-    "LoadStationCode": "596101",
-    "RailRoadCapacity": 108,
-    "CarsOnRailRoads": 49,
-    "FreeRailRoadCapacity": 59
-  },
-  {
-    "LoadRoadName": "КБШ",
-    "LoadStationName": "Карламан",
-    "LoadStationCode": "652000",
-    "RailRoadCapacity": 76,
-    "CarsOnRailRoads": 17,
-    "FreeRailRoadCapacity": 59
-  },
-  {
-    "LoadRoadName": "ПРВ",
-    "LoadStationName": "Екатериновка",
-    "LoadStationCode": "608606",
-    "RailRoadCapacity": 92,
-    "CarsOnRailRoads": 36,
-    "FreeRailRoadCapacity": 56
-  },
-  {
     "LoadRoadName": "ЗСБ",
     "LoadStationName": "Стрела",
     "LoadStationCode": "834502",
     "RailRoadCapacity": 60,
     "CarsOnRailRoads": 4,
     "FreeRailRoadCapacity": 56
-  },
-  {
-    "LoadRoadName": "ЗСБ",
-    "LoadStationName": "Калачинская",
-    "LoadStationCode": "832808",
-    "RailRoadCapacity": 104,
-    "CarsOnRailRoads": 49,
-    "FreeRailRoadCapacity": 55
   },
   {
     "LoadRoadName": "ЗСБ",
@@ -408,14 +392,6 @@
     "FreeRailRoadCapacity": 53
   },
   {
-    "LoadRoadName": "СКВ",
-    "LoadStationName": "Лабинская",
-    "LoadStationCode": "535706",
-    "RailRoadCapacity": 144,
-    "CarsOnRailRoads": 92,
-    "FreeRailRoadCapacity": 52
-  },
-  {
     "LoadRoadName": "ЮВС",
     "LoadStationName": "Сампур",
     "LoadStationCode": "601704",
@@ -430,6 +406,14 @@
     "RailRoadCapacity": 52,
     "CarsOnRailRoads": 0,
     "FreeRailRoadCapacity": 52
+  },
+  {
+    "LoadRoadName": "СКВ",
+    "LoadStationName": "Лабинская",
+    "LoadStationCode": "535706",
+    "RailRoadCapacity": 144,
+    "CarsOnRailRoads": 93,
+    "FreeRailRoadCapacity": 51
   },
   {
     "LoadRoadName": "ЗСБ",
@@ -496,28 +480,20 @@
     "FreeRailRoadCapacity": 42
   },
   {
+    "LoadRoadName": "ЮВС",
+    "LoadStationName": "Обоянь",
+    "LoadStationCode": "435304",
+    "RailRoadCapacity": 68,
+    "CarsOnRailRoads": 28,
+    "FreeRailRoadCapacity": 40
+  },
+  {
     "LoadRoadName": "ЮУР",
     "LoadStationName": "Курган",
     "LoadStationCode": "828501",
     "RailRoadCapacity": 93,
     "CarsOnRailRoads": 53,
     "FreeRailRoadCapacity": 40
-  },
-  {
-    "LoadRoadName": "ЮВС",
-    "LoadStationName": "Ольха",
-    "LoadStationCode": "583703",
-    "RailRoadCapacity": 76,
-    "CarsOnRailRoads": 37,
-    "FreeRailRoadCapacity": 39
-  },
-  {
-    "LoadRoadName": "МСК",
-    "LoadStationName": "Удобрительная",
-    "LoadStationCode": "209100",
-    "RailRoadCapacity": 101,
-    "CarsOnRailRoads": 65,
-    "FreeRailRoadCapacity": 36
   },
   {
     "LoadRoadName": "ЮВС",
@@ -528,12 +504,12 @@
     "FreeRailRoadCapacity": 35
   },
   {
-    "LoadRoadName": "ЮВС",
-    "LoadStationName": "Обоянь",
-    "LoadStationCode": "435304",
-    "RailRoadCapacity": 68,
-    "CarsOnRailRoads": 38,
-    "FreeRailRoadCapacity": 30
+    "LoadRoadName": "МСК",
+    "LoadStationName": "Удобрительная",
+    "LoadStationCode": "209100",
+    "RailRoadCapacity": 101,
+    "CarsOnRailRoads": 67,
+    "FreeRailRoadCapacity": 34
   },
   {
     "LoadRoadName": "КБШ",
@@ -560,12 +536,20 @@
     "FreeRailRoadCapacity": 29
   },
   {
+    "LoadRoadName": "ЗСБ",
+    "LoadStationName": "Калачинская",
+    "LoadStationCode": "832808",
+    "RailRoadCapacity": 104,
+    "CarsOnRailRoads": 75,
+    "FreeRailRoadCapacity": 29
+  },
+  {
     "LoadRoadName": "ПРВ",
-    "LoadStationName": "Урюпино",
-    "LoadStationCode": "613006",
-    "RailRoadCapacity": 68,
-    "CarsOnRailRoads": 40,
-    "FreeRailRoadCapacity": 28
+    "LoadStationName": "Екатериновка",
+    "LoadStationCode": "608606",
+    "RailRoadCapacity": 92,
+    "CarsOnRailRoads": 65,
+    "FreeRailRoadCapacity": 27
   },
   {
     "LoadRoadName": "ПРВ",
@@ -582,6 +566,14 @@
     "RailRoadCapacity": 76,
     "CarsOnRailRoads": 50,
     "FreeRailRoadCapacity": 26
+  },
+  {
+    "LoadRoadName": "ПРВ",
+    "LoadStationName": "Урюпино",
+    "LoadStationCode": "613006",
+    "RailRoadCapacity": 68,
+    "CarsOnRailRoads": 43,
+    "FreeRailRoadCapacity": 25
   },
   {
     "LoadRoadName": "ЗСБ",
@@ -601,14 +593,6 @@
   },
   {
     "LoadRoadName": "ЮВС",
-    "LoadStationName": "Латная",
-    "LoadStationCode": "596205",
-    "RailRoadCapacity": 72,
-    "CarsOnRailRoads": 50,
-    "FreeRailRoadCapacity": 22
-  },
-  {
-    "LoadRoadName": "ЮВС",
     "LoadStationName": "Тербуны",
     "LoadStationCode": "596703",
     "RailRoadCapacity": 112,
@@ -620,7 +604,15 @@
     "LoadStationName": "Белогорск 2",
     "LoadStationCode": "950101",
     "RailRoadCapacity": 108,
-    "CarsOnRailRoads": 87,
+    "CarsOnRailRoads": 86,
+    "FreeRailRoadCapacity": 22
+  },
+  {
+    "LoadRoadName": "КБШ",
+    "LoadStationName": "Чердаклы",
+    "LoadStationCode": "646009",
+    "RailRoadCapacity": 60,
+    "CarsOnRailRoads": 39,
     "FreeRailRoadCapacity": 21
   }
 ]

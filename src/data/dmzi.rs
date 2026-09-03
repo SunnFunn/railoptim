@@ -8,7 +8,8 @@
 //! - **период 1** (вагоны из АПИ, готовы сегодня) — **сумма** `Normativ`
 //!   за первые 5 суток от текущей даты (смещения 0–4);
 //! - **период 10** (дислокация 2–10 суток) — **сумма** `Normativ`
-//!   за оставшиеся сутки окна (смещение 5; смещения 3–4 отходят периоду 1).
+//!   за весь горизонт 7 суток (смещения 0–6). Дни, входящие в оба окна,
+//!   учитываются в обоих бакетах (квоты решателя раздельные).
 //!
 //! Код дороги — префикс `DMZIRailWayGroup` до `/` (например, `"МСК/ЗНВ"` → `МСК`);
 //! матчится с `DemandNode::railway_name` (дорога погрузки) после [`normalize_railway`].
@@ -31,12 +32,13 @@ pub const DMZI_HORIZON_DAYS: i64 = 6;
 /// (смещение даты норматива от текущей даты, в сутках).
 const P1_SUM_OFFSET_DAYS: std::ops::RangeInclusive<i64> = 0..=4;
 
-/// Окно суммирования `Normativ` для периода 10: 4-е, 5-е и 6-е сутки.
+/// Окно суммирования `Normativ` для периода 10: весь горизонт 7 суток
+/// (смещения 0–6, совпадает с [`DMZI_HORIZON_DAYS`] включительно).
 ///
-/// Пересекается с [`P1_SUM_OFFSET_DAYS`] на смещениях 3–4: при пересечении
-/// приоритет у периода 1 (см. ветвление в [`aggregate`]), поэтому фактически
-/// в период 10 попадает только смещение 5.
-const P10_SUM_OFFSET_DAYS: std::ops::RangeInclusive<i64> = 3..=5;
+/// Пересекается с [`P1_SUM_OFFSET_DAYS`] на 0–4: один дневной `Normativ`
+/// входит в оба бакета. Это намеренно — вагоны дислокации приходят каждый
+/// день в окне 2–10 суток и не должны упираться в однодневный остаток.
+const P10_SUM_OFFSET_DAYS: std::ops::RangeInclusive<i64> = 0..=6;
 
 /// Тип подвижного состава: зерновозы.
 pub const DMZI_CAR_KIND_GRAIN: &str = "20";
@@ -73,7 +75,7 @@ struct DmziApiItem {
 pub struct DmziRailwayQuota {
     /// Лимит на подсыл вагонов периода 1: сумма `Normativ` за сутки 1–5 (смещения 0–4).
     pub limit_p1: i32,
-    /// Лимит на подсыл вагонов периода 10: сумма `Normativ` за 6-е сутки (смещение 5).
+    /// Лимит на подсыл вагонов периода 10: сумма `Normativ` за весь горизонт 7 суток (0–6).
     pub limit_p10: i32,
 }
 
@@ -163,8 +165,8 @@ fn aggregate(items: &[DmziApiItem], today: NaiveDate) -> DmziQuotas {
         let is_p1 = P1_SUM_OFFSET_DAYS.contains(&offset);
         let is_p10 = P10_SUM_OFFSET_DAYS.contains(&offset);
         if !is_p1 && !is_p10 {
-            // Вне обоих окон (например, 7-е сутки горизонта) — не учитывается,
-            // запись по дороге не создаётся.
+            // Вне обоих окон (до горизонта или после: смещение < 0 или > 6) —
+            // не учитывается, запись по дороге не создаётся.
             continue;
         }
 
@@ -173,7 +175,8 @@ fn aggregate(items: &[DmziApiItem], today: NaiveDate) -> DmziQuotas {
             .or_insert(DmziRailwayQuota { limit_p1: 0, limit_p10: 0 });
         if is_p1 {
             quota.limit_p1 += normativ;
-        } else {
+        }
+        if is_p10 {
             quota.limit_p10 += normativ;
         }
         records += 1;
@@ -240,10 +243,9 @@ mod tests {
         NaiveDate::from_ymd_opt(2026, 6, 10).unwrap()
     }
 
-    /// p1 — сумма Normativ за сутки 1–5 (10–14.06), p10 — только 6-е сутки (15.06),
-    /// т.к. на пересечении окон (смещения 3–4) приоритет у периода 1;
-    /// 7-е сутки (16.06) не учитываются; записи NormativType != Ostatok отбрасываются
-    /// (регистр не важен).
+    /// p1 — сумма Normativ за сутки 1–5 (10–14.06);
+    /// p10 — весь горизонт 7 суток (10–16.06), включая дни, уже вошедшие в p1;
+    /// записи NormativType != Ostatok отбрасываются (регистр не важен).
     #[test]
     fn aggregate_sums_by_windows() {
         let items = parse_items(
@@ -267,13 +269,13 @@ mod tests {
             ]"#,
         );
         let q = aggregate(&items, today());
-        assert_eq!(q.records, 6);
+        assert_eq!(q.records, 7);
         let msk = q.by_railway.get("МСК").expect("МСК");
-        assert_eq!(msk.limit_p1, 25 + 10 + 5 + 40); // сутки 1–5 (вкл. 13.06, смещение 3)
-        assert_eq!(msk.limit_p10, 7); // только 6-е сутки (15.06, смещение 5)
+        assert_eq!(msk.limit_p1, 25 + 10 + 5 + 40); // сутки 1–5 (вкл. 13.06, без 15–16.06)
+        assert_eq!(msk.limit_p10, 25 + 10 + 5 + 40 + 7 + 999); // горизонт 7 суток
         let yvs = q.by_railway.get("ЮВС").expect("ЮВС");
         assert_eq!(yvs.limit_p1, 7);
-        assert_eq!(yvs.limit_p10, 0); // записей на 6-е сутки нет
+        assert_eq!(yvs.limit_p10, 7); // тот же день входит в оба бакета
     }
 
     /// Записи без распознанной даты не учитываются; дорога только с такими
@@ -291,12 +293,12 @@ mod tests {
         assert_eq!(q.records, 0);
     }
 
-    /// Дорога с записями только вне окон (7-е сутки) не получает квоты.
+    /// Дорога с записями только вне окон (8-е сутки, смещение 7) не получает квоты.
     #[test]
     fn aggregate_skips_out_of_window_railway() {
         let items = parse_items(
             r#"[{"DMZIRailWayGroup": "ЗАБ/ЗНВ", "NormativType": "Ostatok",
-                 "DateOfNormativ": "2026-06-16T00:00:00", "Normativ": 50}]"#,
+                 "DateOfNormativ": "2026-06-17T00:00:00", "Normativ": 50}]"#,
         );
         let q = aggregate(&items, today());
         assert!(!q.by_railway.contains_key("ЗАБ"));

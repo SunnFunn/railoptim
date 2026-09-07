@@ -59,6 +59,16 @@ pub struct GreedyResult {
     pub excess_supply: i32,
 }
 
+impl GreedyResult {
+    /// Полная целевая функция, согласованная с LP/MIP и критерием приёма ALNS:
+    /// `total_cost + PENALTY_UNMET·unmet_demand + PENALTY_EXCESS·excess_supply`.
+    pub fn objective_cost(&self) -> f64 {
+        self.total_cost
+            + super::lp::PENALTY_UNMET * self.unmet_demand as f64
+            + super::lp::PENALTY_EXCESS * self.excess_supply as f64
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Остаточная сеть и поток (Edmonds–Karp), ограничение сверху
 // ---------------------------------------------------------------------------

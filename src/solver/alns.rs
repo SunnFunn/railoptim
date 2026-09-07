@@ -66,6 +66,39 @@ const ALNS_MIP_TIME_LIMIT: Duration = Duration::from_secs(3);
 /// Главный MIP использует 0.5%, но там мы готовы потратить больше времени.
 const ALNS_MIP_REL_GAP: f64 = 0.02;
 
+/// Минимальное улучшение полной целевой функции (руб.), при котором кандидат
+/// принимается. Отсекает шум округления `f64` при пересчёте `total_cost`.
+const ACCEPT_MIN_IMPROVEMENT_RUB: f64 = 1.0;
+
+/// Критерий приёма кандидата ALNS.
+///
+/// Кандидат принимается, если он **не увеличивает** незакрытый Load-спрос и
+/// **строго уменьшает** полную целевую функцию
+/// `objective = real_cost + PENALTY_UNMET·unmet + PENALTY_EXCESS·excess`
+/// (та же цель, что у главного MIP).
+///
+/// # Почему не лексикографика `(unmet + excess, unmet, real_cost)`
+///
+/// Прежний критерий принимал кандидата при **любом** уменьшении `excess`,
+/// не глядя на стоимость. `repair_mip` работает 3 с на подзадаче из десятков
+/// тысяч дуг, и при `ReachedTimeLimit` возвращает первый попавшийся incumbent.
+/// На прогоне 07.09.2026 такой incumbent пристроил 2 вагона в промывку
+/// (`excess 2077 → 2075`), одновременно пересадив ~100 вагонов с дуг по 50 тыс.
+/// на дуги по 350–400 тыс.: `real_cost 258 → 293 млн` (+35 млн). Критерий
+/// принял это как «улучшение» — MIP-оптимум был разрушен, в выгрузке появились
+/// подсылы ДВС → центр при ближних вагонах в отстое.
+///
+/// По полной целевой функции этот обмен = `−2·5 000 + 35 000 000` — отклоняется.
+/// При этом обмен «unmet −1, excess +1» (`−1 000 000 + 5 000`) принимается:
+/// закрыть заявку важнее, чем избавиться от вагона в остатке — ровно так же,
+/// как это трактует MIP.
+///
+/// Дополнительный жёсткий запрет на рост `unmet` — бизнес-приоритет покрытия:
+/// экономия на плечах никогда не должна оплачиваться незакрытой заявкой.
+pub fn accept_candidate(cand_unmet: i32, best_unmet: i32, cand_obj: f64, best_obj: f64) -> bool {
+    cand_unmet <= best_unmet && cand_obj + ACCEPT_MIN_IMPROVEMENT_RUB <= best_obj
+}
+
 // ---------------------------------------------------------------------------
 // Состояние решения
 // ---------------------------------------------------------------------------
@@ -535,6 +568,39 @@ fn build_subproblem(
     (sub_arcs, sub_supply, sub_demand, s_set, d_set)
 }
 
+/// Warm-start MIP-подзадачи из разрушенных назначений.
+///
+/// Возвращает вектор длины `sub_arcs.len()`: для каждой дуги подзадачи — суммарное
+/// количество вагонов удалённых назначений по той же паре `(s_idx, d_idx)`
+/// в оригинальной индексации (`s_map`/`d_map` — локальный → оригинальный индекс).
+/// Назначения, чья пара в подзадачу не попала (в норме невозможно: `extract_subproblem_arcs`
+/// берёт все дуги разрушенных узлов), просто игнорируются.
+///
+/// Пары, чей поток после destroy/drain оказался `0 < sum < B_pair`, обнуляются
+/// санацией warm-start внутри [`solve_mip`].
+fn warm_start_from_removed(
+    removed:  &[Assignment],
+    sub_arcs: &[TaskArc],
+    s_map:    &[usize],
+    d_map:    &[usize],
+) -> Vec<f64> {
+    use std::collections::HashMap;
+
+    let by_pair: HashMap<(usize, usize), usize> = sub_arcs
+        .iter()
+        .enumerate()
+        .map(|(i, a)| ((s_map[a.s_idx], d_map[a.d_idx]), i))
+        .collect();
+
+    let mut warm = vec![0.0_f64; sub_arcs.len()];
+    for a in removed {
+        if let Some(&i) = by_pair.get(&(a.s_idx, a.d_idx)) {
+            warm[i] += a.quantity as f64;
+        }
+    }
+    warm
+}
+
 /// LP-ремонт: решает подзадачу HiGHS и применяет результат к состоянию.
 ///
 /// Ограничение MIN_BATCH проверяется **inline** при применении LP-результата
@@ -777,9 +843,16 @@ fn repair_mip(
         .map(|a| ((a.s_idx, a.d_idx), a))
         .collect();
 
+    // Warm-start подзадачи = разрушенные назначения «как были». Это допустимое
+    // решение подзадачи (state до destroy удовлетворял всем ограничениям), поэтому
+    // HiGHS стартует с incumbent не хуже исходного состояния и за 3 с ищет только
+    // улучшения. Без warm-start при `ReachedTimeLimit` подзадача возвращала первый
+    // найденный incumbent произвольного качества — источник резких ухудшений плана.
+    let warm = warm_start_from_removed(removed, &sub_arcs, &s_map, &d_map);
+
     let outcome = solve_mip(
         &sub_arcs, &sub_supply, &sub_demand,
-        time_limit, None, Some(rel_gap),
+        time_limit, Some(&warm), Some(rel_gap),
         Some(&pair_override),
         dmzi_reduced.as_ref(),
     );
@@ -839,8 +912,10 @@ fn repair_mip(
 /// 1. Инициализация: жадное решение → AlnsState
 /// 2. Цикл (пока time_budget не исчерпан):
 ///    a. Destroy: случайно удалить K назначений
-///    b. Repair:  LP-подзадача на разрушенных узлах + соседях
-///    c. Accept:  принять если new_cost < best_cost
+///    b. Repair:  MIP/LP-подзадача на разрушенных узлах + соседях
+///                (MIP — с warm-start из разрушенных назначений)
+///    c. Accept:  принять, если objective (real_cost + штрафы) строго уменьшилась
+///                и unmet не вырос — см. `accept_candidate`
 ///    d. Adapt:   увеличить K если стагнация, уменьшить если улучшение
 /// 3. Вернуть лучшее состояние
 /// ```
@@ -939,50 +1014,19 @@ pub fn run_alns(
         candidate.recalculate_cost();
 
         // --- ACCEPT ---
-        // Трёхуровневый лексикографический критерий:
-        //   1) total = unmet + excess — «нераспределённые вагоны» в понимании бизнеса:
-        //      и незакрытый Load-спрос, и неиспользованное предложение. Главный
-        //      приоритет: итерация НЕ должна увеличивать суммарное количество
-        //      нераспределённых вагонов. Совпадает со штрафным компонентом модели
-        //      (PENALTY_UNMET * unmet + PENALTY_EXCESS * excess).
-        //   2) unmet — при равной сумме предпочитаем меньший незакрытый Load-спрос
-        //      (Load-покрытие важнее excess: «куда-то отправить» всегда можно в
-        //      Wash или в следующую итерацию, а недовоз — прямая потеря клиента).
-        //   3) real_cost — минимизируем стоимость плеч только при полной ничьей выше.
-        //
-        // Почему не `(unmet, excess, cost)`:
-        //   при приоритете unmet первого уровня итерация может принять обмен
-        //   `unmet 5→4, excess 20→21` (total 25 остаётся, Load чуть лучше, excess
-        //   вырос). Пользователь видит в логах рост excess и интерпретирует это
-        //   как «вагоны не распределяются». Принятый вариант жёстко запрещает
-        //   рост суммарного числа нераспределённых вагонов.
-        //
-        // Почему не `obj_cost` напрямую:
-        //   объединённая целевая функция подвержена Wash-tradeoff (при равной
-        //   цене штраф можно «перераспределить» между unmet и excess, поменяв
-        //   Load-покрытие на отправки в Wash). Лекс с `unmet` на 2-м уровне
-        //   это исключает.
-        let (cand_unmet, cand_excess) = candidate.unmet_and_excess(demand);
-        let (best_unmet, best_excess) = best_state.unmet_and_excess(demand);
-        let cand_total = cand_unmet + cand_excess;
-        let best_total = best_unmet + best_excess;
-
-        let accept = match cand_total.cmp(&best_total) {
-            std::cmp::Ordering::Less    => true,
-            std::cmp::Ordering::Greater => false,
-            std::cmp::Ordering::Equal   => match cand_unmet.cmp(&best_unmet) {
-                std::cmp::Ordering::Less    => true,
-                std::cmp::Ordering::Greater => false,
-                std::cmp::Ordering::Equal   => candidate.total_cost + 1e-6 < best_state.total_cost,
-            },
-        };
-
-        // Для логов — агрегированная цель (штраф + real_cost).
+        // Полная целевая функция (real_cost + штрафы), согласованная с главным MIP,
+        // плюс запрет на рост незакрытого Load-спроса. Обоснование и разбор
+        // инцидента 07.09.2026 — в документации к `accept_candidate`.
+        let (cand_unmet, _) = candidate.unmet_and_excess(demand);
+        let (best_unmet, _) = best_state.unmet_and_excess(demand);
         let candidate_obj = candidate.objective_cost(demand);
         let best_obj      = best_state.objective_cost(demand);
 
+        let accept = accept_candidate(cand_unmet, best_unmet, candidate_obj, best_obj);
+
         if accept {
-            let improvement = best_obj - candidate_obj;
+            // Δobj < 0 всегда: критерий приёма требует строгого уменьшения цели.
+            let delta_obj = candidate_obj - best_obj;
             best_state    = candidate.clone();
             current_state = candidate;
 
@@ -995,9 +1039,9 @@ pub fn run_alns(
 
             let (bu, be) = best_state.unmet_and_excess(demand);
             println!(
-                "[iter {:>5}] ✓ Δobj -{:.2} | real {:.2} | penalty {:.2} | undist {} (unmet {} + excess {}) | K={:.0}%",
+                "[iter {:>5}] ✓ Δobj {:+.2} | real {:.2} | penalty {:.2} | undist {} (unmet {} + excess {}) | K={:.0}%",
                 stats.iterations,
-                improvement,
+                delta_obj,
                 best_state.total_cost,
                 best_state.penalty_component_cost(demand),
                 bu + be,
@@ -1148,3 +1192,243 @@ impl AlnsResult {
 
 //     run_alns(&greedy, arcs, supply, demand, config)
 // }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::node::{CarKind, RepairStatus};
+
+    // --- Критерий приёма -------------------------------------------------
+
+    /// Инцидент 07.09.2026: excess 2077 → 2075 (−10 000 руб. штрафа) при росте
+    /// real_cost на 35 млн. Прежний лексикографический критерий принимал —
+    /// новый обязан отклонить.
+    #[test]
+    fn accept_rejects_cost_blowup_for_small_excess_drop() {
+        let best_obj = 257_974_231.57 + PENALTY_EXCESS * 2077.0;
+        let cand_obj = 292_969_532.75 + PENALTY_EXCESS * 2075.0;
+        assert!(!accept_candidate(0, 0, cand_obj, best_obj));
+    }
+
+    /// Закрыть заявку важнее, чем избавиться от вагона в остатке:
+    /// unmet 5→4 при excess 20→21 принимается (−1 000 000 + 5 000 < 0).
+    #[test]
+    fn accept_takes_unmet_drop_even_if_excess_grows() {
+        let real = 10_000_000.0;
+        let best_obj = real + PENALTY_UNMET * 5.0 + PENALTY_EXCESS * 20.0;
+        let cand_obj = real + PENALTY_UNMET * 4.0 + PENALTY_EXCESS * 21.0;
+        assert!(accept_candidate(4, 5, cand_obj, best_obj));
+    }
+
+    /// Рост unmet запрещён даже при формально меньшей objective.
+    #[test]
+    fn accept_rejects_unmet_growth() {
+        assert!(!accept_candidate(1, 0, 1_000.0, 5_000_000.0));
+    }
+
+    /// Требуется строгое улучшение не меньше ACCEPT_MIN_IMPROVEMENT_RUB.
+    #[test]
+    fn accept_requires_strict_improvement() {
+        let best = 1_000_000.0;
+        assert!(!accept_candidate(0, 0, best, best));
+        assert!(!accept_candidate(0, 0, best - 0.4, best));
+        assert!(accept_candidate(0, 0, best - ACCEPT_MIN_IMPROVEMENT_RUB, best));
+        assert!(accept_candidate(0, 0, best - 50.0, best));
+    }
+
+    // --- Warm-start подзадачи --------------------------------------------
+
+    fn sub_arc(id: usize, s: usize, d: usize) -> TaskArc {
+        TaskArc {
+            arc_id: id,
+            s_idx: s,
+            d_idx: d,
+            supply_station_code: format!("S{s}"),
+            demand_station_code: format!("D{d}"),
+            cost: 1.0,
+            distance: 1,
+            delivery_days: 1,
+            period_ok: true,
+            car_type_ok: true,
+            pair_min_batch: 0,
+        }
+    }
+
+    fn assignment(arc_id: usize, s: usize, d: usize, qty: i32) -> Assignment {
+        Assignment { arc_id, s_idx: s, d_idx: d, quantity: qty, total_cost: qty as f64 }
+    }
+
+    /// Удалённые назначения (в оригинальных индексах) ложатся на дуги подзадачи
+    /// через s_map/d_map; несколько назначений одной пары суммируются; пары вне
+    /// подзадачи игнорируются.
+    #[test]
+    fn warm_start_maps_removed_onto_sub_arcs() {
+        // Локальные узлы: s 0→orig 7, 1→orig 9; d 0→orig 3, 1→orig 4.
+        let s_map = vec![7, 9];
+        let d_map = vec![3, 4];
+        let sub_arcs = vec![
+            sub_arc(0, 0, 0), // (7,3)
+            sub_arc(1, 0, 1), // (7,4)
+            sub_arc(2, 1, 1), // (9,4)
+        ];
+        let removed = vec![
+            assignment(100, 7, 4, 3),
+            assignment(101, 7, 4, 2),   // та же пара → суммируется
+            assignment(102, 9, 4, 5),
+            assignment(103, 9, 3, 1),   // пары (9,3) в подзадаче нет → игнор
+        ];
+        let warm = warm_start_from_removed(&removed, &sub_arcs, &s_map, &d_map);
+        assert_eq!(warm, vec![0.0, 5.0, 5.0]);
+    }
+
+    // --- Интеграция: ALNS не ухудшает seed --------------------------------
+
+    fn supply_node(idx: usize, count: i32) -> SupplyNode {
+        SupplyNode {
+            s_id: idx + 1,
+            kind: CarKind::Free,
+            car_count: count,
+            station_to: String::new(),
+            station_to_code: format!("S{idx}"),
+            railway_to: String::new(),
+            railway_to_code: None,
+            railway_part_to: None,
+            car_type: Some("Прочие".to_string()),
+            etsng: None,
+            etsng_name: None,
+            repair_status: RepairStatus::Ok,
+            status: None,
+            supply_period: 1,
+            car_numbers: vec![],
+            stations_from: vec![],
+            stations_from_code: vec![],
+            railways_from: vec![],
+            railways_from_code: vec![],
+            railways_part_from: vec![],
+            is_mass_unloading: false,
+            prev_etsngs: vec![],
+            prev_etsng_names: vec![],
+        }
+    }
+
+    fn demand_node(idx: usize, count: i32) -> DemandNode {
+        DemandNode {
+            d_id: idx + 1,
+            purpose: DemandPurpose::Load,
+            period: 1,
+            station_name: String::new(),
+            station_code: format!("D{idx}"),
+            railway_name: String::new(),
+            railway_code: None,
+            railway_part: None,
+            station_to_name: None,
+            station_to_code: None,
+            railway_to_name: None,
+            railway_to_code: None,
+            railway_to_part: None,
+            sender: None,
+            sender_okpo: None,
+            sender_tgnl: None,
+            client: None,
+            customer_okpo: None,
+            recipient: None,
+            loader_to_okpo: None,
+            gng_cargo: None,
+            etsng: None,
+            request_numbers: None,
+            request_dates: None,
+            gu12_number: None,
+            shipping_type: None,
+            car_type: Some("Прочие".to_string()),
+            car_count: count,
+            cars_on_station: 0,
+        }
+    }
+
+    fn task_arc(id: usize, s: usize, d: usize, cost: f64) -> TaskArc {
+        let mut a = sub_arc(id, s, d);
+        a.cost = cost;
+        a
+    }
+
+    fn seed_from(assignments: Vec<Assignment>, supply: &[SupplyNode], demand: &[DemandNode]) -> GreedyResult {
+        let total_cost = assignments.iter().map(|a| a.total_cost).sum();
+        let assigned: i32 = assignments.iter().map(|a| a.quantity).sum();
+        let total_supply: i32 = supply.iter().map(|s| s.car_count).sum();
+        let total_demand: i32 = demand.iter().map(|d| d.car_count).sum();
+        GreedyResult {
+            assignments,
+            total_cost,
+            assigned_cars: assigned,
+            unmet_demand: total_demand - assigned,
+            excess_supply: total_supply - assigned,
+        }
+    }
+
+    fn quick_config() -> AlnsConfig {
+        AlnsConfig {
+            time_budget: Duration::from_millis(400),
+            destroy_ratio: DESTROY_RATIO_INIT,
+            seed: Some(7),
+            use_mip_repair: true,
+        }
+    }
+
+    /// Плохой seed (дорогая дуга, заявка D0 не закрыта, S1 в остатке): одно
+    /// разрушение + MIP-ремонт с warm-start находят оптимум S0→D0, S1→D1.
+    /// Финальная objective строго меньше стартовой.
+    #[test]
+    fn alns_improves_bad_seed_and_never_worsens() {
+        let supply = vec![supply_node(0, 1), supply_node(1, 1)];
+        let demand = vec![demand_node(0, 1), demand_node(1, 1)];
+        let arcs = vec![
+            task_arc(0, 0, 0, 10.0),
+            task_arc(1, 0, 1, 1_000.0),
+            task_arc(2, 1, 1, 10.0),
+        ];
+        let seed = seed_from(
+            vec![Assignment { arc_id: 1, s_idx: 0, d_idx: 1, quantity: 1, total_cost: 1_000.0 }],
+            &supply, &demand,
+        );
+        let seed_obj = seed.objective_cost();
+
+        let res = run_alns(&seed, &arcs, &supply, &demand, &quick_config(), None);
+        let best_obj = res.best_state.objective_cost(&demand);
+
+        assert!(best_obj <= seed_obj, "ALNS не должен ухудшать seed: {best_obj} > {seed_obj}");
+        let (unmet, excess) = res.best_state.unmet_and_excess(&demand);
+        assert_eq!((unmet, excess), (0, 0));
+        assert!((res.best_state.total_cost - 20.0).abs() < 1e-6, "ожидался оптимум 20, получено {}", res.best_state.total_cost);
+    }
+
+    /// Оптимальный seed: ни одна итерация не должна быть принята, состояние
+    /// возвращается без изменений (регрессия на «принять любое снижение excess»).
+    #[test]
+    fn alns_keeps_optimal_seed_untouched() {
+        let supply = vec![supply_node(0, 2), supply_node(1, 2), supply_node(2, 1)];
+        let demand = vec![demand_node(0, 2), demand_node(1, 2)];
+        let arcs = vec![
+            task_arc(0, 0, 0, 10.0),
+            task_arc(1, 0, 1, 500.0),
+            task_arc(2, 1, 0, 500.0),
+            task_arc(3, 1, 1, 10.0),
+            task_arc(4, 2, 0, 400.0),
+            task_arc(5, 2, 1, 400.0),
+        ];
+        // Оптимум: S0→D0 (2), S1→D1 (2); S2 в остатке (excess 1).
+        let seed = seed_from(
+            vec![
+                Assignment { arc_id: 0, s_idx: 0, d_idx: 0, quantity: 2, total_cost: 20.0 },
+                Assignment { arc_id: 3, s_idx: 1, d_idx: 1, quantity: 2, total_cost: 20.0 },
+            ],
+            &supply, &demand,
+        );
+        let seed_obj = seed.objective_cost();
+
+        let res = run_alns(&seed, &arcs, &supply, &demand, &quick_config(), None);
+
+        assert_eq!(res.stats.improvements, 0, "оптимальный seed не должен «улучшаться»");
+        assert!((res.best_state.objective_cost(&demand) - seed_obj).abs() < 1e-6);
+        assert!((res.best_state.total_cost - 40.0).abs() < 1e-6);
+    }
+}

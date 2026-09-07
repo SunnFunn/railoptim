@@ -118,6 +118,22 @@ async fn main() -> Result<()> {
             HashSet::new()
         }
     };
+    // Потолок дальности порожнего подсыла под погрузку (MaxEmptyRunDistanceKm): пары
+    // дальше порога не входят в оптимизацию — дальний подсыл (ДВС → центр) не практикуется.
+    let max_load_distance_km = match data::load_max_empty_run_distance_km("data/references.json") {
+        Ok(Some(km)) => {
+            println!("Потолок расстояния подсыла (MaxEmptyRunDistanceKm): {} км", km);
+            Some(km)
+        }
+        Ok(None) => {
+            println!("Потолок расстояния подсыла (MaxEmptyRunDistanceKm): не задан — фильтр отключён");
+            None
+        }
+        Err(e) => {
+            eprintln!("  MaxEmptyRunDistanceKm из references.json: не загружен ({e}) — фильтр отключён");
+            None
+        }
+    };
     // Ban-list «чужих» ёмкостей отстоя: фильтр БД отстоя по паре (код станции, ОКПО владельца).
     // Записи из справочника отбрасываются. Пустой ban-list (справочник не загружен) => фильтр отключён.
     let reserve_owners = match data::load_reserve_owners_banlist("data/reserve_owners.json") {
@@ -446,6 +462,7 @@ async fn main() -> Result<()> {
         &no_cleaning_roads,
         &washed_empty_codes,
         &wash_tariff_map,
+        max_load_distance_km,
     );
 
     let total = arc_stats.total_pairs;
@@ -474,6 +491,14 @@ async fn main() -> Result<()> {
         "  грязный: дальняя погрузка дороже промывки → в промывку: {} ({:.1}%)",
         arc_stats.dirty_far_prefer_wash,
         100.0 * arc_stats.dirty_far_prefer_wash as f64 / total.max(1) as f64,
+    );
+    println!(
+        "  погрузка дальше потолка расстояния ({}): {} ({:.1}%)",
+        max_load_distance_km
+            .map(|km| format!("{km} км"))
+            .unwrap_or_else(|| "выкл.".to_string()),
+        arc_stats.too_far,
+        100.0 * arc_stats.too_far as f64 / total.max(1) as f64,
     );
     println!(
         "  допустимых дуг со штрафом за срок:   {} ({:.1}%)",
@@ -665,13 +690,13 @@ async fn main() -> Result<()> {
         (mip_outcome.optim.clone(), mip_outcome.arc_vals.clone(), rem)
     } else {
         // Берём лучший из (greedy, MIP) как старт ALNS. Определение «лучше»
-        // должно совпадать с accept-критерием ALNS — иначе ALNS сразу же
-        // может «откатить» seed обратно:
+        // совпадает с accept-критерием ALNS (`solver::alns::accept_candidate`) —
+        // иначе ALNS сразу же мог бы «откатить» seed:
         //   1) меньше unmet (неудовлетворённый Load-спрос) — жёсткий приоритет;
-        //   2) при равенстве — ниже real_cost (фактические тарифы);
-        //   3) при полной ничье — меньше excess (косметика, влияние незначительно).
+        //   2) при равенстве — ниже полная целевая функция
+        //      objective = real_cost + PENALTY_UNMET·unmet + PENALTY_EXCESS·excess.
         //
-        // Важно: «undist = unmet + excess» здесь НЕ используется как первый критерий.
+        // Важно: «undist = unmet + excess» здесь НЕ используется как критерий.
         // После введения PENALTY_EXCESS << PENALTY_UNMET, MIP правомерно оставляет
         // больше вагонов в excess (отстой дёшев), поэтому его undist > greedy.undist
         // — это не дефект, а оптимальное поведение. Критерий min(undist) ошибочно
@@ -682,27 +707,26 @@ async fn main() -> Result<()> {
         let greedy_undist = greedy_result.unmet_demand + greedy_result.excess_supply;
         let mip_undist    = mip_as_greedy.unmet_demand + mip_as_greedy.excess_supply;
 
-        // Кортежи для лексикографического сравнения.
-        // Для real_cost используем i64 (округляем до рубля) — для lex ок.
-        let greedy_key = (greedy_result.unmet_demand, greedy_result.total_cost as i64, greedy_result.excess_supply);
-        let mip_key    = (mip_as_greedy.unmet_demand, mip_as_greedy.total_cost as i64, mip_as_greedy.excess_supply);
+        // Кортежи для лексикографического сравнения; objective округляем до рубля.
+        let greedy_key = (greedy_result.unmet_demand, greedy_result.objective_cost() as i64);
+        let mip_key    = (mip_as_greedy.unmet_demand, mip_as_greedy.objective_cost() as i64);
 
         let alns_seed = if mip_key < greedy_key { &mip_as_greedy } else { &greedy_result };
         let seed_name = if mip_key < greedy_key { "MIP" } else { "greedy" };
 
         println!("--- SEED ДЛЯ ALNS ---");
         println!(
-            "  greedy : undist {:>4} (unmet {:>3} + excess {:>3}), assigned {:>4}, real_cost {:>12.2} руб.",
+            "  greedy : undist {:>4} (unmet {:>3} + excess {:>3}), assigned {:>4}, real_cost {:>12.2} руб., objective {:>12.2} руб.",
             greedy_undist, greedy_result.unmet_demand, greedy_result.excess_supply,
-            greedy_result.assigned_cars, greedy_result.total_cost,
+            greedy_result.assigned_cars, greedy_result.total_cost, greedy_result.objective_cost(),
         );
         println!(
-            "  MIP    : undist {:>4} (unmet {:>3} + excess {:>3}), assigned {:>4}, real_cost {:>12.2} руб.",
+            "  MIP    : undist {:>4} (unmet {:>3} + excess {:>3}), assigned {:>4}, real_cost {:>12.2} руб., objective {:>12.2} руб.",
             mip_undist, mip_as_greedy.unmet_demand, mip_as_greedy.excess_supply,
-            mip_as_greedy.assigned_cars, mip_as_greedy.total_cost,
+            mip_as_greedy.assigned_cars, mip_as_greedy.total_cost, mip_as_greedy.objective_cost(),
         );
         println!(
-            "  выбран : {} (критерий: min(unmet), затем min(real_cost), затем min(excess))",
+            "  выбран : {} (критерий: min(unmet), затем min(objective) — как accept ALNS)",
             seed_name,
         );
         println!("---------------------");
@@ -734,6 +758,7 @@ async fn main() -> Result<()> {
             &washed_empty_codes,
             &wash_tariff_map,
             dmzi_limits.as_ref(),
+            max_load_distance_km,
         );
     }
 

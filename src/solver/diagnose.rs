@@ -445,6 +445,7 @@ enum UnmetCause {
         no_tariff: usize,
         bad_type: usize,
         dirty_etsng: usize,
+        too_far: usize,
         bad_period: usize,
     },
 
@@ -504,6 +505,7 @@ pub fn diagnose_unmet_demand(
     washed_empty_codes: &HashSet<String>,
     wash_tariffs: &HashMap<(String, String), TariffNode>,
     dmzi_limits: Option<&DmziLimits>,
+    max_load_distance_km: Option<i32>,
 ) {
     if arcs.len() != arc_vals.len() {
         eprintln!(
@@ -664,10 +666,13 @@ pub fn diagnose_unmet_demand(
 
         let cause = if node_arcs.is_empty() {
             // Структурный разбор: почему пара с каждым узлом предложения отброшена.
-            let (mut no_tariff, mut bad_type, mut dirty_etsng, mut bad_period) = (0, 0, 0, 0);
+            let (mut no_tariff, mut bad_type, mut dirty_etsng, mut too_far, mut bad_period) = (0, 0, 0, 0, 0);
             for s in supply.iter() {
                 let s_wash_min = wash_min_cost.get(s.station_to_code.as_str()).copied();
-                match classify_pair(s, d, &tariff_index, wash_codes, no_cleaning_roads, washed_empty_codes, wash_tariffs, s_wash_min) {
+                match classify_pair(
+                    s, d, &tariff_index, wash_codes, no_cleaning_roads, washed_empty_codes,
+                    wash_tariffs, s_wash_min, max_load_distance_km,
+                ) {
                     // Feasible здесь невозможен: иначе дуга была бы построена.
                     PairOutcome::Feasible { .. } => {}
                     PairOutcome::NoTariff => no_tariff += 1,
@@ -676,12 +681,13 @@ pub fn diagnose_unmet_demand(
                     // объединяем в один счётчик «грязный не может ехать под эту погрузку».
                     PairOutcome::DirtyEtsngMismatch => dirty_etsng += 1,
                     PairOutcome::DirtyFarLoadPreferWash => dirty_etsng += 1,
+                    PairOutcome::TooFar => too_far += 1,
                     PairOutcome::BadPeriod => bad_period += 1,
                 }
             }
             UnmetCause::NoFeasibleArcs {
                 supply_nodes_total: supply.len(),
-                no_tariff, bad_type, dirty_etsng, bad_period,
+                no_tariff, bad_type, dirty_etsng, too_far, bad_period,
             }
         } else if feasible.is_empty() && !min_batch_blocked.is_empty() {
             // Класс по самому низкому достижимому порогу: его смягчение помогло бы.
@@ -747,14 +753,14 @@ pub fn diagnose_unmet_demand(
             d.car_count,
         );
         match &cause {
-            UnmetCause::NoFeasibleArcs { supply_nodes_total, no_tariff, bad_type, dirty_etsng, bad_period } => {
+            UnmetCause::NoFeasibleArcs { supply_nodes_total, no_tariff, bad_type, dirty_etsng, too_far, bad_period } => {
                 println!(
                     "    ПРИЧИНА: нет ни одной допустимой дуги — закрыть невозможно текущими данными. Отбраковка пар со всеми {} узлами предложения:",
                     supply_nodes_total,
                 );
                 println!(
-                    "             нет тарифа {}, несовм. тип {}, грязный ЕТСНГ {}, нарушение срока {}.",
-                    no_tariff, bad_type, dirty_etsng, bad_period,
+                    "             нет тарифа {}, несовм. тип {}, грязный ЕТСНГ {}, дальше потолка расстояния {}, нарушение срока {}.",
+                    no_tariff, bad_type, dirty_etsng, too_far, bad_period,
                 );
                 add_stat("no_arcs", rem, &mut cause_stats);
             }

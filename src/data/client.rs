@@ -90,7 +90,7 @@ impl ApiClient {
             .pool_max_idle_per_host(0)
             .build()
             .map_err(ApiError::Http)?;
-
+ о
         Ok(Self {
             client,
             base_url: base_url.into(),

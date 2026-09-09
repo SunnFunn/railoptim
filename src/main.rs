@@ -118,20 +118,27 @@ async fn main() -> Result<()> {
             HashSet::new()
         }
     };
-    // Потолок дальности порожнего подсыла под погрузку (MaxEmptyRunDistanceKm): пары
-    // дальше порога не входят в оптимизацию — дальний подсыл (ДВС → центр) не практикуется.
-    let max_load_distance_km = match data::load_max_empty_run_distance_km("data/references.json") {
-        Ok(Some(km)) => {
-            println!("Потолок расстояния подсыла (MaxEmptyRunDistanceKm): {} км", km);
-            Some(km)
-        }
-        Ok(None) => {
-            println!("Потолок расстояния подсыла (MaxEmptyRunDistanceKm): не задан — фильтр отключён");
-            None
+    // Бизнес-правила логистов (data/business_rules.json): потолок дальности подсыла,
+    // инотерритории, дефицитные дороги. Действуют только на дуги погрузки.
+    // Не загрузились => правил нет, ограничения не применяются.
+    let business_rules = match data::BusinessRules::load("data/business_rules.json") {
+        Ok(r) => {
+            println!(
+                "Бизнес-правила (business_rules.json): потолок подсыла {}; инотерриторий {} (исключений {}); дефицитных дорог {} (вывоз ≤ {} км, надбавка {:.0} руб.)",
+                r.max_empty_run_distance_km
+                    .map(|km| format!("{km} км"))
+                    .unwrap_or_else(|| "выкл.".to_string()),
+                r.foreign_railways.len(),
+                r.foreign_exceptions.len(),
+                r.deficit_railways.len(),
+                r.deficit_export_max_distance_km,
+                r.deficit_export_surcharge_rub,
+            );
+            r
         }
         Err(e) => {
-            eprintln!("  MaxEmptyRunDistanceKm из references.json: не загружен ({e}) — фильтр отключён");
-            None
+            eprintln!("  business_rules.json: не загружен ({e}) — бизнес-правила не применяются");
+            data::BusinessRules::default()
         }
     };
     // Ban-list «чужих» ёмкостей отстоя: фильтр БД отстоя по паре (код станции, ОКПО владельца).
@@ -462,7 +469,7 @@ async fn main() -> Result<()> {
         &no_cleaning_roads,
         &washed_empty_codes,
         &wash_tariff_map,
-        max_load_distance_km,
+        &business_rules,
     );
 
     let total = arc_stats.total_pairs;
@@ -494,11 +501,27 @@ async fn main() -> Result<()> {
     );
     println!(
         "  погрузка дальше потолка расстояния ({}): {} ({:.1}%)",
-        max_load_distance_km
+        business_rules
+            .max_empty_run_distance_km
             .map(|km| format!("{km} км"))
             .unwrap_or_else(|| "выкл.".to_string()),
         arc_stats.too_far,
         100.0 * arc_stats.too_far as f64 / total.max(1) as f64,
+    );
+    println!(
+        "  инотерритория (правило 1):           {} ({:.1}%)",
+        arc_stats.foreign_territory,
+        100.0 * arc_stats.foreign_territory as f64 / total.max(1) as f64,
+    );
+    println!(
+        "  вывоз с дефицитной дороги (правило 2): {} ({:.1}%)",
+        arc_stats.deficit_export,
+        100.0 * arc_stats.deficit_export as f64 / total.max(1) as f64,
+    );
+    println!(
+        "  допустимых дуг с надбавкой по правилам: {} ({:.1}%)",
+        arc_stats.arcs_rule_surcharged,
+        100.0 * arc_stats.arcs_rule_surcharged as f64 / total.max(1) as f64,
     );
     println!(
         "  допустимых дуг со штрафом за срок:   {} ({:.1}%)",
@@ -758,7 +781,7 @@ async fn main() -> Result<()> {
             &washed_empty_codes,
             &wash_tariff_map,
             dmzi_limits.as_ref(),
-            max_load_distance_km,
+            &business_rules,
         );
     }
 

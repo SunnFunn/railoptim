@@ -1,3 +1,4 @@
+pub mod business_rules;
 pub mod client;
 pub mod demand;
 pub mod demand_reserves;
@@ -13,6 +14,7 @@ pub mod supply;
 pub mod tariffs;
 pub mod wash;
 
+pub use business_rules::{BusinessRules, ForeignException, RuleOutcome};
 pub use client::ApiClient;
 pub use demand_reserves::{
     load_active_reserve_nodes, open_reserves_db, reserve_station_refs, reserves_db_path,
@@ -22,8 +24,8 @@ pub use dmzi::{DmziQuotas, DmziRailwayQuota};
 pub use free_loadroads::{build_free_loadroads, FreeLoadRoad};
 pub use esr::{normalize_esr6, validate_esr6_checksum, EsrClassification, EsrCountryIndex};
 pub use references::{
-    load_max_empty_run_distance_km, load_no_cleaning_roads, load_reserve_owners_banlist,
-    load_wash_product_codes, load_washed_empty_codes,
+    load_no_cleaning_roads, load_reserve_owners_banlist, load_wash_product_codes,
+    load_washed_empty_codes,
 };
 pub use repairs::load_repair_stations;
 pub use stations_geo::{StationGeo, StationGeoCatalog, StationGeoError, DEFAULT_DB_PATH};

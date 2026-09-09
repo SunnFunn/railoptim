@@ -85,33 +85,6 @@ pub fn load_washed_empty_codes(path: impl AsRef<Path>) -> anyhow::Result<HashSet
     Ok(out)
 }
 
-/// Потолок тарифного расстояния порожнего подсыла под погрузку, км
-/// (`MaxEmptyRunDistanceKm` в первом подходящем блоке JSON).
-///
-/// Пары «станция образования → станция погрузки» с расстоянием больше порога не входят
-/// в оптимизацию (жёсткий фильтр в `build_task_arcs`, только Load-дуги). Бизнес-правило:
-/// дальний подсыл порожнего зерновоза (ДВС → центр) не практикуется — заявку лучше
-/// оставить незакрытой или закрыть ближним вагоном.
-///
-/// Возвращает `Ok(None)`, если ключ отсутствует либо значение ≤ 0 — фильтр отключён.
-pub fn load_max_empty_run_distance_km(path: impl AsRef<Path>) -> anyhow::Result<Option<i32>> {
-    let path = path.as_ref();
-    let text = std::fs::read_to_string(path)
-        .with_context(|| format!("чтение {}", path.display()))?;
-    let blocks: Vec<Value> = serde_json::from_str(&text).context("разбор references.json")?;
-    for b in blocks {
-        let Some(obj) = b.as_object() else { continue };
-        let Some(v) = obj.get("MaxEmptyRunDistanceKm") else { continue };
-        let km = match v {
-            Value::Number(n) => n.as_i64(),
-            Value::String(s) => s.trim().parse::<i64>().ok(),
-            _ => None,
-        };
-        return Ok(km.filter(|k| *k > 0).map(|k| k.min(i32::MAX as i64) as i32));
-    }
-    Ok(None)
-}
-
 /// Ban-list «чужих» ёмкостей отстоя (`data/reserve_owners.json`).
 ///
 /// Файл — плоский JSON-массив объектов вида
@@ -183,30 +156,6 @@ pub fn load_wash_product_codes(path: impl AsRef<Path>) -> anyhow::Result<HashSet
 mod tests {
     use super::*;
     use std::io::Write;
-
-    fn write_refs(name: &str, body: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("railoptim_refs_{}_{}", name, std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("references.json");
-        std::fs::write(&path, body).unwrap();
-        path
-    }
-
-    /// Потолок расстояния читается числом или строкой; отсутствие ключа / ≤ 0 → None.
-    #[test]
-    fn max_empty_run_distance_parses_number_string_and_absent() {
-        let p = write_refs("num", r#"[{"NoCleaningRoads":["УЗБ"]},{"MaxEmptyRunDistanceKm": 5000}]"#);
-        assert_eq!(load_max_empty_run_distance_km(&p).unwrap(), Some(5000));
-
-        let p = write_refs("str", r#"[{"MaxEmptyRunDistanceKm": " 4200 "}]"#);
-        assert_eq!(load_max_empty_run_distance_km(&p).unwrap(), Some(4200));
-
-        let p = write_refs("zero", r#"[{"MaxEmptyRunDistanceKm": 0}]"#);
-        assert_eq!(load_max_empty_run_distance_km(&p).unwrap(), None);
-
-        let p = write_refs("absent", r#"[{"NoCleaningRoads":["УЗБ"]}]"#);
-        assert_eq!(load_max_empty_run_distance_km(&p).unwrap(), None);
-    }
 
     /// Загрузчик ban-list: ключ — (ЕСР-6, ОКПО), наименования игнорируются,
     /// дубли пар схлопываются, неполные записи пропускаются.

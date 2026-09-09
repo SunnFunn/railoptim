@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
+use crate::data::business_rules::{BusinessRules, RuleOutcome};
 use crate::data::references::normalize_etsng_code;
 use crate::data::wash::{effective_etsng_for_wash_tariff, supply_needs_wash};
 use crate::node::{DemandNode, DemandPurpose, SupplyNode, TariffNode};
@@ -72,7 +73,7 @@ pub const PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_PERIOD10_RUB: f64 = 15_000.0
 /// Намеренно **мала** (символический tie-breaker): исторически была 120 000,
 /// что заставляло модель посылать вагон периода 1 через всю страну вместо
 /// ближнего вагона дислокации. Ограничение дальнего подсыла теперь решается
-/// жёстким потолком расстояния (см. [`build_task_arcs`], `max_load_distance_km`).
+/// жёстким потолком расстояния (см. [`build_task_arcs`], `MaxEmptyRunDistanceKm`).
 pub const PERIOD10_COST_SURCHARGE_RUB: f64 = 2_000.0;
 
 /// Средняя стоимость промывки вагона (руб.), добавляется к тарифу «до станции промывки»
@@ -279,14 +280,17 @@ impl DmziIndex {
 /// [`TaskArc::period_ok`] == `true` означает, что нарушения окна нет.
 /// Неудовлетворённый спрос обрабатывается slack-переменными в [`super::lp::solve`].
 ///
-/// **Потолок дальности подсыла** (`max_load_distance_km`) — жёсткий фильтр только для
-/// дуг **погрузки**: пара с тарифным расстоянием больше порога не создаётся
-/// ([`PairOutcome::TooFar`]). Бизнес-правило: порожний зерновоз не гонят через всю
-/// страну под погрузку (ДВС → центр); такая заявка лучше останется незакрытой или
-/// закроется ближним вагоном, а дальний вагон уйдёт в отстой / на пути клиента.
-/// Без потолка [`super::lp::PENALTY_UNMET`] (1 млн) делает выгодной любую дугу
-/// дешевле миллиона. Wash-дуги фильтром не ограничиваются (станций промывки мало,
-/// грязный вагон должен доехать до ближайшей). `None` — фильтр отключён.
+/// **Бизнес-правила** (`rules`, см. [`BusinessRules`]) действуют только на дуги
+/// **погрузки**; Wash-дуги не ограничиваются (станций промывки мало, грязный вагон
+/// должен доехать до ближайшей):
+/// - потолок дальности подсыла `MaxEmptyRunDistanceKm` — пара с тарифным расстоянием
+///   больше порога не создаётся ([`PairOutcome::TooFar`]): порожний зерновоз не гонят
+///   через всю страну (ДВС → центр); без потолка [`super::lp::PENALTY_UNMET`] (1 млн)
+///   делает выгодной любую дугу дешевле миллиона;
+/// - инотерритории — с российских дорог порожние туда не назначают, кроме явных
+///   исключений с надбавкой ([`PairOutcome::ForeignTerritory`]);
+/// - дефицитные дороги — порожние с них на другие дороги не забирают, кроме очень
+///   короткого плеча с надбавкой ([`PairOutcome::DeficitRoadExport`]).
 ///
 /// Возвращает `(arcs, stats)`, где `stats` — счётчики для диагностики.
 ///
@@ -302,7 +306,7 @@ pub fn build_task_arcs(
     no_cleaning_roads: &HashSet<String>,
     washed_empty_codes: &HashSet<String>,
     wash_tariffs: &HashMap<(String, String), TariffNode>,
-    max_load_distance_km: Option<i32>,
+    rules: &BusinessRules,
 ) -> (Vec<TaskArc>, ArcStats) {
     // Индекс тарифов погрузки: (код_откуда, код_куда) → TariffNode
     let tariff_index: HashMap<(&str, &str), &TariffNode> = tariffs
@@ -365,7 +369,10 @@ pub fn build_task_arcs(
     let mut dirty_etsng_mismatch = 0usize;
     let mut dirty_far_prefer_wash = 0usize;
     let mut too_far = 0usize;
+    let mut foreign_territory = 0usize;
+    let mut deficit_export = 0usize;
     let mut arcs_period_penalized = 0usize;
+    let mut arcs_rule_surcharged = 0usize;
 
     // Порог «cap» для грязных вагонов: минимальная стоимость промывочного маршрута
     // по станции образования (см. classify_pair). Считается один раз.
@@ -376,7 +383,7 @@ pub fn build_task_arcs(
         for (d_idx, d) in demand.iter().enumerate() {
             // Жёсткие фильтры пары вынесены в classify_pair — та же логика
             // переиспользуется в диагностике незакрытого спроса.
-            let (tariff, cost, period_ok) = match classify_pair(
+            let (tariff, cost, period_ok, rule_surcharged) = match classify_pair(
                 s,
                 d,
                 &tariff_index,
@@ -385,18 +392,25 @@ pub fn build_task_arcs(
                 washed_empty_codes,
                 wash_tariffs,
                 s_wash_min,
-                max_load_distance_km,
+                rules,
             ) {
-                PairOutcome::Feasible { tariff, cost, period_ok } => (tariff, cost, period_ok),
+                PairOutcome::Feasible { tariff, cost, period_ok, rule_surcharge_rub } => {
+                    (tariff, cost, period_ok, rule_surcharge_rub > 0.0)
+                }
                 PairOutcome::NoTariff => { no_tariff += 1; continue; }
                 PairOutcome::BadType => { bad_type += 1; continue; }
                 PairOutcome::DirtyEtsngMismatch => { dirty_etsng_mismatch += 1; continue; }
                 PairOutcome::DirtyFarLoadPreferWash => { dirty_far_prefer_wash += 1; continue; }
                 PairOutcome::TooFar => { too_far += 1; continue; }
+                PairOutcome::ForeignTerritory => { foreign_territory += 1; continue; }
+                PairOutcome::DeficitRoadExport => { deficit_export += 1; continue; }
                 PairOutcome::BadPeriod => { bad_period += 1; continue; }
             };
             if !period_ok {
                 arcs_period_penalized += 1;
+            }
+            if rule_surcharged {
+                arcs_rule_surcharged += 1;
             }
 
             // Ограничения минимальной партии действуют только для погрузки, не для промывки.
@@ -447,8 +461,11 @@ pub fn build_task_arcs(
         dirty_etsng_mismatch,
         dirty_far_prefer_wash,
         too_far,
+        foreign_territory,
+        deficit_export,
         feasible: arcs.len(),
         arcs_period_penalized,
+        arcs_rule_surcharged,
     };
 
     (arcs, stats)
@@ -461,12 +478,14 @@ pub fn build_task_arcs(
 /// спроса). Единый источник логики гарантирует, что счётчики отбраковки в обоих
 /// местах не разойдутся.
 pub enum PairOutcome<'a> {
-    /// Пара допустима — дуга создаётся. `cost` уже включает тариф, штраф за срок
-    /// и надбавку period 10; `period_ok` == `true`, если окно срока не нарушено.
+    /// Пара допустима — дуга создаётся. `cost` уже включает тариф, штраф за срок,
+    /// надбавку period 10 и надбавки бизнес-правил (`rule_surcharge_rub`);
+    /// `period_ok` == `true`, если окно срока не нарушено.
     Feasible {
         tariff: &'a TariffNode,
         cost: f64,
         period_ok: bool,
+        rule_surcharge_rub: f64,
     },
     /// Нет тарифа (для Wash также: вагон не требует промывки либо нет wash-тарифа).
     NoTariff,
@@ -477,20 +496,25 @@ pub enum PairOutcome<'a> {
     /// Грязный вагон → погрузка аналогичного груза дороже промывочного маршрута:
     /// дальний подсыл под тот же груз не делаем, вагон должен идти в промывку.
     DirtyFarLoadPreferWash,
-    /// Погрузка дальше потолка расстояния подсыла (`max_load_distance_km`):
+    /// Погрузка дальше потолка расстояния подсыла (`MaxEmptyRunDistanceKm`):
     /// дальний порожний подсыл не практикуется, дуга не создаётся.
     TooFar,
+    /// Бизнес-правило 1: подсыл порожнего на инотерриторию с этой дороги запрещён.
+    ForeignTerritory,
+    /// Бизнес-правило 2: вывоз порожнего с дефицитной дороги на плечо длиннее допустимого.
+    DeficitRoadExport,
     /// Период спроса не имеет табличных границ (жёсткая отбраковка по сроку).
     BadPeriod,
 }
 
 /// Классифицирует пару `(supply, demand)` теми же жёсткими фильтрами, что и
-/// [`build_task_arcs`]: тариф → грязный ЕТСНГ → тип вагона → потолок расстояния
-/// (только погрузка) → окно срока.
+/// [`build_task_arcs`]: тариф → грязный ЕТСНГ → тип вагона → потолок расстояния →
+/// бизнес-правила дорог (инотерритории, дефицитные дороги) → окно срока.
+/// Фильтры расстояния и дорог действуют только на дуги погрузки.
 ///
 /// `tariff_index` — индекс тарифов погрузки `(код_откуда, код_куда) → тариф`.
 /// `wash_tariffs` — тарифы до промывки с уже учтённой надбавкой [`WASH_PATH_SURCHARGE_RUB`].
-/// `max_load_distance_km` — потолок тарифного расстояния для Load-дуг, `None` — без потолка.
+/// `rules` — бизнес-правила ([`BusinessRules::default()`] — без ограничений).
 #[allow(clippy::too_many_arguments)]
 pub fn classify_pair<'a>(
     s: &SupplyNode,
@@ -501,7 +525,7 @@ pub fn classify_pair<'a>(
     washed_empty_codes: &HashSet<String>,
     wash_tariffs: &'a HashMap<(String, String), TariffNode>,
     wash_route_min_cost: Option<f64>,
-    max_load_distance_km: Option<i32>,
+    rules: &BusinessRules,
 ) -> PairOutcome<'a> {
     // Грязный вагон, едущий под погрузку аналогичного груза (Load + same ЕТСНГ).
     // Для такой пары применяется «cap»: см. ниже после расчёта стоимости.
@@ -544,14 +568,25 @@ pub fn classify_pair<'a>(
         return PairOutcome::BadType;
     }
 
-    // --- Потолок дальности порожнего подсыла (только погрузка) ---
-    // Дальний подсыл (ДВС → центр) в бизнесе не практикуется: без этого фильтра
-    // PENALTY_UNMET делает выгодной любую дугу дешевле 1 млн, и модель везёт вагон
-    // через всю страну вместо того, чтобы взять ближний или оставить заявку.
-    let too_far = d.purpose == DemandPurpose::Load
-        && max_load_distance_km.is_some_and(|max_km| tariff.distance > max_km);
-    if too_far {
-        return PairOutcome::TooFar;
+    // --- Бизнес-правила (только погрузка) ---
+    let mut rule_surcharge_rub = 0.0_f64;
+    if d.purpose == DemandPurpose::Load {
+        // Потолок дальности порожнего подсыла. Дальний подсыл (ДВС → центр) в бизнесе
+        // не практикуется: без этого фильтра PENALTY_UNMET делает выгодной любую дугу
+        // дешевле 1 млн, и модель везёт вагон через всю страну вместо того, чтобы
+        // взять ближний или оставить заявку.
+        if rules
+            .max_empty_run_distance_km
+            .is_some_and(|max_km| tariff.distance > max_km)
+        {
+            return PairOutcome::TooFar;
+        }
+        // Правила дорог: инотерритории и вывоз с дефицитных дорог.
+        match rules.check_load_pair(&s.railway_to, &d.railway_name, tariff.distance) {
+            RuleOutcome::Allowed { surcharge_rub } => rule_surcharge_rub = surcharge_rub,
+            RuleOutcome::ForeignTerritory => return PairOutcome::ForeignTerritory,
+            RuleOutcome::DeficitExport => return PairOutcome::DeficitRoadExport,
+        }
     }
 
     let penalty_rate = if s.supply_period == 10 {
@@ -567,7 +602,7 @@ pub fn classify_pair<'a>(
         return PairOutcome::BadPeriod;
     };
     let period_ok = violation_days == 0;
-    let mut cost = tariff.cost + violation_days as f64 * penalty_rate;
+    let mut cost = tariff.cost + violation_days as f64 * penalty_rate + rule_surcharge_rub;
     // надбавка к стоимости дуг period=10 для приоритизации period=1.
     if s.supply_period == 10 {
         cost += PERIOD10_COST_SURCHARGE_RUB;
@@ -589,7 +624,7 @@ pub fn classify_pair<'a>(
         }
     }
 
-    PairOutcome::Feasible { tariff, cost, period_ok }
+    PairOutcome::Feasible { tariff, cost, period_ok, rule_surcharge_rub }
 }
 
 /// Минимальная стоимость промывочного маршрута по станциям образования.
@@ -630,12 +665,19 @@ pub struct ArcStats {
     pub dirty_etsng_mismatch: usize,
     /// Пар «грязный» вагон → погрузка аналогичного груза дороже промывки (предпочтена промывка).
     pub dirty_far_prefer_wash: usize,
-    /// Пар погрузки дальше потолка расстояния подсыла (`max_load_distance_km`).
+    /// Пар погрузки дальше потолка расстояния подсыла (`MaxEmptyRunDistanceKm`).
     pub too_far: usize,
+    /// Пар погрузки, запрещённых правилом инотерриторий (с этой дороги туда не назначают).
+    pub foreign_territory: usize,
+    /// Пар погрузки, запрещённых правилом дефицитных дорог (вывоз на длинное плечо).
+    pub deficit_export: usize,
     /// Допустимых дуг (вошли в LP).
     pub feasible:   usize,
-    /// Дуг с ненулевым штрафом за срок подсыла (`supply_period != 10`, вне `[L−3, U+3]`).
+    /// Дуг с ненулевым штрафом за срок подсыла (вне окна `[L−3, U+3]` с учётом сдвига периода 10).
     pub arcs_period_penalized: usize,
+    /// Допустимых дуг с надбавкой по бизнес-правилам (исключение для инотерритории,
+    /// короткий вывоз с дефицитной дороги).
+    pub arcs_rule_surcharged: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -876,9 +918,48 @@ mod tests {
             &HashSet::new(),
             &HashSet::new(),
             &HashMap::new(),
-            None,
+            &BusinessRules::default(),
         );
         arcs
+    }
+
+    fn rules_max_km(km: i32) -> BusinessRules {
+        BusinessRules { max_empty_run_distance_km: Some(km), ..Default::default() }
+    }
+
+    /// Правила дорог для тестов: инотерритории КЗХ/УЗБ (КЗХ ← ОКТ с надбавкой 50k,
+    /// КЗХ ← УЗБ без надбавки), дефицитная МСК (вывоз ≤ 300 км, надбавка 30k).
+    fn rules_roads() -> BusinessRules {
+        use crate::data::business_rules::ForeignException;
+        BusinessRules {
+            foreign_railways: ["КЗХ", "УЗБ"].iter().map(|s| s.to_string()).collect(),
+            foreign_exceptions: vec![
+                ForeignException {
+                    demand_railway: "КЗХ".into(),
+                    from_railways: ["ОКТ"].iter().map(|s| s.to_string()).collect(),
+                    surcharge_rub: 50_000.0,
+                },
+                ForeignException {
+                    demand_railway: "КЗХ".into(),
+                    from_railways: ["УЗБ"].iter().map(|s| s.to_string()).collect(),
+                    surcharge_rub: 0.0,
+                },
+            ],
+            deficit_railways: ["МСК"].iter().map(|s| s.to_string()).collect(),
+            deficit_export_max_distance_km: 300,
+            deficit_export_surcharge_rub: 30_000.0,
+            ..Default::default()
+        }
+    }
+
+    fn with_railway_s(mut s: SupplyNode, rw: &str) -> SupplyNode {
+        s.railway_to = rw.to_string();
+        s
+    }
+
+    fn with_railway_d(mut d: DemandNode, rw: &str) -> DemandNode {
+        d.railway_name = rw.to_string();
+        d
     }
 
     /// Потолок расстояния: Load-дуга дальше порога не создаётся и считается в `too_far`,
@@ -895,7 +976,7 @@ mod tests {
         let (arcs, stats) = build_task_arcs(
             &supply, &demand, &[near, far],
             &HashSet::new(), &HashSet::new(), &HashSet::new(), &HashMap::new(),
-            Some(5_000),
+            &rules_max_km(5_000),
         );
         assert_eq!(arcs.len(), 1);
         assert_eq!(arcs[0].demand_station_code, "NEAR");
@@ -903,7 +984,7 @@ mod tests {
         assert_eq!(stats.feasible, 1);
     }
 
-    /// `None` — потолок отключён: дальняя дуга сохраняется.
+    /// Без потолка дальняя дуга сохраняется.
     #[test]
     fn no_max_distance_keeps_far_arc() {
         let supply = vec![dummy_supply(3, "S1", 1, false)];
@@ -913,18 +994,19 @@ mod tests {
         let (arcs, stats) = build_task_arcs(
             &supply, &demand, &[far],
             &HashSet::new(), &HashSet::new(), &HashSet::new(), &HashMap::new(),
-            None,
+            &BusinessRules::default(),
         );
         assert_eq!(arcs.len(), 1);
         assert_eq!(stats.too_far, 0);
     }
 
-    /// Потолок не действует на Wash-дуги: грязный вагон едет в промывку на любое расстояние.
+    /// Правила (потолок, инотерритория, дефицит) не действуют на Wash-дуги:
+    /// грязный вагон едет в промывку на любое расстояние и с любой дороги.
     #[test]
-    fn max_distance_does_not_apply_to_wash() {
-        let mut s = dummy_supply(3, "S1", 1, false);
+    fn rules_do_not_apply_to_wash() {
+        let mut s = with_railway_s(dummy_supply(3, "S1", 1, false), "МСК");
         s.prev_etsngs = vec!["421034".to_string()];
-        let mut wash_node = dummy_demand(3, "WASH", None);
+        let mut wash_node = with_railway_d(dummy_demand(3, "WASH", None), "КЗХ");
         wash_node.purpose = DemandPurpose::Wash;
 
         let wash_codes: HashSet<String> = ["421034".to_string()].into_iter().collect();
@@ -933,13 +1015,82 @@ mod tests {
         wt.distance = 9_000;
         wash_tariffs.insert(("S1".to_string(), "WASH".to_string()), wt);
 
+        let mut rules = rules_roads();
+        rules.max_empty_run_distance_km = Some(1_000);
         let (arcs, stats) = build_task_arcs(
             &[s], &[wash_node], &[],
             &wash_codes, &HashSet::new(), &HashSet::new(), &wash_tariffs,
-            Some(1_000),
+            &rules,
         );
-        assert_eq!(arcs.len(), 1, "wash-дуга не ограничивается потолком расстояния");
+        assert_eq!(arcs.len(), 1, "wash-дуга не ограничивается бизнес-правилами");
         assert_eq!(stats.too_far, 0);
+        assert_eq!(stats.foreign_territory, 0);
+        assert_eq!(stats.deficit_export, 0);
+        assert!((arcs[0].cost - 1_000.0).abs() < 1e-9, "надбавок правил на wash нет");
+    }
+
+    /// Правило 1: с российской дороги на инотерриторию дуги нет; ОКТ → КЗХ разрешено
+    /// с надбавкой 50 000; УЗБ → КЗХ — без надбавки; КЗХ → КЗХ — свободно.
+    #[test]
+    fn foreign_territory_rule_on_load_arcs() {
+        let supply = vec![
+            with_railway_s(dummy_supply(2, "S_GOR", 1, false), "ГОР"),
+            with_railway_s(dummy_supply(2, "S_OKT", 1, false), "ОКТ"),
+            with_railway_s(dummy_supply(2, "S_UZB", 1, false), "УЗБ"),
+            with_railway_s(dummy_supply(2, "S_KZH", 1, false), "КЗХ"),
+        ];
+        let demand = vec![with_railway_d(dummy_demand(8, "D_KZH", None), "КЗХ")];
+        let tariffs: Vec<TariffNode> = supply
+            .iter()
+            .map(|s| dummy_tariff(&s.station_to_code, "D_KZH"))
+            .collect();
+
+        let (arcs, stats) = build_task_arcs(
+            &supply, &demand, &tariffs,
+            &HashSet::new(), &HashSet::new(), &HashSet::new(), &HashMap::new(),
+            &rules_roads(),
+        );
+        assert_eq!(stats.foreign_territory, 1, "только ГОР → КЗХ запрещена");
+        assert_eq!(arcs.len(), 3);
+        assert_eq!(stats.arcs_rule_surcharged, 1);
+
+        let cost_of = |code: &str| arcs.iter().find(|a| a.supply_station_code == code).map(|a| a.cost);
+        assert_eq!(cost_of("S_GOR"), None);
+        assert_eq!(cost_of("S_OKT"), Some(1_000.0 + 50_000.0));
+        assert_eq!(cost_of("S_UZB"), Some(1_000.0));
+        assert_eq!(cost_of("S_KZH"), Some(1_000.0));
+    }
+
+    /// Правило 2: вывоз с дефицитной МСК на другую дорогу — только ≤ 300 км и с
+    /// надбавкой 30 000; длиннее — дуги нет; внутри МСК — без ограничений.
+    #[test]
+    fn deficit_road_export_rule_on_load_arcs() {
+        let supply = vec![with_railway_s(dummy_supply(5, "S_MSK", 1, false), "МСК")];
+        let demand = vec![
+            with_railway_d(dummy_demand(2, "D_MSK", None), "МСК"),
+            with_railway_d(dummy_demand(2, "D_NEAR", None), "ГОР"),
+            with_railway_d(dummy_demand(2, "D_FAR", None), "ГОР"),
+        ];
+        let mut t_msk = dummy_tariff("S_MSK", "D_MSK");
+        t_msk.distance = 2_000; // внутри дороги расстояние не ограничено
+        let mut t_near = dummy_tariff("S_MSK", "D_NEAR");
+        t_near.distance = 300;
+        let mut t_far = dummy_tariff("S_MSK", "D_FAR");
+        t_far.distance = 301;
+
+        let (arcs, stats) = build_task_arcs(
+            &supply, &demand, &[t_msk, t_near, t_far],
+            &HashSet::new(), &HashSet::new(), &HashSet::new(), &HashMap::new(),
+            &rules_roads(),
+        );
+        assert_eq!(stats.deficit_export, 1);
+        assert_eq!(arcs.len(), 2);
+        assert_eq!(stats.arcs_rule_surcharged, 1);
+
+        let cost_of = |code: &str| arcs.iter().find(|a| a.demand_station_code == code).map(|a| a.cost);
+        assert_eq!(cost_of("D_MSK"), Some(1_000.0));
+        assert_eq!(cost_of("D_NEAR"), Some(1_000.0 + 30_000.0));
+        assert_eq!(cost_of("D_FAR"), None);
     }
 
     /// Средняя станция предложения (= S_MID ваг.) → средне-крупная станция спроса
@@ -1133,7 +1284,7 @@ mod tests {
         let (arcs, stats) = build_task_arcs(
             &[s], &[d], &[dummy_tariff("S1", "D1")],
             &wash_codes, &HashSet::new(), &HashSet::new(), &wash_tariffs,
-            None,
+            &BusinessRules::default(),
         );
         assert!(arcs.is_empty(), "дальняя погрузка дороже промывки — дуги быть не должно");
         assert_eq!(stats.dirty_far_prefer_wash, 1);
@@ -1158,7 +1309,7 @@ mod tests {
         let (arcs, stats) = build_task_arcs(
             &[s], &[d], &[dummy_tariff("S1", "D1")],
             &wash_codes, &HashSet::new(), &HashSet::new(), &wash_tariffs,
-            None,
+            &BusinessRules::default(),
         );
         assert_eq!(arcs.len(), 1, "прямая погрузка дешевле промывки — дуга должна остаться");
         assert_eq!(stats.dirty_far_prefer_wash, 0);
@@ -1179,7 +1330,7 @@ mod tests {
         let (arcs, stats) = build_task_arcs(
             &[s], &[d], &[dummy_tariff("S1", "D1")],
             &wash_codes, &HashSet::new(), &HashSet::new(), &wash_tariffs,
-            None,
+            &BusinessRules::default(),
         );
         assert_eq!(arcs.len(), 1);
         assert_eq!(stats.dirty_far_prefer_wash, 0);

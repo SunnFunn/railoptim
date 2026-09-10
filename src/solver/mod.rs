@@ -11,7 +11,7 @@ pub mod result;
 pub use alns::{AlnsConfig, run_alns};
 pub use diagnose::{diagnose_excess_supply, diagnose_unmet_demand};
 pub use greedy::{greedy_initial_solution, greedy_to_arc_vals, print_greedy_result};
-pub use lp::print_balance;
+pub use lp::{print_balance, ExcessPenalties, PENALTY_EXCESS, PENALTY_EXCESS_DIRTY};
 pub use mip::{
     DEFAULT_MIP_TIME_LIMIT, arc_vals_to_greedy_result, print_mip_result, solve_mip,
 };

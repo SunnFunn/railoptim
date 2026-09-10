@@ -22,13 +22,16 @@ use super::model::{
 
 /// Категория причины, по которой вагоны узла предложения остались нераспределёнными.
 ///
-/// ВАЖНО: excess_supply штрафуется `PENALTY_EXCESS` (5 000 руб., ниже мин. тарифа),
+/// ВАЖНО: excess_supply штрафуется по узлам ([`super::lp::ExcessPenalties`]):
+/// базово `PENALTY_EXCESS` (5 000 руб., ниже мин. тарифа), а для грязных узлов
+/// (есть Wash-дуги) в режиме дефицита — `PENALTY_EXCESS_DIRTY` (150 000 руб.).
 /// unmet_demand штрафуется `PENALTY_UNMET` (1 000 000 руб., выше макс. тарифа).
 /// Поэтому:
 ///   * отправка в Load-демы выгодна, если `arc.cost < PENALTY_UNMET`
 ///     (экономия = PENALTY_UNMET - arc.cost на вагон);
-///   * отправка в Wash-демы **никогда не выгодна** для снижения obj, потому что
-///     Wash не имеет штрафа за незаполнение, а arc всегда имеет ненулевую цену.
+///   * отправка в Wash-демы выгодна только если `arc.cost < штраф за остаток узла`:
+///     Wash не имеет штрафа за незаполнение. При дефиците это 150 000 (промывка
+///     выгоднее остатка при тарифе до промывки ≤ 100 тыс.), при профиците — 5 000 (никогда).
 #[derive(Debug)]
 enum ExcessCause {
     /// Из узла вовсе нет допустимых дуг (нет тарифа, несовместим тип вагона, …).
@@ -42,12 +45,15 @@ enum ExcessCause {
         wash_arcs: usize,
     },
 
-    /// У узла с доступным спросом остались **только Wash-дуги**. MIP корректно
-    /// оставил вагоны в excess: Wash не имеет штрафа, и отправка только
-    /// увеличила бы стоимость.
+    /// У узла с доступным спросом остались **только Wash-дуги**. Вагон остался в
+    /// excess, потому что минимальная Wash-дуга дороже штрафа за остаток этого узла
+    /// (`excess_penalty_per_wagon`): при профиците это базовые 5 000 (промывка
+    /// ради простоя не нужна), при дефиците — 150 000 (промывка дороже потолка).
     OnlyWashAvailable {
         wash_arcs: usize,
         min_arc_cost_per_wagon: f64,
+        excess_penalty_per_wagon: f64,
+        deficit: bool,
     },
 
     /// Все Load-дуги с доступным спросом упираются в ограничение минимальной партии:
@@ -135,6 +141,9 @@ pub fn diagnose_excess_supply(
             let used = idx.usage_from_arc_vals(arc_vals);
             (idx, used)
         });
+
+    // 2б. Штрафы за остаток по узлам — те же, что видел решатель.
+    let excess_penalties = super::lp::ExcessPenalties::build(arcs, supply, demand);
 
     // 3. Узлы с excess.
     let excess_nodes: Vec<usize> = rem_supply
@@ -265,6 +274,8 @@ pub fn diagnose_excess_supply(
                 ExcessCause::OnlyWashAvailable {
                     wash_arcs: wash_feasible.len(),
                     min_arc_cost_per_wagon: min_arc_cost_wash,
+                    excess_penalty_per_wagon: excess_penalties.get(s_idx),
+                    deficit: excess_penalties.deficit,
                 }
             } else {
                 ExcessCause::AllTargetsCovered {
@@ -341,12 +352,17 @@ pub fn diagnose_excess_supply(
                 );
                 add_stat("targets_covered", rem, &mut cause_stats);
             }
-            ExcessCause::OnlyWashAvailable { wash_arcs, min_arc_cost_per_wagon } => {
+            ExcessCause::OnlyWashAvailable { wash_arcs, min_arc_cost_per_wagon, excess_penalty_per_wagon, deficit } => {
                 println!(
-                    "    ПРИЧИНА: доступны только Wash-дуги ({} шт., мин. стоимость {:.0} руб./ваг.). В модели Wash не имеет штрафа за незаполнение,",
-                    wash_arcs, min_arc_cost_per_wagon,
+                    "    ПРИЧИНА: доступны только Wash-дуги ({} шт., мин. стоимость {:.0} руб./ваг.) при штрафе за остаток узла {:.0} руб./ваг. ({}).",
+                    wash_arcs, min_arc_cost_per_wagon, excess_penalty_per_wagon,
+                    if *deficit { "дефицит, грязный узел" } else { "профицит" },
                 );
-                println!("             а excess_supply бесплатный — отправка только увеличила бы obj, MIP корректно оставил вагоны в остатке.");
+                if min_arc_cost_per_wagon >= excess_penalty_per_wagon {
+                    println!("             Промывка дороже штрафа — MIP оставил вагоны в остатке (Wash не имеет штрафа за незаполнение).");
+                } else {
+                    println!("             Промывка дешевле штрафа, но вагоны остались: ёмкость промывки исчерпана либо решение не оптимально (gap/лимит времени).");
+                }
                 add_stat("only_wash", rem, &mut cause_stats);
             }
             ExcessCause::MinBatchDeadlock { pairs } => {

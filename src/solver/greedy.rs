@@ -61,11 +61,20 @@ pub struct GreedyResult {
 
 impl GreedyResult {
     /// Полная целевая функция, согласованная с LP/MIP и критерием приёма ALNS:
-    /// `total_cost + PENALTY_UNMET·unmet_demand + PENALTY_EXCESS·excess_supply`.
-    pub fn objective_cost(&self) -> f64 {
+    /// `total_cost + PENALTY_UNMET·unmet_demand + Σ_s excess.per_node[s]·остаток[s]`.
+    ///
+    /// Остатки по узлам восстанавливаются из `assignments` и `supply.car_count`
+    /// (штраф за остаток зависит от узла — см. [`super::lp::ExcessPenalties`]).
+    pub fn objective_cost(&self, supply: &[SupplyNode], excess: &super::lp::ExcessPenalties) -> f64 {
+        let mut remaining: Vec<i32> = supply.iter().map(|s| s.car_count).collect();
+        for a in &self.assignments {
+            if let Some(r) = remaining.get_mut(a.s_idx) {
+                *r -= a.quantity;
+            }
+        }
         self.total_cost
             + super::lp::PENALTY_UNMET * self.unmet_demand as f64
-            + super::lp::PENALTY_EXCESS * self.excess_supply as f64
+            + excess.cost_of_remaining(&remaining)
     }
 }
 
@@ -1001,6 +1010,7 @@ mod tests {
             None,
             None,
             None,
+            &crate::solver::lp::ExcessPenalties::uniform(supply.len()),
         );
         assert!(outcome.has_feasible_solution());
         let flow_route = outcome.arc_vals[0].round() as i32;
@@ -1112,6 +1122,7 @@ mod tests {
             None,
             None,
             Some(&limits),
+            &crate::solver::lp::ExcessPenalties::uniform(supply.len()),
         );
         assert!(outcome.has_feasible_solution());
         let flow = outcome.arc_vals[0].round() as i32;
@@ -1142,6 +1153,7 @@ mod tests {
             None,
             None,
             Some(&limits),
+            &crate::solver::lp::ExcessPenalties::uniform(supply.len()),
         );
         assert!(outcome.has_feasible_solution());
         assert_eq!(outcome.arc_vals[0].round() as i32, 2);
@@ -1167,6 +1179,7 @@ mod tests {
             None,
             None,
             Some(&limits),
+            &crate::solver::lp::ExcessPenalties::uniform(supply.len()),
         );
         assert!(outcome.has_feasible_solution());
         assert_eq!(outcome.arc_vals[0].round() as i32, 3);
@@ -1196,11 +1209,107 @@ mod tests {
             None,
             None,
             None,
+            &crate::solver::lp::ExcessPenalties::uniform(supply.len()),
         );
         assert!(outcome.has_feasible_solution());
         let flow_d = outcome.arc_vals[0].round() as i32;
         assert!(flow_d == 0 || flow_d >= b, "поток средней пары {} нарушает порог {}", flow_d, b);
         // 7 вагонов хватает на оба адресата — MIP закрывает весь спрос.
         assert_eq!(outcome.optim.penalty_cars.round() as i32, 0);
+    }
+
+    // --- Грязные вагоны: промывка vs остаток -------------------------------
+
+    fn wash_demand(count: i32, station_code: &str, d_idx: usize) -> DemandNode {
+        let mut d = dummy_demand(count, station_code, d_idx);
+        d.purpose = DemandPurpose::Wash;
+        d
+    }
+
+    /// Сцена инцидента 10.09.2026: S0 — грязный узел (только Wash-дуга за 60 тыс.),
+    /// S1 — чистый узел с Load-дугой; спрос на погрузку `load` вагонов.
+    fn dirty_scene(load: i32) -> (Vec<SupplyNode>, Vec<DemandNode>, Vec<TaskArc>) {
+        let supply = vec![dummy_supply(2, "S0", 0, false), dummy_supply(1, "S1", 1, false)];
+        let demand = vec![dummy_demand(load, "D0", 0), wash_demand(10, "W", 1)];
+        let arcs = vec![
+            arc(0, 0, 1, "S0", "W", 60_000.0, false),  // грязный → промывка
+            arc(1, 1, 0, "S1", "D0", 20_000.0, false), // чистый → погрузка
+        ];
+        (supply, demand, arcs)
+    }
+
+    /// Штрафы за остаток: при дефиците грязный узел получает PENALTY_EXCESS_DIRTY,
+    /// чистый — базовый; при профиците — базовый у всех.
+    #[test]
+    fn excess_penalties_dirty_only_in_deficit() {
+        use crate::solver::lp::{ExcessPenalties, PENALTY_EXCESS, PENALTY_EXCESS_DIRTY};
+
+        let (supply, demand, arcs) = dirty_scene(5); // спрос 5 > предложение 3
+        let p = ExcessPenalties::build(&arcs, &supply, &demand);
+        assert!(p.deficit);
+        assert_eq!(p.get(0), PENALTY_EXCESS_DIRTY);
+        assert_eq!(p.get(1), PENALTY_EXCESS);
+        assert_eq!((p.dirty_nodes, p.dirty_cars), (1, 2));
+        assert_eq!(p.subset(&[1, 0]).per_node, vec![PENALTY_EXCESS, PENALTY_EXCESS_DIRTY]);
+        assert_eq!(p.cost_of_remaining(&[2, 0]), 2.0 * PENALTY_EXCESS_DIRTY);
+
+        let (supply, demand, arcs) = dirty_scene(1); // спрос 1 < предложение 3
+        let p = ExcessPenalties::build(&arcs, &supply, &demand);
+        assert!(!p.deficit);
+        assert_eq!(p.get(0), PENALTY_EXCESS);
+        assert_eq!(p.dirty_nodes, 0);
+    }
+
+    /// Дефицит: грязные вагоны с одними Wash-дугами едут в промывку (MIP и LP),
+    /// а не остаются в остатке — регрессия на прогон 10.09.2026 (9 ваг. в отстой).
+    #[test]
+    fn dirty_wagons_go_to_wash_in_deficit() {
+        use std::time::Duration;
+        let (supply, demand, arcs) = dirty_scene(5);
+        let p = crate::solver::lp::ExcessPenalties::build(&arcs, &supply, &demand);
+
+        let outcome = crate::solver::mip::solve_mip(
+            &arcs, &supply, &demand, Duration::from_secs(10), None, None, None, None, &p,
+        );
+        assert!(outcome.has_feasible_solution());
+        assert_eq!(outcome.arc_vals[0].round() as i32, 2, "MIP: оба грязных вагона в промывку");
+        assert_eq!(outcome.optim.excess_supply.round() as i32, 0);
+
+        let (res, vals) = crate::solver::lp::solve(&arcs, &supply, &demand, &p);
+        assert_eq!(vals[0].round() as i32, 2, "LP: оба грязных вагона в промывку");
+        assert_eq!(res.excess_supply.round() as i32, 0);
+    }
+
+    /// Профицит: закрывать нечего — грязные вагоны остаются в остатке (в отстой),
+    /// промывка за реальные деньги ради простоя не назначается.
+    #[test]
+    fn dirty_wagons_stay_in_excess_in_surplus() {
+        use std::time::Duration;
+        let (supply, demand, arcs) = dirty_scene(1);
+        let p = crate::solver::lp::ExcessPenalties::build(&arcs, &supply, &demand);
+
+        let outcome = crate::solver::mip::solve_mip(
+            &arcs, &supply, &demand, Duration::from_secs(10), None, None, None, None, &p,
+        );
+        assert!(outcome.has_feasible_solution());
+        assert_eq!(outcome.arc_vals[0].round() as i32, 0, "MIP: промывка не назначается");
+        assert_eq!(outcome.optim.excess_supply.round() as i32, 2);
+    }
+
+    /// Дефицит, но промывка дороже PENALTY_EXCESS_DIRTY (через всю страну) —
+    /// вагон остаётся в остатке: штраф работает как потолок стоимости промывочного плеча.
+    #[test]
+    fn dirty_wagons_not_washed_when_wash_arc_exceeds_cap() {
+        use std::time::Duration;
+        let (supply, demand, mut arcs) = dirty_scene(5);
+        arcs[0].cost = crate::solver::lp::PENALTY_EXCESS_DIRTY + 1_000.0;
+        let p = crate::solver::lp::ExcessPenalties::build(&arcs, &supply, &demand);
+
+        let outcome = crate::solver::mip::solve_mip(
+            &arcs, &supply, &demand, Duration::from_secs(10), None, None, None, None, &p,
+        );
+        assert!(outcome.has_feasible_solution());
+        assert_eq!(outcome.arc_vals[0].round() as i32, 0);
+        assert_eq!(outcome.optim.excess_supply.round() as i32, 2);
     }
 }

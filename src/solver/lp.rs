@@ -43,6 +43,119 @@ pub const PENALTY_UNMET: f64 = 1_000_000.0;
 /// Ненулевое значение устраняет вырожденность задачи (несколько равноценных оптимумов).
 pub const PENALTY_EXCESS: f64 = 5_000.0;
 
+/// Штраф за 1 вагон избытка для **грязного** узла предложения в режиме **дефицита**.
+///
+/// Грязный вагон (есть Wash-дуги, под погрузку без промывки идти не может) в остатке —
+/// мёртвый актив: он уедет в отстой и до промывки ни одну заявку не закроет. При
+/// дефиците спроса каждый промытый вагон завтра закрывает заявку, которую сегодня
+/// нечем закрыть (её штраф — [`PENALTY_UNMET`]). Но узлы промывки — только верхняя
+/// ёмкость без штрафа за незаполнение, и с базовым [`PENALTY_EXCESS`] (5 тыс.) MIP
+/// корректно оставлял грязный вагон в остатке вместо промывки за 50–60 тыс.
+/// (прогон 10.09.2026: 9 вагонов с одними Wash-дугами ушли в отстой при 6 тыс.
+/// незакрытого спроса).
+///
+/// Значение — фактически **потолок стоимости промывочного плеча**: вагон едет в
+/// промывку, пока `arc.cost < PENALTY_EXCESS_DIRTY`, т.е. тариф до промывки не дороже
+/// `150 000 − WASH_PATH_SURCHARGE_RUB (50 000) = 100 000` руб. Типовое плечо с учётом
+/// промывки и последующего подсыла чистым — 70–100 тыс.; более дальняя промывка
+/// (через всю страну) проигрывает остатку, и вагон идёт в отстой.
+///
+/// На выбор «аналогичный груз vs промывка» константа **не влияет**: погрузка грязного
+/// вагона под тот же ЕТСНГ снимает штраф [`PENALTY_UNMET`] (1 млн) и выигрывает при
+/// любом значении здесь; дальние подсылы под аналогичный груз держат потолок
+/// `MaxEmptyRunDistanceKm` и cap «дальняя погрузка дороже промывки» в `classify_pair`.
+///
+/// В режиме профицита (предложение ≥ спрос на погрузку) не применяется: закрывать
+/// нечего, промывка за реальные деньги ради простоя не нужна — вагон идёт в отстой.
+pub const PENALTY_EXCESS_DIRTY: f64 = 150_000.0;
+
+/// Дефицит: суммарный спрос на **погрузку** больше суммарного предложения.
+pub fn is_deficit(supply: &[SupplyNode], demand: &[DemandNode]) -> bool {
+    let total_supply: i64 = supply.iter().map(|s| s.car_count as i64).sum();
+    let total_load: i64 = demand
+        .iter()
+        .filter(|d| d.purpose == DemandPurpose::Load)
+        .map(|d| d.car_count as i64)
+        .sum();
+    total_load > total_supply
+}
+
+/// Штрафы за остаток предложения по узлам (индекс = `s_idx`).
+///
+/// Единая точка согласования целевой функции LP / MIP / ALNS / greedy: все они
+/// оценивают остаток вагонов узла `s` по `per_node[s]`. Строится один раз для
+/// полной задачи ([`ExcessPenalties::build`]); для подзадач ALNS берётся срез
+/// по локальной индексации ([`ExcessPenalties::subset`]).
+#[derive(Debug, Clone)]
+pub struct ExcessPenalties {
+    /// Штраф за 1 вагон остатка узла предложения, руб.
+    pub per_node: Vec<f64>,
+    /// Режим дефицита, при котором грязные узлы получают [`PENALTY_EXCESS_DIRTY`].
+    pub deficit: bool,
+    /// Узлов с повышенным штрафом (грязные, есть Wash-дуги).
+    pub dirty_nodes: usize,
+    /// Вагонов в этих узлах.
+    pub dirty_cars: i32,
+}
+
+impl ExcessPenalties {
+    /// Базовый штраф [`PENALTY_EXCESS`] для всех `n` узлов (без учёта промывки).
+    pub fn uniform(n: usize) -> Self {
+        Self { per_node: vec![PENALTY_EXCESS; n], deficit: false, dirty_nodes: 0, dirty_cars: 0 }
+    }
+
+    /// Строит штрафы по задаче: узлы с хотя бы одной Wash-дугой (грязные вагоны)
+    /// при дефиците получают [`PENALTY_EXCESS_DIRTY`], остальные — [`PENALTY_EXCESS`].
+    pub fn build(arcs: &[TaskArc], supply: &[SupplyNode], demand: &[DemandNode]) -> Self {
+        let deficit = is_deficit(supply, demand);
+        let mut per_node = vec![PENALTY_EXCESS; supply.len()];
+        let mut dirty_nodes = 0usize;
+        let mut dirty_cars = 0i32;
+        if deficit {
+            let mut has_wash = vec![false; supply.len()];
+            for a in arcs {
+                if demand[a.d_idx].purpose == DemandPurpose::Wash {
+                    has_wash[a.s_idx] = true;
+                }
+            }
+            for (s_idx, dirty) in has_wash.into_iter().enumerate() {
+                if dirty {
+                    per_node[s_idx] = PENALTY_EXCESS_DIRTY;
+                    dirty_nodes += 1;
+                    dirty_cars += supply[s_idx].car_count;
+                }
+            }
+        }
+        Self { per_node, deficit, dirty_nodes, dirty_cars }
+    }
+
+    /// Штраф узла `s_idx`; вне диапазона — базовый [`PENALTY_EXCESS`].
+    #[inline]
+    pub fn get(&self, s_idx: usize) -> f64 {
+        self.per_node.get(s_idx).copied().unwrap_or(PENALTY_EXCESS)
+    }
+
+    /// Срез для подзадачи: `s_map[local] = original s_idx`.
+    pub fn subset(&self, s_map: &[usize]) -> Self {
+        Self {
+            per_node: s_map.iter().map(|&s| self.get(s)).collect(),
+            deficit: self.deficit,
+            dirty_nodes: 0,
+            dirty_cars: 0,
+        }
+    }
+
+    /// Штрафная стоимость остатка предложения `remaining[s]` (отрицательные остатки игнорируются).
+    pub fn cost_of_remaining(&self, remaining: &[i32]) -> f64 {
+        remaining
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| **r > 0)
+            .map(|(s, &r)| self.get(s) * r as f64)
+            .sum()
+    }
+}
+
 /// Решает сбалансированную транспортную задачу методом LP (HiGHS / IPM).
 ///
 /// # Балансировка через явные dummy-узлы
@@ -52,12 +165,14 @@ pub const PENALTY_EXCESS: f64 = 5_000.0;
 ///
 /// | Dummy-узел        | Ёмкость         | Стоимость дуги | Назначение                       |
 /// |-------------------|-----------------|----------------|----------------------------------|
-/// | Dummy **спрос**   | `total_supply`  | `PENALTY_EXCESS` (5k) | Поглощает незадействованное предложение (отстой) |
+/// | Dummy **спрос**   | `total_supply`  | `excess.per_node[s]` (5k; грязные при дефиците 300k) | Поглощает незадействованное предложение (отстой) |
 /// | Dummy **предложение** | `total_load_demand` | `PENALTY_UNMET` (1M) | Покрывает незакрытый спрос на погрузку |
 ///
 /// Ёмкость dummy-узлов согласована с суммарным предложением / спросом на **погрузку**.
 /// Узлы промывки — только верхняя граница входящего потока (без штрафа за незаполнение);
-/// штрафные дуги dummy-предложения ведут только к узлам погрузки.
+/// штрафные дуги dummy-предложения ведут только к узлам погрузки. Чтобы грязный вагон
+/// при дефиците всё же ехал в промывку, его остаток штрафуется дороже промывочного
+/// плеча — см. [`ExcessPenalties`] / [`PENALTY_EXCESS_DIRTY`].
 ///
 /// Строки спроса на погрузку — равенства; на промывку — неравенство «не больше ёмкости».
 ///
@@ -68,6 +183,7 @@ pub fn solve(
     arcs: &[TaskArc],
     supply: &[SupplyNode],
     demand: &[DemandNode],
+    excess: &ExcessPenalties,
 ) -> (OptimResult, Vec<f64>) {
     let total_supply: f64 = supply.iter().map(|s| s.car_count as f64).sum();
     let total_load_demand: f64 = demand
@@ -108,11 +224,12 @@ pub fn solve(
     }
 
     // --- Dummy-узел СПРОСА (поглощает незадействованное предложение / отстой) ---
-    // Штраф PENALTY_EXCESS намеренно ниже минимального реального тарифа: MIP не будет
-    // «тянуть» дорогие вагоны period=10 под погрузку ради снижения excess_supply.
+    // Базовый штраф PENALTY_EXCESS намеренно ниже минимального реального тарифа: MIP не
+    // будет «тянуть» дорогие вагоны period=10 под погрузку ради снижения excess_supply.
+    // Грязные узлы при дефиците — PENALTY_EXCESS_DIRTY (промывка выгоднее остатка).
     let dummy_demand_row = model.add_row(..total_supply);
-    for s_row in &supply_rows {
-        model.add_column(PENALTY_EXCESS, 0.0.., [(*s_row, 1.0), (dummy_demand_row, 1.0)]);
+    for (s_idx, s_row) in supply_rows.iter().enumerate() {
+        model.add_column(excess.get(s_idx), 0.0.., [(*s_row, 1.0), (dummy_demand_row, 1.0)]);
     }
 
     // --- Dummy-узел ПРЕДЛОЖЕНИЯ (покрывает незакрытый спрос **погрузки**) ---

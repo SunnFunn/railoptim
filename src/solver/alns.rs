@@ -5,7 +5,7 @@ use rand::prelude::*;
 use crate::node::{DemandNode, DemandPurpose, SupplyNode};
 use super::model::{collect_pair_min_batch_violations, DmziIndex, DmziLimits, PairKey, TaskArc};
 use super::greedy::{Assignment, GreedyResult, greedy_to_arc_vals};
-use super::lp::{solve, OptimResult, PENALTY_EXCESS, PENALTY_UNMET};
+use super::lp::{solve, ExcessPenalties, OptimResult, PENALTY_UNMET};
 use super::mip::solve_mip;
 
 // ---------------------------------------------------------------------------
@@ -149,12 +149,9 @@ impl AlnsState {
     }
 
     /// Полная целевая функция, согласованная с LP/MIP:
-    /// стоимость реальных дуг + PENALTY_UNMET * unmet_demand + PENALTY_EXCESS * excess_supply.
-    pub fn objective_cost(&self, demand: &[DemandNode]) -> f64 {
-        let (unmet_demand, excess_supply) = self.unmet_and_excess(demand);
-        self.total_cost
-            + PENALTY_UNMET * unmet_demand as f64
-            + PENALTY_EXCESS * excess_supply as f64
+    /// стоимость реальных дуг + PENALTY_UNMET * unmet_demand + Σ_s excess.per_node[s] * остаток[s].
+    pub fn objective_cost(&self, demand: &[DemandNode], excess: &ExcessPenalties) -> f64 {
+        self.total_cost + self.penalty_component_cost(demand, excess)
     }
 
     /// Текущие остатки по спросу и предложению.
@@ -173,9 +170,9 @@ impl AlnsState {
     }
 
     /// Штрафная часть целевой функции (без реальной стоимости дуг).
-    pub fn penalty_component_cost(&self, demand: &[DemandNode]) -> f64 {
-        let (unmet_demand, excess_supply) = self.unmet_and_excess(demand);
-        PENALTY_UNMET * unmet_demand as f64 + PENALTY_EXCESS * excess_supply as f64
+    pub fn penalty_component_cost(&self, demand: &[DemandNode], excess: &ExcessPenalties) -> f64 {
+        let (unmet_demand, _) = self.unmet_and_excess(demand);
+        PENALTY_UNMET * unmet_demand as f64 + excess.cost_of_remaining(&self.remaining_supply)
     }
 }
 
@@ -617,6 +614,7 @@ fn repair_lp(
     supply:  &[SupplyNode],
     demand:  &[DemandNode],
     dmzi:    Option<&DmziIndex>,
+    excess:  &ExcessPenalties,
 ) -> bool {
     use std::collections::HashMap;
 
@@ -635,7 +633,7 @@ fn repair_lp(
         .map(|a| ((a.s_idx, a.d_idx), a))
         .collect();
 
-    let (_, arc_vals) = solve(&sub_arcs, &sub_supply, &sub_demand);
+    let (_, arc_vals) = solve(&sub_arcs, &sub_supply, &sub_demand, &excess.subset(&s_map));
 
     // Пред-вычисление для inline-проверки минимальной партии.
     //
@@ -798,6 +796,7 @@ fn repair_mip(
     time_limit: Duration,
     rel_gap:    f64,
     dmzi:       Option<&DmziIndex>,
+    excess:     &ExcessPenalties,
 ) -> bool {
     use std::collections::HashMap;
 
@@ -850,11 +849,16 @@ fn repair_mip(
     // найденный incumbent произвольного качества — источник резких ухудшений плана.
     let warm = warm_start_from_removed(removed, &sub_arcs, &s_map, &d_map);
 
+    // Штрафы за остаток — срез полной задачи по локальной индексации подзадачи:
+    // грязные узлы при дефиците сохраняют PENALTY_EXCESS_DIRTY и в под-MIP.
+    let sub_excess = excess.subset(&s_map);
+
     let outcome = solve_mip(
         &sub_arcs, &sub_supply, &sub_demand,
         time_limit, Some(&warm), Some(rel_gap),
         Some(&pair_override),
         dmzi_reduced.as_ref(),
+        &sub_excess,
     );
 
     if !outcome.has_feasible_solution() {
@@ -939,6 +943,10 @@ pub fn run_alns(
         .filter(|l| !l.is_empty())
         .map(|l| DmziIndex::build(arcs, supply, demand, l));
 
+    // Штрафы за остаток по узлам полной задачи — общие для критерия приёма и
+    // всех операторов ремонта (та же цель, что у главного MIP).
+    let excess = ExcessPenalties::build(arcs, supply, demand);
+
     // --- Инициализация ---
     let initial_state = AlnsState::from_greedy(greedy, supply, demand);
     let mut best_state   = initial_state.clone();
@@ -961,8 +969,8 @@ pub fn run_alns(
     println!("Начальная real_cost:       {:.2} руб.", best_state.total_cost);
     println!(
         "Начальная objective_cost:  {:.2} руб. (penalty: {:.2}, unmet: {}, excess: {})",
-        best_state.objective_cost(demand),
-        best_state.penalty_component_cost(demand),
+        best_state.objective_cost(demand, &excess),
+        best_state.penalty_component_cost(demand, &excess),
         start_unmet,
         start_excess,
     );
@@ -1003,9 +1011,10 @@ pub fn run_alns(
                 &mut candidate, &removed, arcs, supply, demand,
                 ALNS_MIP_TIME_LIMIT, ALNS_MIP_REL_GAP,
                 dmzi_index.as_ref(),
+                &excess,
             )
         } else {
-            repair_lp(&mut candidate, &removed, arcs, supply, demand, dmzi_index.as_ref())
+            repair_lp(&mut candidate, &removed, arcs, supply, demand, dmzi_index.as_ref(), &excess)
         };
         if !repaired {
             repair_greedy(&mut candidate, &removed, arcs, dmzi_index.as_ref());
@@ -1019,8 +1028,8 @@ pub fn run_alns(
         // инцидента 07.09.2026 — в документации к `accept_candidate`.
         let (cand_unmet, _) = candidate.unmet_and_excess(demand);
         let (best_unmet, _) = best_state.unmet_and_excess(demand);
-        let candidate_obj = candidate.objective_cost(demand);
-        let best_obj      = best_state.objective_cost(demand);
+        let candidate_obj = candidate.objective_cost(demand, &excess);
+        let best_obj      = best_state.objective_cost(demand, &excess);
 
         let accept = accept_candidate(cand_unmet, best_unmet, candidate_obj, best_obj);
 
@@ -1043,7 +1052,7 @@ pub fn run_alns(
                 stats.iterations,
                 delta_obj,
                 best_state.total_cost,
-                best_state.penalty_component_cost(demand),
+                best_state.penalty_component_cost(demand, &excess),
                 bu + be,
                 bu,
                 be,
@@ -1118,8 +1127,8 @@ pub fn run_alns(
     println!("Лучшая real_cost:    {:.2} руб.", best_state.total_cost);
     println!(
         "Лучшая objective:    {:.2} руб. (penalty: {:.2}, unmet: {}, excess: {})",
-        best_state.objective_cost(demand),
-        best_state.penalty_component_cost(demand),
+        best_state.objective_cost(demand, &excess),
+        best_state.penalty_component_cost(demand, &excess),
         final_unmet,
         final_excess,
     );
@@ -1196,6 +1205,7 @@ impl AlnsResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::lp::PENALTY_EXCESS;
     use crate::node::{CarKind, RepairStatus};
 
     // --- Критерий приёма -------------------------------------------------
@@ -1390,10 +1400,11 @@ mod tests {
             vec![Assignment { arc_id: 1, s_idx: 0, d_idx: 1, quantity: 1, total_cost: 1_000.0 }],
             &supply, &demand,
         );
-        let seed_obj = seed.objective_cost();
+        let excess = ExcessPenalties::build(&arcs, &supply, &demand);
+        let seed_obj = seed.objective_cost(&supply, &excess);
 
         let res = run_alns(&seed, &arcs, &supply, &demand, &quick_config(), None);
-        let best_obj = res.best_state.objective_cost(&demand);
+        let best_obj = res.best_state.objective_cost(&demand, &excess);
 
         assert!(best_obj <= seed_obj, "ALNS не должен ухудшать seed: {best_obj} > {seed_obj}");
         let (unmet, excess) = res.best_state.unmet_and_excess(&demand);
@@ -1423,12 +1434,13 @@ mod tests {
             ],
             &supply, &demand,
         );
-        let seed_obj = seed.objective_cost();
+        let excess = ExcessPenalties::build(&arcs, &supply, &demand);
+        let seed_obj = seed.objective_cost(&supply, &excess);
 
         let res = run_alns(&seed, &arcs, &supply, &demand, &quick_config(), None);
 
         assert_eq!(res.stats.improvements, 0, "оптимальный seed не должен «улучшаться»");
-        assert!((res.best_state.objective_cost(&demand) - seed_obj).abs() < 1e-6);
+        assert!((res.best_state.objective_cost(&demand, &excess) - seed_obj).abs() < 1e-6);
         assert!((res.best_state.total_cost - 40.0).abs() < 1e-6);
     }
 }

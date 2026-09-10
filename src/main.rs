@@ -591,6 +591,26 @@ async fn main() -> Result<()> {
     // -----------------------------------------------------------------------
     solver::print_balance(&opt_supply, &demand_lp);
 
+    // Штрафы за остаток предложения по узлам (общие для MIP, ALNS и выбора seed).
+    // При дефиците грязные узлы (есть Wash-дуги) штрафуются PENALTY_EXCESS_DIRTY —
+    // иначе MIP оставляет их в остатке (промывка ничего «не закрывает» в модели),
+    // и грязные вагоны уезжают в отстой при незакрытом спросе.
+    let excess_penalties = solver::ExcessPenalties::build(&arcs, &opt_supply, &demand_lp);
+    if excess_penalties.deficit {
+        println!(
+            "Штраф за остаток грязных вагонов (дефицит): {:.0} руб./ваг. вместо {:.0} — узлов {}, вагонов {} (промывка выгоднее отстоя)",
+            solver::PENALTY_EXCESS_DIRTY,
+            solver::PENALTY_EXCESS,
+            excess_penalties.dirty_nodes,
+            excess_penalties.dirty_cars,
+        );
+    } else {
+        println!(
+            "Штраф за остаток предложения: {:.0} руб./ваг. для всех узлов (профицит — грязные вагоны в отстой без промывки)",
+            solver::PENALTY_EXCESS,
+        );
+    }
+
     let greedy_result =
         solver::greedy_initial_solution(&arcs, &opt_supply, &demand_lp, dmzi_limits.as_ref());
     solver::print_greedy_result(&greedy_result, &opt_supply, &demand_lp);
@@ -629,6 +649,7 @@ async fn main() -> Result<()> {
         None, // rel_gap — берём DEFAULT_MIP_REL_GAP
         None, // pair_min_batch_override — для главного MIP не нужен
         dmzi_limits.as_ref(),
+        &excess_penalties,
     );
     let mip_elapsed = mip_t0.elapsed();
     solver::print_mip_result(&mip_outcome.optim, &opt_supply, &demand_lp);
@@ -731,8 +752,10 @@ async fn main() -> Result<()> {
         let mip_undist    = mip_as_greedy.unmet_demand + mip_as_greedy.excess_supply;
 
         // Кортежи для лексикографического сравнения; objective округляем до рубля.
-        let greedy_key = (greedy_result.unmet_demand, greedy_result.objective_cost() as i64);
-        let mip_key    = (mip_as_greedy.unmet_demand, mip_as_greedy.objective_cost() as i64);
+        let greedy_obj = greedy_result.objective_cost(&opt_supply, &excess_penalties);
+        let mip_obj    = mip_as_greedy.objective_cost(&opt_supply, &excess_penalties);
+        let greedy_key = (greedy_result.unmet_demand, greedy_obj as i64);
+        let mip_key    = (mip_as_greedy.unmet_demand, mip_obj as i64);
 
         let alns_seed = if mip_key < greedy_key { &mip_as_greedy } else { &greedy_result };
         let seed_name = if mip_key < greedy_key { "MIP" } else { "greedy" };
@@ -741,12 +764,12 @@ async fn main() -> Result<()> {
         println!(
             "  greedy : undist {:>4} (unmet {:>3} + excess {:>3}), assigned {:>4}, real_cost {:>12.2} руб., objective {:>12.2} руб.",
             greedy_undist, greedy_result.unmet_demand, greedy_result.excess_supply,
-            greedy_result.assigned_cars, greedy_result.total_cost, greedy_result.objective_cost(),
+            greedy_result.assigned_cars, greedy_result.total_cost, greedy_obj,
         );
         println!(
             "  MIP    : undist {:>4} (unmet {:>3} + excess {:>3}), assigned {:>4}, real_cost {:>12.2} руб., objective {:>12.2} руб.",
             mip_undist, mip_as_greedy.unmet_demand, mip_as_greedy.excess_supply,
-            mip_as_greedy.assigned_cars, mip_as_greedy.total_cost, mip_as_greedy.objective_cost(),
+            mip_as_greedy.assigned_cars, mip_as_greedy.total_cost, mip_obj,
         );
         println!(
             "  выбран : {} (критерий: min(unmet), затем min(objective) — как accept ALNS)",

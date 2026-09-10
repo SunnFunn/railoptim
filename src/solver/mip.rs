@@ -28,7 +28,7 @@ use std::time::Duration;
 use highs::{ColProblem, HighsModelStatus, Row, Sense};
 
 use super::greedy::{Assignment, GreedyResult};
-use super::lp::{OptimResult, PENALTY_EXCESS, PENALTY_UNMET};
+use super::lp::{ExcessPenalties, OptimResult, PENALTY_UNMET};
 use super::model::{DmziIndex, DmziLimits, PairKey, TaskArc};
 use crate::node::{DemandNode, DemandPurpose, SupplyNode};
 
@@ -150,6 +150,9 @@ impl MipOutcome {
 ///   (см. [`DmziIndex`]). `None` = квоты не применяются. В MIP-LNS
 ///   ([`super::alns::repair_mip`]) передаются **редуцированные** лимиты
 ///   (за вычетом потока внешнего state).
+/// - `excess` — штрафы за остаток предложения по узлам ([`ExcessPenalties`]): базовый
+///   [`super::lp::PENALTY_EXCESS`], для грязных узлов при дефиците — [`super::lp::PENALTY_EXCESS_DIRTY`].
+///   В MIP-LNS передаётся срез полной задачи по локальной индексации подзадачи.
 ///
 /// Возвращает [`MipOutcome`] со статусом HiGHS, MIP-gap и значениями дуговых переменных
 /// в порядке `arcs`.
@@ -163,6 +166,7 @@ pub fn solve_mip(
     rel_gap: Option<f64>,
     pair_min_batch_override: Option<&HashMap<PairKey, i32>>,
     dmzi_limits: Option<&DmziLimits>,
+    excess: &ExcessPenalties,
 ) -> MipOutcome {
     // -----------------------------------------------------------------------
     // 1. Сбор групп дуг с ограничением минимальной партии (pair_min_batch > 0).
@@ -303,10 +307,11 @@ pub fn solve_mip(
     }
 
     // Dummy-demand (поглощает избыток предложения / отстой).
-    // PENALTY_EXCESS намеренно ниже минимального реального тарифа: MIP не тянет
+    // Базовый PENALTY_EXCESS намеренно ниже минимального реального тарифа: MIP не тянет
     // дорогие вагоны period=10 под погрузку только ради снижения excess_supply.
-    for s_row in &supply_rows {
-        model.add_column(PENALTY_EXCESS, 0.0.., [(*s_row, 1.0), (dummy_demand_row, 1.0)]);
+    // Грязные узлы при дефиците — PENALTY_EXCESS_DIRTY: промывка выгоднее остатка.
+    for (s_idx, s_row) in supply_rows.iter().enumerate() {
+        model.add_column(excess.get(s_idx), 0.0.., [(*s_row, 1.0), (dummy_demand_row, 1.0)]);
     }
 
     // Dummy-supply (штрафное покрытие только для Load-спроса).

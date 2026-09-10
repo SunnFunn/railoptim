@@ -112,8 +112,14 @@ pub struct TaskArc {
     /// Код станции погрузки (куда подсылаем).
     pub demand_station_code: String,
 
-    /// Стоимость перевозки, руб.
+    /// Стоимость дуги для оптимизации, руб.: тариф + штраф за срок + надбавки
+    /// (промывка + порожний пробег после промывки для Wash-дуг, period 10, бизнес-правила).
     pub cost: f64,
+    /// Чистый тариф передислокации порожнего вагона между станциями дуги, руб. —
+    /// без модельных штрафов и надбавок. Используется в отчётах (Excel/API): для
+    /// Wash-дуги это только тариф до станции промывки, без стоимости промывки и
+    /// последующего подсыла под погрузку.
+    pub tariff_cost: f64,
     /// Расстояние, км.
     pub distance: i32,
     /// Нормативный срок подсыла, сут.
@@ -437,6 +443,14 @@ pub fn build_task_arcs(
                 0
             };
 
+            // Чистый тариф для отчёта: в wash_tariffs стоимость уже содержит надбавку
+            // WASH_PATH_SURCHARGE_RUB (промывка + порожний пробег после промывки) — снимаем её.
+            let tariff_cost = if d.purpose == DemandPurpose::Wash {
+                (tariff.cost - WASH_PATH_SURCHARGE_RUB).max(0.0)
+            } else {
+                tariff.cost
+            };
+
             arcs.push(TaskArc {
                 arc_id: arcs.len(),
                 s_idx,
@@ -444,6 +458,7 @@ pub fn build_task_arcs(
                 supply_station_code: s.station_to_code.clone(),
                 demand_station_code: d.station_code.clone(),
                 cost,
+                tariff_cost,
                 distance:          tariff.distance,
                 delivery_days:     tariff.period_of_delivery,
                 period_ok,
@@ -1027,6 +1042,44 @@ mod tests {
         assert_eq!(stats.foreign_territory, 0);
         assert_eq!(stats.deficit_export, 0);
         assert!((arcs[0].cost - 1_000.0).abs() < 1e-9, "надбавок правил на wash нет");
+    }
+
+    /// `tariff_cost` — чистый тариф для отчёта: у Wash-дуги без надбавки
+    /// WASH_PATH_SURCHARGE_RUB (в `wash_tariffs` она уже включена в cost), у Load-дуги
+    /// без надбавок бизнес-правил; `cost` при этом остаётся полной модельной стоимостью.
+    #[test]
+    fn tariff_cost_excludes_model_surcharges() {
+        // Wash: тариф до промывки 7 000 + надбавка 50 000 = 57 000 в wash_tariffs.
+        let mut s = dummy_supply(3, "S1", 1, false);
+        s.prev_etsngs = vec!["421034".to_string()];
+        let mut wash_node = dummy_demand(3, "WASH", None);
+        wash_node.purpose = DemandPurpose::Wash;
+        let wash_codes: HashSet<String> = ["421034".to_string()].into_iter().collect();
+        let mut wash_tariffs: HashMap<(String, String), TariffNode> = HashMap::new();
+        let mut wt = dummy_tariff("S1", "WASH");
+        wt.cost = 7_000.0 + WASH_PATH_SURCHARGE_RUB;
+        wash_tariffs.insert(("S1".to_string(), "WASH".to_string()), wt);
+
+        let (arcs, _) = build_task_arcs(
+            &[s], &[wash_node], &[],
+            &wash_codes, &HashSet::new(), &HashSet::new(), &wash_tariffs,
+            &BusinessRules::default(),
+        );
+        assert_eq!(arcs.len(), 1);
+        assert!((arcs[0].cost - (7_000.0 + WASH_PATH_SURCHARGE_RUB)).abs() < 1e-9);
+        assert!((arcs[0].tariff_cost - 7_000.0).abs() < 1e-9, "в отчёт — только тариф до промывки");
+
+        // Load с надбавкой бизнес-правила (ОКТ → КЗХ +50 000): tariff_cost = чистый тариф.
+        let supply = vec![with_railway_s(dummy_supply(2, "S_OKT", 1, false), "ОКТ")];
+        let demand = vec![with_railway_d(dummy_demand(8, "D_KZH", None), "КЗХ")];
+        let (arcs, _) = build_task_arcs(
+            &supply, &demand, &[dummy_tariff("S_OKT", "D_KZH")],
+            &HashSet::new(), &HashSet::new(), &HashSet::new(), &HashMap::new(),
+            &rules_roads(),
+        );
+        assert_eq!(arcs.len(), 1);
+        assert!((arcs[0].cost - 51_000.0).abs() < 1e-9);
+        assert!((arcs[0].tariff_cost - 1_000.0).abs() < 1e-9);
     }
 
     /// Правило 1: с российской дороги на инотерриторию дуги нет; ОКТ → КЗХ разрешено

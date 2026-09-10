@@ -49,6 +49,7 @@ pub struct AssignmentRecord {
     pub demand_period:       u8,
 
     // --- Тариф ---
+    /// Чистый тариф передислокации из АПИ, руб./ваг. (без модельных штрафов и надбавок).
     pub cost_rub:      f64,
     pub distance_km:   i32,
     pub delivery_days: i32,
@@ -61,6 +62,9 @@ pub struct AssignmentRecord {
 pub struct OptimReport {
     pub timestamp:       String,
     pub solver_status:   String,
+    /// Суммарная **модельная** стоимость реальных дуг решения (целевая функция
+    /// решателя: тарифы + штрафы за срок + надбавки). Диагностика оптимизации,
+    /// не равна сумме `cost_rub` по назначениям.
     pub total_cost_rub:  f64,
     pub assigned_cars:   f64,
     pub penalty_cars:    f64,
@@ -103,7 +107,7 @@ pub fn build_report(
                 demand_station_code: arc.demand_station_code.clone(),
                 demand_railway:      d.railway_name.clone(),
                 demand_period:       d.period,
-                cost_rub:            arc.cost,
+                cost_rub:            arc.tariff_cost,
                 distance_km:         arc.distance,
                 delivery_days:       arc.delivery_days,
                 period_ok:           arc.period_ok,
@@ -531,7 +535,10 @@ pub fn build_output_records(
                 customer:           d.recipient.as_ref().and_then(|v| v.first().cloned()),
                 distance:           arc.distance,
                 period_of_delivery: arc.delivery_days,
-                cost:               arc.cost,
+                // В отчёт — чистый тариф передислокации: для промывки без стоимости
+                // самой промывки и порожнего подсыла после неё, для погрузки без
+                // штрафов за срок и надбавок period 10 / бизнес-правил.
+                cost:               arc.tariff_cost,
                 assignment_type,
                 car_numbers_list:   slice,
                 supply_kind:        car_kind_str(&s.kind).to_string(),
@@ -860,6 +867,7 @@ mod tests {
             supply_station_code: "S1".to_string(),
             demand_station_code: "D1".to_string(),
             cost: 100.0,
+            tariff_cost: 100.0,
             distance: 1,
             delivery_days: 1,
             period_ok: true,

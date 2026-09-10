@@ -814,6 +814,7 @@ mod tests {
             supply_station_code: from_st.to_string(),
             demand_station_code: to_st.to_string(),
             cost,
+            tariff_cost: cost,
             distance: 1,
             delivery_days: 1,
             period_ok: true,

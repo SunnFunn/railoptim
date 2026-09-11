@@ -16,7 +16,10 @@
 //! этой станции. Узлы без разрешённой погрузки (0) исключаются.
 //!
 //! Проверка относится только к территории России: узлы на дорогах-инотерриториях
-//! (`BusinessRules::foreign_railways`) не корректируются.
+//! (список `ForeignRoads` из `data/references.json`, см.
+//! [`super::references::load_foreign_roads`]) не корректируются. Дорога узла —
+//! `DemandNode::railway_name` (RailWayShortFrom); классификация по коду станции ЕСР
+//! намеренно не используется (ненадёжна).
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -28,7 +31,7 @@ use serde::Deserialize;
 use crate::node::{DemandNode, DemandPurpose};
 
 use super::demand::DEMAND_PERIODS;
-use super::esr::{normalize_esr6, EsrCountryIndex};
+use super::esr::normalize_esr6;
 
 /// Согласованная заявка ГУ-12 (строка ответа `gu12.py json`).
 #[derive(Debug, Clone, Default, Deserialize, PartialEq)]
@@ -216,11 +219,8 @@ pub fn split_proportional(total: i32, weights: &[i32]) -> Vec<i32> {
 ///
 /// - `demand` — узлы спроса (обрабатываются только `purpose == Load`);
 /// - `claims` — согласованные заявки ГУ-12 ([`fetch_gu12_claims`]);
-/// - `foreign_railways` — дороги-инотерритории (`BusinessRules::foreign_railways`):
-///   их узлы не корректируются;
-/// - `esr_index` — классификация станции по сетевому району ЕСР: узел со станцией
-///   не в России (`country_hint != "RU"`) тоже не корректируется — страховка на случай,
-///   если дорога в узле пустая или записана не коротким кодом.
+/// - `foreign_railways` — короткие коды дорог-инотерриторий (`ForeignRoads` из
+///   `data/references.json`): узлы с такой `railway_name` не корректируются.
 ///
 /// Узлы с итоговым `car_count == 0` удаляются, `d_id` перенумеровываются с 1
 /// в исходном порядке (узлы промывки к этому моменту ещё не созданы).
@@ -228,7 +228,6 @@ pub fn apply_gu12_limits(
     demand: &mut Vec<DemandNode>,
     claims: &[Gu12Claim],
     foreign_railways: &HashSet<String>,
-    esr_index: Option<&EsrCountryIndex>,
 ) -> Gu12Stats {
     let mut st = Gu12Stats {
         claims_total: claims.len(),
@@ -260,7 +259,7 @@ pub fn apply_gu12_limits(
         if d.purpose != DemandPurpose::Load {
             continue;
         }
-        if is_foreign_node(d, foreign_railways, esr_index) {
+        if is_foreign_node(d, foreign_railways) {
             st.nodes_foreign += 1;
             st.cars_foreign += d.car_count;
             continue;
@@ -398,19 +397,9 @@ pub fn apply_gu12_limits(
     st
 }
 
-/// Узел спроса вне территории России: дорога из списка инотерриторий **или** код
-/// станции ЕСР-6 относится к сетевому району другой страны.
-pub fn is_foreign_node(
-    d: &DemandNode,
-    foreign_railways: &HashSet<String>,
-    esr_index: Option<&EsrCountryIndex>,
-) -> bool {
-    if foreign_railways.contains(d.railway_name.trim()) {
-        return true;
-    }
-    esr_index
-        .and_then(|idx| idx.classify(&d.station_code))
-        .is_some_and(|c| c.country_hint != "RU")
+/// Узел спроса вне территории России: дорога погрузки входит в список инотерриторий.
+pub fn is_foreign_node(d: &DemandNode, foreign_railways: &HashSet<String>) -> bool {
+    foreign_railways.contains(d.railway_name.trim())
 }
 
 fn period_slot(period: u8) -> Option<usize> {
@@ -506,7 +495,7 @@ mod tests {
             node(4, 1, "999999", "МСК", Some("Без заявки"), Some("222"), 8),
         ];
         let claims = vec![claim("583506", "Акционерное общество КРИСТАЛЛ", "00335717", [7, 9, 0, 0])];
-        let st = apply_gu12_limits(&mut demand, &claims, &foreign(), None);
+        let st = apply_gu12_limits(&mut demand, &claims, &foreign());
 
         // Узел 1: 20 → 7 (ОКПО). Узел 2: другой ОКПО, пула нет → 0, исключён.
         // Узел 3 (период 2): 5 ≤ 9 — без изменений. Узел 4: станция без заявок → исключён.
@@ -534,7 +523,7 @@ mod tests {
             node(1, 1, "603409", "МСК", Some("АО \"Избердеевский элеватор\""), None, 30),
         ];
         let claims = vec![claim("603409", "Акционерное общество «Избердеевский элеватор»", "", [20, 0, 0, 0])];
-        let st = apply_gu12_limits(&mut demand, &claims, &foreign(), None);
+        let st = apply_gu12_limits(&mut demand, &claims, &foreign());
         assert_eq!(demand[0].car_count, 20);
         assert_eq!(st.nodes_matched_name, 1);
         assert_eq!(st.nodes_matched_okpo, 0);
@@ -548,7 +537,7 @@ mod tests {
         ];
         // Заявка от третьего лица без ОКПО и с чужим именем → пул 20 → 15 / 5.
         let claims = vec![claim("811407", "ООО Трейдер", "", [20, 0, 0, 0])];
-        let st = apply_gu12_limits(&mut demand, &claims, &foreign(), None);
+        let st = apply_gu12_limits(&mut demand, &claims, &foreign());
         assert_eq!(demand[0].car_count, 15);
         assert_eq!(demand[1].car_count, 5);
         assert_eq!(st.nodes_pool_only, 2);
@@ -563,13 +552,13 @@ mod tests {
             node(2, 1, "657004", "КБШ", Some("Раевский"), Some("77697508"), 10),
         ];
         let claims = vec![claim("657004", "ООО Раевский элеватор", "77697508", [8, 0, 0, 0])];
-        apply_gu12_limits(&mut demand, &claims, &foreign(), None);
+        apply_gu12_limits(&mut demand, &claims, &foreign());
         assert_eq!(demand[0].car_count, 6);
         assert_eq!(demand[1].car_count, 2);
 
         // Заявка больше спроса — спрос не растёт.
         let mut demand = vec![node(1, 1, "657004", "КБШ", Some("Раевский"), Some("77697508"), 3)];
-        apply_gu12_limits(&mut demand, &claims, &foreign(), None);
+        apply_gu12_limits(&mut demand, &claims, &foreign());
         assert_eq!(demand[0].car_count, 3);
     }
 
@@ -579,7 +568,7 @@ mod tests {
             node(1, 1, "687103", "КЗХ", Some("ТОО"), None, 40),
             node(2, 1, "583506", "ЮВС", Some("АО Кристалл"), Some("335717"), 20),
         ];
-        let st = apply_gu12_limits(&mut demand, &[], &foreign(), None);
+        let st = apply_gu12_limits(&mut demand, &[], &foreign());
         assert_eq!(demand.len(), 1);
         assert_eq!(demand[0].railway_name, "КЗХ");
         assert_eq!(demand[0].car_count, 40);
@@ -588,28 +577,18 @@ mod tests {
         assert_eq!(st.nodes_removed, 1);
     }
 
-    /// Дорога в узле пустая/неизвестная, но станция по ЕСР — Казахстан (район 68):
-    /// узел не корректируется благодаря классификации по коду станции.
+    /// Инотерритория определяется только по дороге узла из списка: код станции
+    /// (казахстанский район 68) сам по себе узел не освобождает; пробелы в коде дороги — не помеха.
     #[test]
-    fn foreign_station_by_esr_code_is_not_touched() {
-        let idx = EsrCountryIndex::load(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("data/stations/esr_country_prefixes.csv"),
-        )
-        .unwrap();
+    fn foreign_only_by_railway_list_not_by_station_code() {
         let mut demand = vec![
-            node(1, 1, "687103", "", Some("ТОО"), None, 40),          // Кокшетау-2, дорога не указана
-            node(2, 1, "583506", "ЮВС", Some("АО Кристалл"), Some("335717"), 20), // РФ, заявки нет
+            node(1, 1, "687103", "", Some("ТОО"), None, 40),          // дорога не указана
+            node(2, 1, "687103", " КЗХ ", Some("ТОО"), None, 30),     // КЗХ с пробелами
         ];
-        // Без индекса ЕСР узел 1 считался бы российским и был бы исключён (заявок нет).
-        let mut without_idx = demand.clone();
-        let st = apply_gu12_limits(&mut without_idx, &[], &foreign(), None);
-        assert_eq!(without_idx.len(), 0);
-        assert_eq!(st.nodes_foreign, 0);
-
-        let st = apply_gu12_limits(&mut demand, &[], &foreign(), Some(&idx));
+        let st = apply_gu12_limits(&mut demand, &[], &foreign());
         assert_eq!(demand.len(), 1);
-        assert_eq!(demand[0].station_code, "687103");
-        assert_eq!(demand[0].car_count, 40);
+        assert_eq!(demand[0].railway_name, " КЗХ ");
+        assert_eq!(demand[0].car_count, 30);
         assert_eq!(st.nodes_foreign, 1);
         assert_eq!(st.nodes_removed, 1);
     }
@@ -619,7 +598,7 @@ mod tests {
         let mut w = node(1, 1, "100000", "МСК", None, None, 50);
         w.purpose = DemandPurpose::Wash;
         let mut demand = vec![w];
-        apply_gu12_limits(&mut demand, &[], &foreign(), None);
+        apply_gu12_limits(&mut demand, &[], &foreign());
         assert_eq!(demand.len(), 1);
         assert_eq!(demand[0].car_count, 50);
     }

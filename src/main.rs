@@ -56,32 +56,36 @@ async fn main() -> Result<()> {
             r
         }
         Err(e) => {
-            eprintln!(
-                "  business_rules.json: не загружен ({e}) — бизнес-правила 1–2 не применяются; \
-                 проверка ГУ-12 (правило 3) отключена: без списка инотерриторий её нельзя ограничить территорией России"
-            );
-            data::BusinessRules { gu12_check_enabled: false, ..Default::default() }
+            eprintln!("  business_rules.json: не загружен ({e}) — бизнес-правила 1–2 не применяются");
+            data::BusinessRules::default()
         }
     };
 
     // Правило 3: спрос погрузки на российских дорогах ограничивается согласованными
     // заявками ГУ-12 (MSSQL SLP через gu12.py). Выше — исходный спрос АПИ, ниже — с учётом ГУ-12.
     // Заявки не загрузились => спрос остаётся исходным (громкое предупреждение).
-    // Инотерритории определяются по дороге узла (ForeignRailways) и, как страховка,
-    // по сетевому району кода станции ЕСР (esr_country_prefixes.csv).
+    // Инотерритории — по дороге узла из списка ForeignRoads в data/references.json
+    // (классификация по коду станции ЕСР не используется как ненадёжная). Списка нет =>
+    // проверку нельзя ограничить территорией России => она не выполняется.
     if business_rules.gu12_check_enabled {
-        let esr_index = match data::EsrCountryIndex::load("data/stations/esr_country_prefixes.csv") {
-            Ok(idx) => Some(idx),
+        let gu12_foreign_roads = match data::load_foreign_roads("data/references.json") {
+            Ok(r) if !r.is_empty() => {
+                println!("Дороги-инотерритории для ГУ-12 (ForeignRoads): {}", r.len());
+                Some(r)
+            }
+            Ok(_) => {
+                eprintln!("  [!] ForeignRoads в references.json пуст — проверка ГУ-12 (правило 3) не выполняется");
+                None
+            }
             Err(e) => {
-                eprintln!("  esr_country_prefixes.csv: не загружен ({e}) — инотерритории для ГУ-12 только по дороге узла");
+                eprintln!("  [!] ForeignRoads из references.json: не загружены ({e}) — проверка ГУ-12 (правило 3) не выполняется");
                 None
             }
         };
-        match data::fetch_gu12_claims() {
-            Ok(claims) => {
-                let st = data::apply_gu12_limits(
-                    &mut demand_nodes, &claims, &business_rules.foreign_railways, esr_index.as_ref(),
-                );
+        let claims = gu12_foreign_roads.as_ref().map(|_| data::fetch_gu12_claims());
+        match (gu12_foreign_roads, claims) {
+            (Some(foreign_roads), Some(Ok(claims))) => {
+                let st = data::apply_gu12_limits(&mut demand_nodes, &claims, &foreign_roads);
                 println!(
                     "Спрос с учётом ГУ-12 (правило 3): {} узлов или {} вагонов (было {} / {})",
                     st.nodes_after, st.cars_after, st.nodes_before, st.cars_before,
@@ -105,9 +109,11 @@ async fn main() -> Result<()> {
                     st.nodes_foreign, st.cars_foreign,
                 );
             }
-            Err(e) => eprintln!(
+            (_, Some(Err(e))) => eprintln!(
                 "  [!] ГУ-12 (gu12.py json): не загружены ({e}) — спрос НЕ ограничен заявками ГУ-12, правило 3 не применено"
             ),
+            // Списка инотерриторий нет — предупреждение выведено выше, заявки не запрашивались.
+            _ => {}
         }
     }
 

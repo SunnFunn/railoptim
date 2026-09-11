@@ -4,8 +4,8 @@
   python3 gu12.py json [--periods 0:4,5:7,8:9,10:14]
 
 Запускается из основного бинарника `railoptim` (см. src/data/gu12.rs) сразу после
-загрузки узлов спроса. Тело запроса — из примера gu12/gu12.sql (vClaimGU12 +
-график подач vClaimGu12OtprGraphPod), но окна периодов погрузки передаются
+загрузки узлов спроса. Тело запроса — согласованный с SLP запрос к vClaimGU12 +
+график подач vClaimGu12OtprGraphPod (см. build_sql); окна периодов погрузки передаются
 параметром `--periods` как смещения суток от текущей даты (включительно), чтобы
 они **совпадали** с периодами спроса АПИ (`demand::DEMAND_PERIODS`). Без параметра
 используются окна из примера: 1:5,6:8,9:10,11:15.
@@ -103,7 +103,7 @@ def parse_periods(spec: str) -> list[tuple[int, int]]:
 
 
 def build_sql(periods: list[tuple[int, int]]) -> str:
-    """SQL из gu12/gu12.sql с окнами периодов по смещениям суток (только целые — не пользовательский ввод)."""
+    """SQL к vClaimGU12 с окнами периодов по смещениям суток (только целые — не пользовательский ввод)."""
     horizon_lo = min(lo for lo, _ in periods)
     horizon_hi = max(hi for _, hi in periods)
 

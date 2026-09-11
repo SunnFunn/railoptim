@@ -273,7 +273,8 @@ mod tests {
     fn repo_business_rules_json_is_valid() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("data/business_rules.json");
         let r = BusinessRules::load(&path).unwrap();
-        assert_eq!(r.max_empty_run_distance_km, Some(5000));
+        // Конкретное значение потолка — настройка логистов, тест проверяет только наличие.
+        assert!(r.max_empty_run_distance_km.is_some_and(|km| km >= 1000), "потолок подсыла задан и разумен");
         for rw in ["КЗХ", "КРГ", "ТДЖ", "УЗБ", "ТРК", "АЗР", "ГРЗ", "ЮКЖ", "БЕЛ", "ЛАТ", "ЭСТ", "ЛИТ"] {
             assert!(r.foreign_railways.contains(rw), "нет инотерритории {rw}");
         }

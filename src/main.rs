@@ -30,11 +30,74 @@ async fn main() -> Result<()> {
     // -----------------------------------------------------------------------
     // 2. Получение данных спроса и предложения
     // -----------------------------------------------------------------------
-    let demand_nodes = client.fetch_demand_nodes().await?;
+    let mut demand_nodes = client.fetch_demand_nodes().await?;
     let demand_total_cars: i32 = demand_nodes.iter()
                 .map(|d| d.car_count)
                 .sum();
     println!("Получено узлов спроса (погрузка): {} или {} вагонов", demand_nodes.len(), demand_total_cars);
+
+    // Бизнес-правила логистов (data/business_rules.json): потолок дальности подсыла,
+    // инотерритории, дефицитные дороги (дуги погрузки), проверка ГУ-12 (спрос).
+    // Не загрузились => правил 1–2 нет, ограничения на дуги не применяются.
+    let business_rules = match data::BusinessRules::load("data/business_rules.json") {
+        Ok(r) => {
+            println!(
+                "Бизнес-правила (business_rules.json): потолок подсыла {}; инотерриторий {} (исключений {}); дефицитных дорог {} (вывоз ≤ {} км, надбавка {:.0} руб.); проверка ГУ-12 {}",
+                r.max_empty_run_distance_km
+                    .map(|km| format!("{km} км"))
+                    .unwrap_or_else(|| "выкл.".to_string()),
+                r.foreign_railways.len(),
+                r.foreign_exceptions.len(),
+                r.deficit_railways.len(),
+                r.deficit_export_max_distance_km,
+                r.deficit_export_surcharge_rub,
+                if r.gu12_check_enabled { "вкл." } else { "выкл." },
+            );
+            r
+        }
+        Err(e) => {
+            eprintln!("  business_rules.json: не загружен ({e}) — бизнес-правила 1–2 не применяются");
+            data::BusinessRules::default()
+        }
+    };
+
+    // Правило 3: спрос погрузки на российских дорогах ограничивается согласованными
+    // заявками ГУ-12 (MSSQL SLP через gu12.py). Выше — исходный спрос АПИ, ниже — с учётом ГУ-12.
+    // Заявки не загрузились => спрос остаётся исходным (громкое предупреждение).
+    if business_rules.gu12_check_enabled {
+        match data::fetch_gu12_claims() {
+            Ok(claims) => {
+                let st = data::apply_gu12_limits(
+                    &mut demand_nodes, &claims, &business_rules.foreign_railways,
+                );
+                println!(
+                    "Спрос с учётом ГУ-12 (правило 3): {} узлов или {} вагонов (было {} / {})",
+                    st.nodes_after, st.cars_after, st.nodes_before, st.cars_before,
+                );
+                println!(
+                    "  заявок ГУ-12 согласованных: {} строк / {} станций (на станциях без спроса: {})",
+                    st.claims_total, st.claim_stations, st.claims_without_demand,
+                );
+                println!(
+                    "  по периодам 1..4, ваг.: было {:?} → стало {:?}",
+                    st.cars_before_by_period, st.cars_after_by_period,
+                );
+                println!(
+                    "  сопоставлено узлов: по ОКПО {}, по имени грузоотправителя {}, пропорционально по станции {}",
+                    st.nodes_matched_okpo, st.nodes_matched_name, st.nodes_pool_only,
+                );
+                println!(
+                    "  урезано до ГУ-12: {} узлов / −{} ваг.; без заявки ГУ-12 (исключены): {} узлов / {} ваг.; инотерритория (без проверки): {} узлов / {} ваг.",
+                    st.nodes_capped, st.cars_cut,
+                    st.nodes_removed, st.cars_removed,
+                    st.nodes_foreign, st.cars_foreign,
+                );
+            }
+            Err(e) => eprintln!(
+                "  [!] ГУ-12 (gu12.py json): не загружены ({e}) — спрос НЕ ограничен заявками ГУ-12, правило 3 не применено"
+            ),
+        }
+    }
 
     let mut supply_nodes = client.fetch_supply_nodes().await?;
     let supply1_total_cars: i32 = supply_nodes.iter()
@@ -116,29 +179,6 @@ async fn main() -> Result<()> {
         Err(e) => {
             eprintln!("  WashedEmptyEtsngCodes из references.json: не загружены ({e})");
             HashSet::new()
-        }
-    };
-    // Бизнес-правила логистов (data/business_rules.json): потолок дальности подсыла,
-    // инотерритории, дефицитные дороги. Действуют только на дуги погрузки.
-    // Не загрузились => правил нет, ограничения не применяются.
-    let business_rules = match data::BusinessRules::load("data/business_rules.json") {
-        Ok(r) => {
-            println!(
-                "Бизнес-правила (business_rules.json): потолок подсыла {}; инотерриторий {} (исключений {}); дефицитных дорог {} (вывоз ≤ {} км, надбавка {:.0} руб.)",
-                r.max_empty_run_distance_km
-                    .map(|km| format!("{km} км"))
-                    .unwrap_or_else(|| "выкл.".to_string()),
-                r.foreign_railways.len(),
-                r.foreign_exceptions.len(),
-                r.deficit_railways.len(),
-                r.deficit_export_max_distance_km,
-                r.deficit_export_surcharge_rub,
-            );
-            r
-        }
-        Err(e) => {
-            eprintln!("  business_rules.json: не загружен ({e}) — бизнес-правила не применяются");
-            data::BusinessRules::default()
         }
     };
     // Ban-list «чужих» ёмкостей отстоя: фильтр БД отстоя по паре (код станции, ОКПО владельца).

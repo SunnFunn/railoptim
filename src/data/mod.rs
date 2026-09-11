@@ -6,6 +6,7 @@ pub mod dislocations;
 pub mod dmzi;
 pub mod esr;
 pub mod free_loadroads;
+pub mod gu12;
 pub mod output;
 pub mod references;
 pub mod repairs;
@@ -22,6 +23,7 @@ pub use demand_reserves::{
 };
 pub use dmzi::{DmziQuotas, DmziRailwayQuota};
 pub use free_loadroads::{build_free_loadroads, FreeLoadRoad};
+pub use gu12::{apply_gu12_limits, fetch_gu12_claims, Gu12Claim, Gu12Stats};
 pub use esr::{normalize_esr6, validate_esr6_checksum, EsrClassification, EsrCountryIndex};
 pub use references::{
     load_no_cleaning_roads, load_reserve_owners_banlist, load_wash_product_codes,

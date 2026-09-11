@@ -27,8 +27,9 @@ pub struct ForeignException {
     pub surcharge_rub: f64,
 }
 
-/// Набор бизнес-правил. `Default` — правил нет, ограничения не применяются.
-#[derive(Debug, Clone, Default, Deserialize)]
+/// Набор бизнес-правил. `Default` — правил 1–2 нет, ограничения на дуги не применяются;
+/// проверка ГУ-12 (правило 3) по умолчанию включена.
+#[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct BusinessRules {
     /// Потолок тарифного расстояния порожнего подсыла под погрузку, км.
@@ -58,6 +59,26 @@ pub struct BusinessRules {
     /// подсыл оставался исключением, а не нормой при равных тарифах.
     #[serde(rename = "DeficitExportSurchargeRub")]
     pub deficit_export_surcharge_rub: f64,
+
+    /// Правило 3: спрос погрузки на российских дорогах ограничивается согласованными
+    /// заявками ГУ-12 ([`crate::data::gu12::apply_gu12_limits`]). `false` — проверка
+    /// отключена (спрос АПИ берётся как есть).
+    #[serde(rename = "Gu12CheckEnabled")]
+    pub gu12_check_enabled: bool,
+}
+
+impl Default for BusinessRules {
+    fn default() -> Self {
+        Self {
+            max_empty_run_distance_km: None,
+            foreign_railways: HashSet::new(),
+            foreign_exceptions: Vec::new(),
+            deficit_railways: HashSet::new(),
+            deficit_export_max_distance_km: 0,
+            deficit_export_surcharge_rub: 0.0,
+            gu12_check_enabled: true,
+        }
+    }
 }
 
 /// Число из JSON (число или строка) → `Some(v)` при `v > 0`, иначе `None`.
@@ -268,6 +289,17 @@ mod tests {
         // Вывоз с дефицитной дороги — только короткое плечо.
         assert_eq!(r.check_load_pair("ЮВС", "СКВ", 1000), RuleOutcome::DeficitExport);
         assert!(matches!(r.check_load_pair("ЮВС", "СКВ", 200), RuleOutcome::Allowed { surcharge_rub } if surcharge_rub > 0.0));
+        // Правило 3 включено.
+        assert!(r.gu12_check_enabled);
+    }
+
+    #[test]
+    fn gu12_check_defaults_to_enabled_and_can_be_disabled() {
+        assert!(BusinessRules::default().gu12_check_enabled);
+        let r: BusinessRules = serde_json::from_str("{}").unwrap();
+        assert!(r.gu12_check_enabled);
+        let r: BusinessRules = serde_json::from_str(r#"{"Gu12CheckEnabled": false}"#).unwrap();
+        assert!(!r.gu12_check_enabled);
     }
 
     #[test]

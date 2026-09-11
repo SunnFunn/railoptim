@@ -140,7 +140,7 @@ railoptim/
   отстой и пути клиента не ограничиваются. Дороги сравниваются по коротким кодам
   (`SupplyNode.railway_to` ↔ `DemandNode.railway_name`); внутри одной дороги правила
   не действуют. Файл не загрузился → правил нет:
-  - **потолок дальности подсыла** `MaxEmptyRunDistanceKm` (5000 км): пара с тарифным
+  - **потолок дальности подсыла** `MaxEmptyRunDistanceKm` (6000 км): пара с тарифным
     расстоянием больше порога в оптимизацию не входит (`PairOutcome::TooFar`).
     Порожний зерновоз не гонят через всю страну (ДВС → центр); без потолка штраф за
     незакрытый спрос (1 млн) делал выгодной любую дугу дешевле миллиона. `0` или
@@ -323,7 +323,7 @@ Adaptive Large Neighbourhood Search — метаэвристика вокруг 
 | `PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_RUB`        | 15 000 ₽/день  | `solver/model.rs`      |
 | `PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_PERIOD10_RUB` | 15 000 ₽/день  | `solver/model.rs`      |
 | `PERIOD10_COST_SURCHARGE_RUB`                          | 2 000 ₽        | `solver/model.rs`      |
-| `MaxEmptyRunDistanceKm` (потолок дальности подсыла)    | 5 000 км       | `data/business_rules.json` |
+| `MaxEmptyRunDistanceKm` (потолок дальности подсыла)    | 6 000 км       | `data/business_rules.json` |
 | `ForeignExceptions[КЗХ ← ОКТ,СКВ].surcharge_rub`       | 50 000 ₽       | `data/business_rules.json` |
 | `DeficitExportMaxDistanceKm` / `DeficitExportSurchargeRub` | 300 км / 30 000 ₽ | `data/business_rules.json` |
 | `Gu12CheckEnabled` (спрос ограничен заявками ГУ-12)     | `true`         | `data/business_rules.json` |

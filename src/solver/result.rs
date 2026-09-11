@@ -10,7 +10,7 @@ use crate::data::wash;
 use crate::data::free_loadroads::FreeLoadRoad;
 use crate::node::{CarKind, DemandNode, DemandPurpose, ReserveNode, SupplyNode, TariffNode};
 use crate::data::repairs::RepairStation;
-use super::lp::OptimResult;
+use super::lp::{is_free_today, OptimResult};
 use super::loadroads::LoadRoadAssignment;
 use super::model::TaskArc;
 use super::reserve::ReserveAssignment;
@@ -404,8 +404,9 @@ pub fn build_assigned_output_records(
 /// записи с `assignment_type = "В отстой"`, далее размещение на путях станций
 /// погрузки (`loadroad_assignments`, этап 3) — записи `assignment_type =
 /// "На пути станции погрузки"`. Оставшиеся вагоны получают отдельную запись с
-/// `assignment_type = "Затягивание грузовой операции"` и `station_to == station_from`
-/// (остаются на месте).
+/// `station_to == station_from` (остаются на месте): для периода 1 —
+/// `assignment_type = "Затягивание грузовой операции"`, для дислокации (период 10) —
+/// [`DISLOCATION_LEFTOVER_TYPE`] (вагон ещё не свободен, будет перепланирован).
 #[allow(clippy::too_many_arguments)]
 pub fn build_output_records(
     solution: &[f64],
@@ -646,12 +647,19 @@ pub fn build_output_records(
         // обязаны попасть в отчёт как «Затягивание грузовой операции» (запись без
         // номеров — так же, как их назначенные записи выше).
         // Узел без единой активной дуги и без отстоя целиком уходит сюда.
+        // Остаток дислокации (период 10) — не «Затягивание»: вагон ещё не свободен,
+        // в отстой/на пути не размещается и будет перепланирован в следующие сутки.
         let leftover_count = s.car_count - assigned_total;
         if leftover_count > 0 {
             let leftover: Vec<String> = car_nums[cursor.min(car_nums.len())..]
                 .iter()
                 .map(|n| n.to_string())
                 .collect();
+            let (leftover_type, leftover_label) = if is_free_today(s) {
+                ("Затягивание грузовой операции", "")
+            } else {
+                (DISLOCATION_LEFTOVER_TYPE, "дислокация")
+            };
             records.push(OutputRecord {
                 opz_date:           now_str.clone(),
                 railway_from:       s.railway_to.clone(),
@@ -677,10 +685,10 @@ pub fn build_output_records(
                 distance:           0,
                 period_of_delivery: 0,
                 cost:               0.0,
-                assignment_type:    "Затягивание грузовой операции".to_string(),
+                assignment_type:    leftover_type.to_string(),
                 car_numbers_list:   leftover,
                 supply_kind:        car_kind_str(&s.kind).to_string(),
-                period_label:       String::new(),
+                period_label:       leftover_label.to_string(),
                 supply_period:      s.supply_period,
                 demand_period:      0,
             });
@@ -689,6 +697,11 @@ pub fn build_output_records(
 
     records
 }
+
+/// Тип записи для остатка вагонов дислокации (период 10), не получивших назначения:
+/// вагон ещё не свободен, в отстой/на пути не размещается, будет перепланирован как
+/// вагон первых суток. В АПИ не передаётся (как и все записи периода 10).
+pub const DISLOCATION_LEFTOVER_TYPE: &str = "Дислокация без назначения (перепланирование)";
 
 /// Баланс отчёта оптимизации: `(вагонов в записях, вагонов в предложении)`.
 ///
@@ -929,6 +942,30 @@ mod tests {
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].assignment_type, "Затягивание грузовой операции");
         assert_eq!(records[0].assigned_cars, 4);
+
+        let (recs, sup) = output_balance(&records, &supply);
+        assert_eq!(recs, sup);
+    }
+
+    /// Остаток узла дислокации (период 10) — не «Затягивание», а отдельный тип записи;
+    /// в POST АПИ не попадает; баланс вагонов сохраняется.
+    #[test]
+    fn dislocation_leftover_has_own_type_and_is_not_sent_to_api() {
+        let mut s = dummy_supply(3, vec![201, 202, 203], CarKind::Free);
+        s.supply_period = 10;
+        let supply = vec![s];
+        let demand = vec![dummy_demand(2)];
+        let arcs = vec![dummy_arc()];
+        let records = build(&[1.0], &arcs, &supply, &demand);
+
+        assert_eq!(records.len(), 2);
+        let leftover = &records[1];
+        assert_eq!(leftover.assignment_type, DISLOCATION_LEFTOVER_TYPE);
+        assert_eq!(leftover.period_label, "дислокация");
+        assert_eq!(leftover.assigned_cars, 2);
+        assert_eq!(leftover.car_numbers_list, vec!["202", "203"]);
+        assert_eq!(leftover.supply_period, 10);
+        assert!(output_records_for_api(&records).is_empty());
 
         let (recs, sup) = output_balance(&records, &supply);
         assert_eq!(recs, sup);

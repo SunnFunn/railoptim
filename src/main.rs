@@ -650,22 +650,33 @@ async fn main() -> Result<()> {
     solver::print_balance(&opt_supply, &demand_lp);
 
     // Штрафы за остаток предложения по узлам (общие для MIP, ALNS и выбора seed).
-    // При дефиците грязные узлы (есть Wash-дуги) штрафуются PENALTY_EXCESS_DIRTY —
-    // иначе MIP оставляет их в остатке (промывка ничего «не закрывает» в модели),
-    // и грязные вагоны уезжают в отстой при незакрытом спросе.
+    // Период 1 (свободен сегодня) — PENALTY_EXCESS_P1: простой реального вагона; в
+    // профиците даёт приоритет вагонам первых суток перед дислокацией. Период 10 —
+    // символический PENALTY_EXCESS_P10: не распланировать его сегодня ничего не стоит.
+    // Дефицит считается по предложению периода 1; при дефиците грязные узлы периода 1
+    // (есть Wash-дуги) штрафуются PENALTY_EXCESS_DIRTY — иначе MIP оставляет их в остатке
+    // (промывка ничего «не закрывает» в модели), и грязные вагоны уезжают в отстой.
     let excess_penalties = solver::ExcessPenalties::build(&arcs, &opt_supply, &demand_lp);
+    println!(
+        "Штраф за остаток предложения: период 1 — {:.0} руб./ваг. ({} узлов / {} ваг.), дислокация (период 10) — {:.0} руб./ваг. ({} узлов / {} ваг.); приоритет первых суток ≈ {:.0} руб. тарифа",
+        solver::PENALTY_EXCESS_P1,
+        excess_penalties.p1_nodes,
+        excess_penalties.p1_cars,
+        solver::PENALTY_EXCESS_P10,
+        excess_penalties.p10_nodes,
+        excess_penalties.p10_cars,
+        solver::PENALTY_EXCESS_P1 - solver::PENALTY_EXCESS_P10,
+    );
     if excess_penalties.deficit {
         println!(
-            "Штраф за остаток грязных вагонов (дефицит): {:.0} руб./ваг. вместо {:.0} — узлов {}, вагонов {} (промывка выгоднее отстоя)",
+            "  дефицит по периоду 1: грязные узлы периода 1 — {:.0} руб./ваг. — узлов {}, вагонов {} (промывка выгоднее отстоя)",
             solver::PENALTY_EXCESS_DIRTY,
-            solver::PENALTY_EXCESS,
             excess_penalties.dirty_nodes,
             excess_penalties.dirty_cars,
         );
     } else {
         println!(
-            "Штраф за остаток предложения: {:.0} руб./ваг. для всех узлов (профицит — грязные вагоны в отстой без промывки)",
-            solver::PENALTY_EXCESS,
+            "  профицит по периоду 1: грязные вагоны в отстой без промывки"
         );
     }
 
@@ -910,6 +921,24 @@ async fn main() -> Result<()> {
         - remaining_supply_p1
         - remaining_supply_p10)
         .max(0);
+    let (excess_cost_p1, excess_cost_p10) =
+        excess_penalties.cost_of_remaining_by_period(&remaining_supply_vec, &opt_supply);
+
+    // Остаток к размещению на этапах 2 (отстой) и 3 (пути погрузки) — только вагоны,
+    // свободные сегодня (период 1). Остаток дислокации (период 10) не размещается:
+    // эти вагоны ещё не свободны, они будут перепланированы в следующие сутки как
+    // вагоны первых суток; занимать ими ёмкость отстоя нельзя.
+    let placement_excess: Vec<i32> = opt_supply
+        .iter()
+        .zip(remaining_supply_vec.iter())
+        .map(|(s, &rem)| if solver::is_free_today(s) { rem.max(0) } else { 0 })
+        .collect();
+    if remaining_supply_p10 > 0 {
+        println!(
+            "Остаток дислокации (период 10): {} ваг. — в отстой/на пути не размещается, перепланирование в следующие сутки",
+            remaining_supply_p10,
+        );
+    }
 
     // -----------------------------------------------------------------------
     // 6а. Этап 2: размещение излишка в узлы отстоя (резервы).
@@ -920,11 +949,11 @@ async fn main() -> Result<()> {
     let reserve_nodes: Vec<ReserveNode> = reserve_data
         .map(|r| r.nodes)
         .unwrap_or_default();
-    let total_excess: i32 = remaining_supply_vec.iter().map(|&r| r.max(0)).sum();
+    let total_excess: i32 = placement_excess.iter().sum();
     if !reserve_nodes.is_empty() && total_excess > 0 {
         let excess_from: Vec<StationRef> = opt_supply
             .iter()
-            .zip(remaining_supply_vec.iter())
+            .zip(placement_excess.iter())
             .filter(|&(_, &rem)| rem > 0)
             .map(|(s, _)| (s.station_to_code.clone(), s.railway_to.clone()))
             .collect::<HashSet<_>>()
@@ -946,7 +975,7 @@ async fn main() -> Result<()> {
                     reserve_refs.len(),
                 );
                 reserve_assignments = solver::solve_reserve_assignment(
-                    &remaining_supply_vec,
+                    &placement_excess,
                     &opt_supply,
                     &reserve_nodes,
                     &reserve_tariff_map,
@@ -989,8 +1018,8 @@ async fn main() -> Result<()> {
     //     не менее LOADROAD_MIN_BATCH (=5) вагонов. ДМЗИ не расходуется.
     // -----------------------------------------------------------------------
     let mut loadroad_assignments: Vec<solver::LoadRoadAssignment> = Vec::new();
-    // Остаток после отстоя: вычитаем размещённое в резервы из остатка основного решения.
-    let mut excess_after_reserve = remaining_supply_vec.clone();
+    // Остаток после отстоя: вычитаем размещённое в резервы из остатка периода 1.
+    let mut excess_after_reserve = placement_excess.clone();
     for ra in &reserve_assignments {
         if let Some(rem) = excess_after_reserve.get_mut(ra.s_idx) {
             *rem -= ra.quantity;
@@ -1182,6 +1211,10 @@ async fn main() -> Result<()> {
         println!(
             "  остаток по периодам предложения: p1={} p10={} прочие={}",
             remaining_supply_p1, remaining_supply_p10, remaining_supply_other
+        );
+        println!(
+            "  штраф за остаток в целевой функции: p1={:.0} руб. ({:.0}/ваг.), p10={:.0} руб. ({:.0}/ваг.)",
+            excess_cost_p1, solver::PENALTY_EXCESS_P1, excess_cost_p10, solver::PENALTY_EXCESS_P10,
         );
         let reserve_placed: i32 = reserve_assignments.iter().map(|a| a.quantity).sum();
         if reserve_placed > 0 {

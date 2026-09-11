@@ -1239,26 +1239,116 @@ mod tests {
         (supply, demand, arcs)
     }
 
-    /// Штрафы за остаток: при дефиците грязный узел получает PENALTY_EXCESS_DIRTY,
-    /// чистый — базовый; при профиците — базовый у всех.
+    /// Штрафы за остаток: при дефиците грязный узел периода 1 получает PENALTY_EXCESS_DIRTY,
+    /// чистый — PENALTY_EXCESS_P1; при профиците — PENALTY_EXCESS_P1 у всех (период 1).
     #[test]
     fn excess_penalties_dirty_only_in_deficit() {
-        use crate::solver::lp::{ExcessPenalties, PENALTY_EXCESS, PENALTY_EXCESS_DIRTY};
+        use crate::solver::lp::{ExcessPenalties, PENALTY_EXCESS_DIRTY, PENALTY_EXCESS_P1};
 
         let (supply, demand, arcs) = dirty_scene(5); // спрос 5 > предложение 3
         let p = ExcessPenalties::build(&arcs, &supply, &demand);
         assert!(p.deficit);
         assert_eq!(p.get(0), PENALTY_EXCESS_DIRTY);
-        assert_eq!(p.get(1), PENALTY_EXCESS);
+        assert_eq!(p.get(1), PENALTY_EXCESS_P1);
         assert_eq!((p.dirty_nodes, p.dirty_cars), (1, 2));
-        assert_eq!(p.subset(&[1, 0]).per_node, vec![PENALTY_EXCESS, PENALTY_EXCESS_DIRTY]);
+        assert_eq!((p.p1_nodes, p.p1_cars, p.p10_nodes, p.p10_cars), (2, 3, 0, 0));
+        assert_eq!(p.subset(&[1, 0]).per_node, vec![PENALTY_EXCESS_P1, PENALTY_EXCESS_DIRTY]);
         assert_eq!(p.cost_of_remaining(&[2, 0]), 2.0 * PENALTY_EXCESS_DIRTY);
 
         let (supply, demand, arcs) = dirty_scene(1); // спрос 1 < предложение 3
         let p = ExcessPenalties::build(&arcs, &supply, &demand);
         assert!(!p.deficit);
-        assert_eq!(p.get(0), PENALTY_EXCESS);
+        assert_eq!(p.get(0), PENALTY_EXCESS_P1);
         assert_eq!(p.dirty_nodes, 0);
+    }
+
+    /// Штрафы по периоду предложения: дислокация — PENALTY_EXCESS_P10, период 1 —
+    /// PENALTY_EXCESS_P1; режим дефицита считается только по предложению периода 1
+    /// (вагоны дислокации «профицит» не создают); грязный узел дислокации DIRTY не получает.
+    #[test]
+    fn excess_penalties_by_supply_period_and_deficit_on_p1_only() {
+        use crate::solver::lp::{
+            is_deficit, ExcessPenalties, PENALTY_EXCESS_DIRTY, PENALTY_EXCESS_P1, PENALTY_EXCESS_P10,
+        };
+
+        // S0: период 1, грязный (Wash-дуга); S1: период 10 чистый (100 ваг.); S2: период 10 грязный.
+        let supply = vec![
+            dummy_supply(2, "S0", 0, false),
+            with_period(dummy_supply(100, "S1", 1, false), 10),
+            with_period(dummy_supply(3, "S2", 2, false), 10),
+        ];
+        let demand = vec![dummy_demand(5, "D0", 0), wash_demand(10, "W", 1)];
+        let arcs = vec![
+            arc(0, 0, 1, "S0", "W", 60_000.0, false),
+            arc(1, 1, 0, "S1", "D0", 20_000.0, false),
+            arc(2, 2, 1, "S2", "W", 60_000.0, false),
+        ];
+        // Всего предложения 105 > спрос 5, но свободных сегодня 2 < 5 → дефицит.
+        assert!(is_deficit(&supply, &demand));
+        let p = ExcessPenalties::build(&arcs, &supply, &demand);
+        assert!(p.deficit);
+        assert_eq!(p.get(0), PENALTY_EXCESS_DIRTY);
+        assert_eq!(p.get(1), PENALTY_EXCESS_P10);
+        assert_eq!(p.get(2), PENALTY_EXCESS_P10, "грязный узел дислокации DIRTY не получает");
+        assert_eq!((p.dirty_nodes, p.dirty_cars), (1, 2));
+        assert_eq!((p.p1_nodes, p.p1_cars, p.p10_nodes, p.p10_cars), (1, 2, 2, 103));
+        assert_eq!(
+            p.cost_of_remaining_by_period(&[1, 4, 0], &supply),
+            (PENALTY_EXCESS_DIRTY, 4.0 * PENALTY_EXCESS_P10)
+        );
+
+        // Профицит по периоду 1 (спрос 1): чистый штраф периода 1 — PENALTY_EXCESS_P1.
+        let demand = vec![dummy_demand(1, "D0", 0), wash_demand(10, "W", 1)];
+        let p = ExcessPenalties::build(&arcs, &supply, &demand);
+        assert!(!p.deficit);
+        assert_eq!(p.get(0), PENALTY_EXCESS_P1);
+        assert_eq!(p.get(1), PENALTY_EXCESS_P10);
+    }
+
+    /// Профицит (период 1 + дислокация): заявку получает вагон первых суток, если вагон
+    /// дислокации не дешевле его более чем на `PENALTY_EXCESS_P1 − PENALTY_EXCESS_P10`;
+    /// иначе — вагон дислокации (глобальный оптимум сохраняется).
+    #[test]
+    fn p1_wagon_has_priority_over_dislocation_in_surplus() {
+        use std::time::Duration;
+        use crate::solver::lp::{ExcessPenalties, PENALTY_EXCESS_P1, PENALTY_EXCESS_P10};
+
+        fn scene(p1_arc_cost: f64) -> (Vec<SupplyNode>, Vec<DemandNode>, Vec<TaskArc>) {
+            let supply = vec![
+                dummy_supply(1, "S0", 0, false),                        // период 1
+                with_period(dummy_supply(1, "S1", 1, false), 10),      // дислокация
+            ];
+            let demand = vec![dummy_demand(1, "D0", 0)];
+            let arcs = vec![
+                arc(0, 0, 0, "S0", "D0", p1_arc_cost, false),
+                arc(1, 1, 0, "S1", "D0", 10_000.0, false),
+            ];
+            (supply, demand, arcs)
+        }
+        let margin = PENALTY_EXCESS_P1 - PENALTY_EXCESS_P10;
+
+        // Период 1 дороже на 20 тыс. (< margin) — всё равно едет период 1.
+        let (supply, demand, arcs) = scene(30_000.0);
+        let p = ExcessPenalties::build(&arcs, &supply, &demand);
+        assert!(!p.deficit);
+        let outcome = crate::solver::mip::solve_mip(
+            &arcs, &supply, &demand, Duration::from_secs(10), None, None, None, None, &p,
+        );
+        assert!(outcome.has_feasible_solution());
+        assert_eq!(outcome.arc_vals[0].round() as i32, 1, "MIP: заявку берёт вагон периода 1");
+        assert_eq!(outcome.arc_vals[1].round() as i32, 0);
+        let (_, vals) = crate::solver::lp::solve(&arcs, &supply, &demand, &p);
+        assert_eq!(vals[0].round() as i32, 1, "LP: заявку берёт вагон периода 1");
+
+        // Период 1 дороже больше чем на margin — выигрывает дислокация.
+        let (supply, demand, arcs) = scene(10_000.0 + margin + 5_000.0);
+        let p = ExcessPenalties::build(&arcs, &supply, &demand);
+        let outcome = crate::solver::mip::solve_mip(
+            &arcs, &supply, &demand, Duration::from_secs(10), None, None, None, None, &p,
+        );
+        assert!(outcome.has_feasible_solution());
+        assert_eq!(outcome.arc_vals[0].round() as i32, 0);
+        assert_eq!(outcome.arc_vals[1].round() as i32, 1, "MIP: дислокация существенно дешевле");
     }
 
     /// Дефицит: грязные вагоны с одними Wash-дугами едут в промывку (MIP и LP),

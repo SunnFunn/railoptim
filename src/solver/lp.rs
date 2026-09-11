@@ -35,13 +35,51 @@ pub struct OptimResult {
 /// ход + промывка) не превышает ~700 000 руб. Значение 1 000 000 покрывает весь диапазон.
 pub const PENALTY_UNMET: f64 = 1_000_000.0;
 
-/// Штраф за 1 вагон **избытка предложения** (узел предложения → dummy-спрос, т.е. отстой).
+/// Базовый штраф за 1 вагон **избытка предложения** (узел предложения → dummy-спрос).
 ///
-/// Намеренно ниже минимального реального тарифа (~15 000 руб.), чтобы MIP не тянул
-/// дорогие вагоны (period=10, тариф ~600–700k) под погрузку только ради «использования
-/// предложения». Вагон попадёт в real-дугу лишь если это объективно дешевле.
+/// Используется как нейтральное значение в [`ExcessPenalties::uniform`] (тесты,
+/// подзадачи без контекста) и как fallback вне диапазона. В боевой задаче
+/// ([`ExcessPenalties::build`]) штраф зависит от периода предложения —
+/// [`PENALTY_EXCESS_P1`] / [`PENALTY_EXCESS_P10`].
 /// Ненулевое значение устраняет вырожденность задачи (несколько равноценных оптимумов).
 pub const PENALTY_EXCESS: f64 = 5_000.0;
+
+/// Штраф за 1 вагон остатка предложения **периода 1** (вагон свободен сегодня).
+///
+/// Оставленный без назначения вагон первых суток — реальный простой: он уедет в
+/// отстой (тариф) и будет ждать следующих заявок (сутки простоя). Порядок величины —
+/// тариф до отстоя плюс несколько суток ожидания.
+///
+/// Вместе с [`PENALTY_EXCESS_P10`] задаёт **приоритет вагонов первых суток** в режиме
+/// профицита (предложение периодов 1 + 10 больше спроса): суммарный остаток фиксирован
+/// (`предложение − спрос`), и решатель предпочитает оставить в остатке вагон дислокации,
+/// а не свободный сегодня. Вагон периода 1 проигрывает заявку вагону дислокации, только
+/// если тот дешевле по тарифу более чем на `PENALTY_EXCESS_P1 − PENALTY_EXCESS_P10`
+/// (≈ 39 000 руб.). Глобальный оптимум при этом сохраняется — приоритет имеет явную цену.
+///
+/// На дефицит не влияет: там каждый вагон с допустимой дугой назначается из-за
+/// [`PENALTY_UNMET`]. На выбор «промывка vs остаток» — тоже: промывочное плечо
+/// (тариф + 50 000 надбавки) всегда дороже этого штрафа.
+pub const PENALTY_EXCESS_P1: f64 = 40_000.0;
+
+/// Штраф за 1 вагон остатка предложения **периода 10** (дислокация 2–10 суток).
+///
+/// Не распланировать такой вагон сегодня ничего не стоит: он ещё не свободен и завтра
+/// придёт как вагон первых суток с реальной дислокацией. Штраф символический — только
+/// tie-breaker против вырожденности. Заведомо ниже любого реального тарифа, поэтому MIP
+/// не тянет вагоны дислокации под погрузку ради «использования предложения»: они
+/// закрывают заявку, только когда это объективно дешевле, чем вагон периода 1, с учётом
+/// его штрафа за простой ([`PENALTY_EXCESS_P1`]).
+pub const PENALTY_EXCESS_P10: f64 = 1_000.0;
+
+/// Период предложения вагонов дислокации (2–10 суток), см. `SupplyNode::supply_period`.
+pub const SUPPLY_PERIOD_DISLOCATION: u8 = 10;
+
+/// Вагон свободен сегодня (предложение периода 1 из АПИ), а не прогноз дислокации.
+#[inline]
+pub fn is_free_today(s: &SupplyNode) -> bool {
+    s.supply_period != SUPPLY_PERIOD_DISLOCATION
+}
 
 /// Штраф за 1 вагон избытка для **грязного** узла предложения в режиме **дефицита**.
 ///
@@ -67,11 +105,19 @@ pub const PENALTY_EXCESS: f64 = 5_000.0;
 ///
 /// В режиме профицита (предложение ≥ спрос на погрузку) не применяется: закрывать
 /// нечего, промывка за реальные деньги ради простоя не нужна — вагон идёт в отстой.
+/// Применяется только к узлам периода 1: вагон дислокации ещё не свободен, его
+/// промывка планируется, когда он станет вагоном первых суток.
 pub const PENALTY_EXCESS_DIRTY: f64 = 150_000.0;
 
-/// Дефицит: суммарный спрос на **погрузку** больше суммарного предложения.
+/// Дефицит: суммарный спрос на **погрузку** больше предложения, **свободного сегодня**
+/// (период 1; вагоны дислокации 2–10 суток не учитываются — они ещё не свободны, и
+/// «профицит» за их счёт фиктивен).
 pub fn is_deficit(supply: &[SupplyNode], demand: &[DemandNode]) -> bool {
-    let total_supply: i64 = supply.iter().map(|s| s.car_count as i64).sum();
+    let total_supply: i64 = supply
+        .iter()
+        .filter(|s| is_free_today(s))
+        .map(|s| s.car_count as i64)
+        .sum();
     let total_load: i64 = demand
         .iter()
         .filter(|d| d.purpose == DemandPurpose::Load)
@@ -90,43 +136,71 @@ pub fn is_deficit(supply: &[SupplyNode], demand: &[DemandNode]) -> bool {
 pub struct ExcessPenalties {
     /// Штраф за 1 вагон остатка узла предложения, руб.
     pub per_node: Vec<f64>,
-    /// Режим дефицита, при котором грязные узлы получают [`PENALTY_EXCESS_DIRTY`].
+    /// Режим дефицита (по предложению периода 1), при котором грязные узлы получают
+    /// [`PENALTY_EXCESS_DIRTY`].
     pub deficit: bool,
     /// Узлов с повышенным штрафом (грязные, есть Wash-дуги).
     pub dirty_nodes: usize,
     /// Вагонов в этих узлах.
     pub dirty_cars: i32,
+    /// Узлов / вагонов периода 1 (штраф [`PENALTY_EXCESS_P1`], грязные при дефиците — DIRTY).
+    pub p1_nodes: usize,
+    pub p1_cars: i32,
+    /// Узлов / вагонов периода 10 (штраф [`PENALTY_EXCESS_P10`]).
+    pub p10_nodes: usize,
+    pub p10_cars: i32,
 }
 
 impl ExcessPenalties {
-    /// Базовый штраф [`PENALTY_EXCESS`] для всех `n` узлов (без учёта промывки).
+    /// Базовый штраф [`PENALTY_EXCESS`] для всех `n` узлов (без учёта периода и промывки).
     pub fn uniform(n: usize) -> Self {
-        Self { per_node: vec![PENALTY_EXCESS; n], deficit: false, dirty_nodes: 0, dirty_cars: 0 }
+        Self {
+            per_node: vec![PENALTY_EXCESS; n],
+            deficit: false,
+            dirty_nodes: 0,
+            dirty_cars: 0,
+            p1_nodes: 0,
+            p1_cars: 0,
+            p10_nodes: 0,
+            p10_cars: 0,
+        }
     }
 
-    /// Строит штрафы по задаче: узлы с хотя бы одной Wash-дугой (грязные вагоны)
-    /// при дефиците получают [`PENALTY_EXCESS_DIRTY`], остальные — [`PENALTY_EXCESS`].
+    /// Строит штрафы по задаче:
+    /// - узлы периода 10 (дислокация) — [`PENALTY_EXCESS_P10`];
+    /// - узлы периода 1 — [`PENALTY_EXCESS_P1`]; при дефиците (по предложению периода 1)
+    ///   узлы с хотя бы одной Wash-дугой (грязные вагоны) — [`PENALTY_EXCESS_DIRTY`].
     pub fn build(arcs: &[TaskArc], supply: &[SupplyNode], demand: &[DemandNode]) -> Self {
         let deficit = is_deficit(supply, demand);
-        let mut per_node = vec![PENALTY_EXCESS; supply.len()];
-        let mut dirty_nodes = 0usize;
-        let mut dirty_cars = 0i32;
+        let mut has_wash = vec![false; supply.len()];
         if deficit {
-            let mut has_wash = vec![false; supply.len()];
             for a in arcs {
                 if demand[a.d_idx].purpose == DemandPurpose::Wash {
                     has_wash[a.s_idx] = true;
                 }
             }
-            for (s_idx, dirty) in has_wash.into_iter().enumerate() {
-                if dirty {
-                    per_node[s_idx] = PENALTY_EXCESS_DIRTY;
-                    dirty_nodes += 1;
-                    dirty_cars += supply[s_idx].car_count;
-                }
+        }
+
+        let mut out = Self::uniform(supply.len());
+        out.deficit = deficit;
+        for (s_idx, s) in supply.iter().enumerate() {
+            if !is_free_today(s) {
+                out.per_node[s_idx] = PENALTY_EXCESS_P10;
+                out.p10_nodes += 1;
+                out.p10_cars += s.car_count;
+                continue;
+            }
+            out.p1_nodes += 1;
+            out.p1_cars += s.car_count;
+            if has_wash[s_idx] {
+                out.per_node[s_idx] = PENALTY_EXCESS_DIRTY;
+                out.dirty_nodes += 1;
+                out.dirty_cars += s.car_count;
+            } else {
+                out.per_node[s_idx] = PENALTY_EXCESS_P1;
             }
         }
-        Self { per_node, deficit, dirty_nodes, dirty_cars }
+        out
     }
 
     /// Штраф узла `s_idx`; вне диапазона — базовый [`PENALTY_EXCESS`].
@@ -140,9 +214,22 @@ impl ExcessPenalties {
         Self {
             per_node: s_map.iter().map(|&s| self.get(s)).collect(),
             deficit: self.deficit,
-            dirty_nodes: 0,
-            dirty_cars: 0,
+            ..Self::uniform(0)
         }
+    }
+
+    /// Штрафная стоимость остатка по периодам предложения: `(период 1, период 10)`.
+    pub fn cost_of_remaining_by_period(&self, remaining: &[i32], supply: &[SupplyNode]) -> (f64, f64) {
+        let mut p1 = 0.0;
+        let mut p10 = 0.0;
+        for (s_idx, (&r, s)) in remaining.iter().zip(supply.iter()).enumerate() {
+            if r <= 0 {
+                continue;
+            }
+            let c = self.get(s_idx) * r as f64;
+            if is_free_today(s) { p1 += c } else { p10 += c }
+        }
+        (p1, p10)
     }
 
     /// Штрафная стоимость остатка предложения `remaining[s]` (отрицательные остатки игнорируются).
@@ -165,7 +252,7 @@ impl ExcessPenalties {
 ///
 /// | Dummy-узел        | Ёмкость         | Стоимость дуги | Назначение                       |
 /// |-------------------|-----------------|----------------|----------------------------------|
-/// | Dummy **спрос**   | `total_supply`  | `excess.per_node[s]` (5k; грязные при дефиците 300k) | Поглощает незадействованное предложение (отстой) |
+/// | Dummy **спрос**   | `total_supply`  | `excess.per_node[s]` (период 1 — 40k, период 10 — 1k; грязные периода 1 при дефиците — 150k) | Поглощает незадействованное предложение (отстой) |
 /// | Dummy **предложение** | `total_load_demand` | `PENALTY_UNMET` (1M) | Покрывает незакрытый спрос на погрузку |
 ///
 /// Ёмкость dummy-узлов согласована с суммарным предложением / спросом на **погрузку**.
@@ -224,9 +311,10 @@ pub fn solve(
     }
 
     // --- Dummy-узел СПРОСА (поглощает незадействованное предложение / отстой) ---
-    // Базовый штраф PENALTY_EXCESS намеренно ниже минимального реального тарифа: MIP не
-    // будет «тянуть» дорогие вагоны period=10 под погрузку ради снижения excess_supply.
-    // Грязные узлы при дефиците — PENALTY_EXCESS_DIRTY (промывка выгоднее остатка).
+    // Штраф зависит от узла (ExcessPenalties): период 10 — символический PENALTY_EXCESS_P10
+    // (MIP не тянет вагоны дислокации под погрузку ради снижения excess_supply), период 1 —
+    // PENALTY_EXCESS_P1 (простой свободного вагона; даёт приоритет первых суток в профиците),
+    // грязные периода 1 при дефиците — PENALTY_EXCESS_DIRTY (промывка выгоднее остатка).
     let dummy_demand_row = model.add_row(..total_supply);
     for (s_idx, s_row) in supply_rows.iter().enumerate() {
         model.add_column(excess.get(s_idx), 0.0.., [(*s_row, 1.0), (dummy_demand_row, 1.0)]);

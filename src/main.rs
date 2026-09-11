@@ -56,19 +56,31 @@ async fn main() -> Result<()> {
             r
         }
         Err(e) => {
-            eprintln!("  business_rules.json: не загружен ({e}) — бизнес-правила 1–2 не применяются");
-            data::BusinessRules::default()
+            eprintln!(
+                "  business_rules.json: не загружен ({e}) — бизнес-правила 1–2 не применяются; \
+                 проверка ГУ-12 (правило 3) отключена: без списка инотерриторий её нельзя ограничить территорией России"
+            );
+            data::BusinessRules { gu12_check_enabled: false, ..Default::default() }
         }
     };
 
     // Правило 3: спрос погрузки на российских дорогах ограничивается согласованными
     // заявками ГУ-12 (MSSQL SLP через gu12.py). Выше — исходный спрос АПИ, ниже — с учётом ГУ-12.
     // Заявки не загрузились => спрос остаётся исходным (громкое предупреждение).
+    // Инотерритории определяются по дороге узла (ForeignRailways) и, как страховка,
+    // по сетевому району кода станции ЕСР (esr_country_prefixes.csv).
     if business_rules.gu12_check_enabled {
+        let esr_index = match data::EsrCountryIndex::load("data/stations/esr_country_prefixes.csv") {
+            Ok(idx) => Some(idx),
+            Err(e) => {
+                eprintln!("  esr_country_prefixes.csv: не загружен ({e}) — инотерритории для ГУ-12 только по дороге узла");
+                None
+            }
+        };
         match data::fetch_gu12_claims() {
             Ok(claims) => {
                 let st = data::apply_gu12_limits(
-                    &mut demand_nodes, &claims, &business_rules.foreign_railways,
+                    &mut demand_nodes, &claims, &business_rules.foreign_railways, esr_index.as_ref(),
                 );
                 println!(
                     "Спрос с учётом ГУ-12 (правило 3): {} узлов или {} вагонов (было {} / {})",

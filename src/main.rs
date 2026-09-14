@@ -54,7 +54,7 @@ async fn main() -> Result<()> {
                 if r.gu12_check_enabled { "вкл." } else { "выкл." },
                 match r.station_backlog_hard_days {
                     Some(hard) => format!(
-                        "закрытие при Q > {hard}×C, очередь ≤ {}×C без ожидания, штраф ожидания {:.0} руб./сут.",
+                        "закрытие при Q ≥ {hard}×C, очередь ≤ {}×C без ожидания, штраф ожидания {:.0} руб./сут.",
                         r.station_backlog_soft_days, r.station_backlog_wait_penalty_rub_per_day,
                     ),
                     None => "выкл.".to_string(),
@@ -525,7 +525,8 @@ async fn main() -> Result<()> {
 
     // -----------------------------------------------------------------------
     // Правило 4: загруженность станций погрузки. Q — CarsOnStation из АПИ спроса,
-    //     C — мощность погрузки из data/load_stations.json. Q > K_hard·C → станция
+    //     (по грузоотправителю, суммируется по станции), C — мощность погрузки из
+    //     data/load_stations.json. Q ≥ K_hard·C → станция
     //     закрыта во все периоды; ниже порога вагон, приезжающий раньше рассасывания
     //     очереди, ждёт (сдвиг суток погрузки + штраф). Справочник не загрузился =>
     //     правило не применяется (громкое предупреждение).
@@ -543,18 +544,26 @@ async fn main() -> Result<()> {
                     st.capacity_stations, st.demand_stations, st.checked_stations, st.unknown_capacity_stations,
                 );
                 println!(
-                    "  закрыто станций: {} ({} узлов / {} ваг. спроса); с очередью (ожидание подсыла): {}; узлы с разным CarsOnStation по станции: {}",
+                    "  закрыто станций: {} ({} узлов / {} ваг. спроса); с очередью (ожидание подсыла): {}; станций с несколькими грузоотправителями: {}; грузоотправителей с разным CarsOnStation по узлам: {}",
                     st.closed_stations, st.closed_demand_nodes, st.closed_demand_cars,
-                    st.waiting_stations, st.inconsistent_q_stations,
+                    st.waiting_stations, st.multi_sender_stations, st.inconsistent_q_senders,
                 );
                 for (name, railway, q, c) in st.closed_list.iter().take(10) {
                     println!(
-                        "    · {name} ({railway}): на станции {q} ваг., мощность {c} ваг./сут. ({:.1} сут. работы)",
+                        "    · закрыта {name} ({railway}): на станции {q} ваг., мощность {c} ваг./сут. ({:.1} сут. работы)",
                         *q as f64 / (*c).max(1) as f64,
                     );
                 }
                 if st.closed_list.len() > 10 {
-                    println!("    · ...ещё {} станций", st.closed_list.len() - 10);
+                    println!("    · ...ещё {} закрытых станций", st.closed_list.len() - 10);
+                }
+                for (name, railway, q, c, t) in st.waiting_list.iter().take(10) {
+                    println!(
+                        "    · очередь {name} ({railway}): на станции {q} ваг., мощность {c} ваг./сут. — подсыл не раньше {t}-х суток",
+                    );
+                }
+                if st.waiting_list.len() > 10 {
+                    println!("    · ...ещё {} станций с очередью", st.waiting_list.len() - 10);
                 }
                 idx
             }

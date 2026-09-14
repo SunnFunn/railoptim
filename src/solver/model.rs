@@ -539,8 +539,8 @@ pub enum PairOutcome<'a> {
     ForeignTerritory,
     /// Бизнес-правило 2: вывоз порожнего с дефицитной дороги на плечо длиннее допустимого.
     DeficitRoadExport,
-    /// Бизнес-правило 4: станция погрузки закрыта — вагонов на ней больше
-    /// `StationBacklogHardDays` суток работы (`Q > K_hard · C`).
+    /// Бизнес-правило 4: станция погрузки закрыта — вагонов на ней не меньше
+    /// `StationBacklogHardDays` суток работы (`Q ≥ K_hard · C`).
     StationOverloaded,
     /// Период спроса не имеет табличных границ (жёсткая отбраковка по сроку).
     BadPeriod,
@@ -632,18 +632,16 @@ pub fn classify_pair<'a>(
     }
 
     // --- Правило 4: загруженность станции погрузки (только погрузка) ---
-    // Закрытая станция (Q > K_hard·C) — дуги нет. Иначе вагон, прибывающий раньше
+    // Закрытая станция (Q ≥ K_hard·C) — дуги нет. Иначе вагон, прибывающий раньше
     // рассасывания очереди, ждёт: сутки ожидания прибавляются к сроку подсыла и
     // проверяются окном периода ниже, плюс штраф за простой.
     let mut wait_days = 0_i32;
-    if d.purpose == DemandPurpose::Load {
-        if let Some(b) = backlog.get(&d.station_code) {
-            if b.closed {
-                return PairOutcome::StationOverloaded;
-            }
-            let arrival_day = supply_release_shift_days(s.supply_period) + tariff.period_of_delivery;
-            wait_days = b.wait_days(arrival_day);
+    if let Some(b) = backlog.get(&d.station_code).filter(|_| d.purpose == DemandPurpose::Load) {
+        if b.closed {
+            return PairOutcome::StationOverloaded;
         }
+        let arrival_day = supply_release_shift_days(s.supply_period) + tariff.period_of_delivery;
+        wait_days = b.wait_days(arrival_day);
     }
 
     let penalty_rate = if s.supply_period == 10 {
@@ -732,7 +730,7 @@ pub struct ArcStats {
     pub foreign_territory: usize,
     /// Пар погрузки, запрещённых правилом дефицитных дорог (вывоз на длинное плечо).
     pub deficit_export: usize,
-    /// Пар погрузки на закрытые станции (правило 4: очередь больше `K_hard` суток работы).
+    /// Пар погрузки на закрытые станции (правило 4: очередь не меньше `K_hard` суток работы).
     pub station_overloaded: usize,
     /// Допустимых дуг (вошли в LP).
     pub feasible:   usize,
@@ -1489,16 +1487,16 @@ mod tests {
         d
     }
 
-    /// Жёсткая часть: Q > K_hard·C — станция закрыта во все периоды, дуг нет,
-    /// пары считаются в `station_overloaded`. Ровно K_hard·C — открыта.
+    /// Жёсткая часть: Q ≥ K_hard·C — станция закрыта во все периоды, дуг нет,
+    /// пары считаются в `station_overloaded`. Ниже K_hard·C — открыта.
     #[test]
     fn overloaded_station_closed_for_all_periods() {
         let rules = rules_backlog(5, 1);
         let supply = vec![dummy_supply(5, "S1", 1, false), dummy_supply(5, "S2", 10, false)];
-        // C = 10, Q = 51 > 50 → закрыта; спрос в периодах 1 и 4.
+        // C = 10, Q = 50 ≥ 50 → закрыта; спрос в периодах 1 и 4.
         let demand = vec![
-            with_q(with_period(dummy_demand(5, "D1", None), 1), 51),
-            with_q(with_period(dummy_demand(5, "D1", None), 4), 51),
+            with_q(with_period(dummy_demand(5, "D1", None), 1), 50),
+            with_q(with_period(dummy_demand(5, "D1", None), 4), 50),
         ];
         let idx = backlog_index("D1", 10, &demand, &rules);
         let mut far = dummy_tariff("S2", "D1");
@@ -1512,8 +1510,8 @@ mod tests {
         assert_eq!(stats.station_overloaded, 4);
         assert_eq!(stats.feasible, 0);
 
-        // Q = 50 — ровно порог: открыта.
-        let demand_ok = vec![with_q(dummy_demand(5, "D1", None), 50)];
+        // Q = 49 — ниже порога: открыта.
+        let demand_ok = vec![with_q(dummy_demand(5, "D1", None), 49)];
         let idx_ok = backlog_index("D1", 10, &demand_ok, &rules);
         let (arcs, stats) = build_task_arcs(
             &supply[..1], &demand_ok, &[dummy_tariff("S1", "D1")],
@@ -1550,13 +1548,13 @@ mod tests {
         assert_eq!(stats.arcs_period_penalized, 0);
     }
 
-    /// Ожидание выталкивает погрузку за окно периода: K_hard = 10, K_soft = 0,
+    /// Ожидание выталкивает погрузку за окно периода: K_hard = 11, K_soft = 0,
     /// C = 10, Q = 100 → t* = 10. Срок подсыла 1 сут. → ожидание 9, погрузка на 10-е
     /// сутки: для периода 1 (окно до 7) нарушение 3 сут. → штраф 3 × 15 000 плюс
     /// 9 × 5 000 ожидания; для периода 4 (10–14) — без нарушения, только ожидание.
     #[test]
     fn backlog_wait_can_violate_window_of_early_period() {
-        let rules = rules_backlog(10, 0);
+        let rules = rules_backlog(11, 0);
         let s = dummy_supply(5, "S1", 1, false);
         let demand = vec![
             with_q(with_period(dummy_demand(5, "D1", None), 1), 100),

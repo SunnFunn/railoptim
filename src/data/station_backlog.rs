@@ -3,10 +3,13 @@
 //! Станция описывается как очередь с известной скоростью обслуживания:
 //!   * `C` — мощность погрузки, ваг./сут. (`station_load_capacity` из
 //!     `data/load_stations.json`, колонка U исходного Excel);
-//!   * `Q` — вагонов уже на станции (`CarsOnStation` из АПИ спроса, поле
-//!     [`DemandNode::cars_on_station`]; по станции берётся максимум по её узлам).
+//!   * `Q` — вагонов уже на станции. АПИ спроса отдаёт `CarsOnStation` **по
+//!     грузоотправителю** (поле [`DemandNode::cars_on_station`] у каждого узла), поэтому
+//!     `Q` станции = сумма по грузоотправителям (ключ — ОКПО, без ОКПО — имя); внутри
+//!     одного грузоотправителя узлы разных периодов/направлений несут одно и то же
+//!     число — берётся максимум, чтобы не удваивать.
 //!
-//! **Жёсткая часть** (`StationBacklogHardDays` = `K_hard`): `Q > K_hard · C` → станция
+//! **Жёсткая часть** (`StationBacklogHardDays` = `K_hard`): `Q ≥ K_hard · C` → станция
 //! закрыта для подсыла во все периоды ([`crate::solver::model::PairOutcome::StationOverloaded`]).
 //! Такая очередь — признак остановившейся погрузки (отказ принимать груз, вагоны
 //! стоят неделями), и предполагать, что она рассосётся со скоростью `C`, нельзя.
@@ -38,6 +41,7 @@ use serde::Deserialize;
 
 use super::business_rules::BusinessRules;
 use super::esr::normalize_esr6;
+use super::gu12::{normalize_okpo, normalize_party_name};
 use crate::node::{DemandNode, DemandPurpose};
 
 /// Путь к справочнику станций погрузки (тот же, что у свободных ёмкостей путей).
@@ -57,9 +61,9 @@ struct LoadStationCapacityRow {
 pub struct StationBacklog {
     /// `C` — мощность погрузки, ваг./сут. (всегда > 0: станции с 0 в индекс не попадают).
     pub load_capacity: i32,
-    /// `Q` — вагонов уже на станции.
+    /// `Q` — вагонов уже на станции (сумма по грузоотправителям).
     pub cars_on_station: i32,
-    /// Жёсткая часть: `Q > K_hard · C` — подсыл запрещён во все периоды.
+    /// Жёсткая часть: `Q ≥ K_hard · C` — подсыл запрещён во все периоды.
     pub closed: bool,
     /// Мягкая часть: сутки (от сегодня), когда очередь опустится до `K_soft` суток работы.
     /// Вагон, прибывающий раньше, ждёт до этих суток.
@@ -92,10 +96,15 @@ pub struct StationBacklogStats {
     pub closed_demand_cars: i32,
     /// Открытых станций с очередью (`t* > 0`) — мягкая часть сдвигает погрузку.
     pub waiting_stations: usize,
-    /// Станций, у узлов которых `CarsOnStation` различается (проверка семантики АПИ).
-    pub inconsistent_q_stations: usize,
+    /// Проверенных станций с несколькими грузоотправителями (Q — сумма по ним).
+    pub multi_sender_stations: usize,
+    /// Грузоотправителей, у узлов которых (разные периоды/направления) `CarsOnStation`
+    /// различается — сигнал, что поле АПИ считается не по грузоотправителю (взят максимум).
+    pub inconsistent_q_senders: usize,
     /// Закрытые станции для лога: (название, дорога, Q, C), по убыванию Q/C.
     pub closed_list: Vec<(String, String, i32, i32)>,
+    /// Открытые станции с очередью для лога: (название, дорога, Q, C, t*), по убыванию t*.
+    pub waiting_list: Vec<(String, String, i32, i32, i32)>,
 }
 
 /// Индекс загруженности станций погрузки по коду ЕСР-6.
@@ -162,12 +171,17 @@ impl StationBacklogIndex {
         };
         let soft_days = rules.station_backlog_soft_days.max(0);
 
-        // Q по станции: максимум CarsOnStation по её Load-узлам; попутно спрос по станции.
+        // Q по станции: CarsOnStation в АПИ считается по грузоотправителю, поэтому
+        // суммируем по грузоотправителям станции; внутри грузоотправителя (узлы разных
+        // периодов/направлений) — максимум, чтобы не удваивать. Попутно спрос по станции.
+        struct SenderAgg {
+            q_min: i32,
+            q_max: i32,
+        }
         struct Agg {
             name: String,
             railway: String,
-            q_min: i32,
-            q_max: i32,
+            senders: HashMap<String, SenderAgg>,
             nodes: usize,
             cars: i32,
         }
@@ -181,13 +195,16 @@ impl StationBacklogIndex {
             let e = by_station.entry(code).or_insert_with(|| Agg {
                 name: d.station_name.clone(),
                 railway: d.railway_name.clone(),
-                q_min: q,
-                q_max: q,
+                senders: HashMap::new(),
                 nodes: 0,
                 cars: 0,
             });
-            e.q_min = e.q_min.min(q);
-            e.q_max = e.q_max.max(q);
+            let s = e
+                .senders
+                .entry(sender_key(d))
+                .or_insert(SenderAgg { q_min: q, q_max: q });
+            s.q_min = s.q_min.min(q);
+            s.q_max = s.q_max.max(q);
             e.nodes += 1;
             e.cars += d.car_count;
         }
@@ -205,10 +222,17 @@ impl StationBacklogIndex {
                 continue;
             };
             stats.checked_stations += 1;
-            if agg.q_min != agg.q_max {
-                stats.inconsistent_q_stations += 1;
+            if agg.senders.len() > 1 {
+                stats.multi_sender_stations += 1;
             }
-            let q = agg.q_max;
+            stats.inconsistent_q_senders +=
+                agg.senders.values().filter(|s| s.q_min != s.q_max).count();
+            let q: i32 = agg
+                .senders
+                .values()
+                .map(|s| s.q_max as i64)
+                .sum::<i64>()
+                .min(i32::MAX as i64) as i32;
             let backlog = compute_backlog(capacity, q, hard_days, soft_days);
             if backlog.closed {
                 stats.closed_stations += 1;
@@ -217,6 +241,7 @@ impl StationBacklogIndex {
                 stats.closed_list.push((agg.name, agg.railway, q, capacity));
             } else if backlog.backlog_clear_day > 0 {
                 stats.waiting_stations += 1;
+                stats.waiting_list.push((agg.name, agg.railway, q, capacity, backlog.backlog_clear_day));
             }
             by_code.insert(code, backlog);
         }
@@ -229,6 +254,9 @@ impl StationBacklogIndex {
                 .unwrap_or(std::cmp::Ordering::Equal)
                 .then_with(|| a.0.cmp(&b.0))
         });
+        stats
+            .waiting_list
+            .sort_by(|a, b| b.4.cmp(&a.4).then_with(|| b.2.cmp(&a.2)).then_with(|| a.0.cmp(&b.0)));
 
         Self {
             by_code,
@@ -238,11 +266,26 @@ impl StationBacklogIndex {
     }
 }
 
+/// Ключ грузоотправителя узла спроса для суммирования `CarsOnStation` по станции:
+/// ОКПО (без ведущих нулей), без ОКПО — нормализованное имя; без того и другого —
+/// общий пустой ключ (все «безымянные» узлы станции считаются одним грузоотправителем,
+/// чтобы не завышать Q).
+fn sender_key(d: &DemandNode) -> String {
+    if let Some(okpo) = d.sender_okpo.as_deref().map(normalize_okpo).filter(|s| !s.is_empty()) {
+        return format!("okpo:{okpo}");
+    }
+    if let Some(name) = d.sender.as_deref().map(normalize_party_name).filter(|s| !s.is_empty()) {
+        return format!("name:{name}");
+    }
+    String::new()
+}
+
 /// Расчёт загруженности одной станции (`capacity > 0`).
 fn compute_backlog(capacity: i32, cars_on_station: i32, hard_days: i32, soft_days: i32) -> StationBacklog {
     let c = capacity.max(1) as i64;
     let q = cars_on_station.max(0) as i64;
-    let closed = q > hard_days.max(0) as i64 * c;
+    // Жёсткий порог включительно: ровно K_hard суток работы уже закрывает станцию.
+    let closed = q >= hard_days.max(1) as i64 * c;
     let excess = q - soft_days.max(0) as i64 * c;
     let backlog_clear_day = if excess <= 0 { 0 } else { (excess + c - 1) / c };
     StationBacklog {
@@ -300,7 +343,8 @@ mod tests {
         }
     }
 
-    fn demand(code: &str, cars: i32, q: i32) -> DemandNode {
+    /// Узел спроса грузоотправителя с ОКПО `okpo` (None — грузоотправитель неизвестен).
+    fn demand_of(code: &str, cars: i32, q: i32, okpo: Option<&str>, name: Option<&str>) -> DemandNode {
         DemandNode {
             d_id: 0,
             purpose: DemandPurpose::Load,
@@ -315,8 +359,8 @@ mod tests {
             railway_to_name: None,
             railway_to_code: None,
             railway_to_part: None,
-            sender: None,
-            sender_okpo: None,
+            sender: name.map(str::to_string),
+            sender_okpo: okpo.map(str::to_string),
             sender_tgnl: None,
             client: None,
             customer_okpo: None,
@@ -334,6 +378,11 @@ mod tests {
         }
     }
 
+    /// Узел единственного грузоотправителя станции (ОКПО 111).
+    fn demand(code: &str, cars: i32, q: i32) -> DemandNode {
+        demand_of(code, cars, q, Some("111"), Some("ООО Один"))
+    }
+
     fn caps(list: &[(&str, i32)]) -> HashMap<String, i32> {
         list.iter().map(|(k, v)| (k.to_string(), *v)).collect()
     }
@@ -341,11 +390,12 @@ mod tests {
     #[test]
     fn compute_backlog_hard_and_soft_thresholds() {
         // C = 10, K_hard = 5, K_soft = 1.
-        // Q = 50 — ровно 5 суток работы: НЕ закрыта (строго больше), t* = ceil((50-10)/10) = 4.
-        let b = compute_backlog(10, 50, 5, 1);
+        // Q = 49 — меньше 5 суток работы: открыта, t* = ceil((49-10)/10) = 4.
+        let b = compute_backlog(10, 49, 5, 1);
         assert!(!b.closed);
         assert_eq!(b.backlog_clear_day, 4);
-        // Q = 51 → закрыта.
+        // Q = 50 — ровно 5 суток работы: закрыта (порог включительно).
+        assert!(compute_backlog(10, 50, 5, 1).closed);
         assert!(compute_backlog(10, 51, 5, 1).closed);
         // Q = 10 — одни сутки работы = допустимая очередь: t* = 0.
         assert_eq!(compute_backlog(10, 10, 5, 1).backlog_clear_day, 0);
@@ -371,7 +421,7 @@ mod tests {
     fn build_index_closed_waiting_unknown() {
         let capacities = caps(&[("100001", 10), ("100002", 10), ("100004", 0)]);
         let demand = vec![
-            demand("100001", 20, 60), // закрыта: 60 > 50
+            demand("100001", 20, 60), // закрыта: 60 ≥ 50 (один грузоотправитель, два периода)
             demand("100001", 5, 60),
             demand("100002", 7, 30),  // открыта, t* = 2
             demand("100003", 7, 500), // нет в справочнике → не проверяется
@@ -383,7 +433,7 @@ mod tests {
 
         let closed = idx.get("100001").unwrap();
         assert!(closed.closed);
-        assert_eq!(closed.cars_on_station, 60);
+        assert_eq!(closed.cars_on_station, 60, "один грузоотправитель в двух периодах — не удваивается");
         let waiting = idx.get("100002").unwrap();
         assert!(!waiting.closed);
         assert_eq!(waiting.backlog_clear_day, 2);
@@ -401,21 +451,73 @@ mod tests {
         assert_eq!(st.closed_demand_nodes, 2);
         assert_eq!(st.closed_demand_cars, 25);
         assert_eq!(st.waiting_stations, 1);
-        assert_eq!(st.inconsistent_q_stations, 0);
+        assert_eq!(st.multi_sender_stations, 0);
+        assert_eq!(st.inconsistent_q_senders, 0);
         assert_eq!(st.closed_list.len(), 1);
         assert_eq!(st.closed_list[0].2, 60);
         assert_eq!(st.closed_list[0].3, 10);
+        assert_eq!(st.waiting_list.len(), 1);
+        assert_eq!(st.waiting_list[0].4, 2);
+    }
+
+    /// Кейс Руденск (БЕЛ): C = 10, два грузоотправителя с CarsOnStation 50 и 31 →
+    /// Q станции = 81 ≥ 50 — закрыта. По одному отправителю (50) тоже закрыта: порог включительно.
+    #[test]
+    fn q_is_sum_over_senders() {
+        let capacities = caps(&[("145303", 10)]);
+        let demand = vec![
+            demand_of("145303", 25, 50, Some("00111"), Some("ООО Первый")),
+            demand_of("145303", 20, 31, Some("222"), Some("ООО Второй")),
+        ];
+        let idx = StationBacklogIndex::build(&capacities, &demand, &rules(Some(5), 1, 0.0));
+        let b = idx.get("145303").unwrap();
+        assert_eq!(b.cars_on_station, 81);
+        assert!(b.closed);
+        assert_eq!(idx.stats.multi_sender_stations, 1);
+        assert_eq!(idx.stats.inconsistent_q_senders, 0);
+        assert_eq!(idx.stats.closed_demand_cars, 45);
+
+        // Только первый отправитель: 50 = 5×10 → закрыта.
+        let idx = StationBacklogIndex::build(&capacities, &demand[..1], &rules(Some(5), 1, 0.0));
+        assert!(idx.get("145303").unwrap().closed);
+        // Только второй: 31 < 50 → открыта, t* = ceil(21/10) = 3.
+        let idx = StationBacklogIndex::build(&capacities, &demand[1..], &rules(Some(5), 1, 0.0));
+        let b = idx.get("145303").unwrap();
+        assert!(!b.closed);
+        assert_eq!(b.backlog_clear_day, 3);
+    }
+
+    /// Ключ грузоотправителя: ОКПО с ведущими нулями и без — один отправитель; без ОКПО —
+    /// по имени (регистр/ОПФ не важны); без того и другого — общий ключ, максимум.
+    #[test]
+    fn sender_key_normalization_and_fallbacks() {
+        let capacities = caps(&[("100001", 10)]);
+        let demand = vec![
+            demand_of("100001", 5, 20, Some("00111"), Some("ООО Один")),
+            demand_of("100001", 5, 20, Some("111"), Some("ООО ОДИН")), // тот же ОКПО
+            demand_of("100001", 5, 7, None, Some("Общество с ограниченной ответственностью «Два»")),
+            demand_of("100001", 5, 7, None, Some("ООО Два")),          // то же имя
+            demand_of("100001", 5, 3, None, None),
+            demand_of("100001", 5, 4, None, None),                    // безымянные — один ключ, максимум
+        ];
+        let idx = StationBacklogIndex::build(&capacities, &demand, &rules(Some(5), 1, 0.0));
+        let b = idx.get("100001").unwrap();
+        assert_eq!(b.cars_on_station, 20 + 7 + 4);
+        assert_eq!(idx.stats.multi_sender_stations, 1);
+        // Безымянные с разными значениями — единственный «расхождение внутри отправителя».
+        assert_eq!(idx.stats.inconsistent_q_senders, 1);
     }
 
     #[test]
-    fn q_is_max_over_station_nodes_and_inconsistency_counted() {
+    fn inconsistent_q_within_sender_takes_max() {
         let capacities = caps(&[("100001", 10)]);
         let demand = vec![demand("100001", 5, 12), demand("100001", 5, 55)];
         let idx = StationBacklogIndex::build(&capacities, &demand, &rules(Some(5), 1, 0.0));
         let b = idx.get("100001").unwrap();
         assert_eq!(b.cars_on_station, 55);
         assert!(b.closed);
-        assert_eq!(idx.stats.inconsistent_q_stations, 1);
+        assert_eq!(idx.stats.inconsistent_q_senders, 1);
+        assert_eq!(idx.stats.multi_sender_stations, 0);
     }
 
     #[test]

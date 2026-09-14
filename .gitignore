@@ -22,7 +22,7 @@ data/stations/sbin_index_report.json
 data/stations/stations_geo.sqlite
 data/LoadStations.xlsx
 # Оперативный снимок HASH telegrams_db (шаг 1 конвенций; не коммитить боевой дамп)
-data/conventions_from_redis.json
+# data/conventions_from_redis.json
 # Накопительная БД ёмкостей отстоя (наполняется суточным прогоном, не коммитим)
 data/reserves/*.sqlite
 # Справочник свободных ёмкостей путей (пересобирается суточным прогоном railoptim)

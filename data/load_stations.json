@@ -5094,5 +5094,12 @@
     "load_station_code": "210708",
     "station_road_capacity": 5,
     "station_load_capacity": 5
+  },
+  {
+    "rail_road": "БЕЛ",
+    "load_station": "Руденск",
+    "load_station_code": "145303",
+    "station_road_capacity": 5,
+    "station_load_capacity": 10
   }
 ]

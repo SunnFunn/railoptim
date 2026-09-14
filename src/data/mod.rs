@@ -10,6 +10,7 @@ pub mod gu12;
 pub mod output;
 pub mod references;
 pub mod repairs;
+pub mod station_backlog;
 pub mod stations_geo;
 pub mod supply;
 pub mod tariffs;
@@ -30,5 +31,6 @@ pub use references::{
     load_wash_product_codes, load_washed_empty_codes,
 };
 pub use repairs::load_repair_stations;
+pub use station_backlog::{StationBacklog, StationBacklogIndex, StationBacklogStats};
 pub use stations_geo::{StationGeo, StationGeoCatalog, StationGeoError, DEFAULT_DB_PATH};
 pub use tariffs::StationRef;

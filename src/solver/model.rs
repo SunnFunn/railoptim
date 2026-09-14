@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::data::business_rules::{BusinessRules, RuleOutcome};
 use crate::data::references::normalize_etsng_code;
+use crate::data::station_backlog::StationBacklogIndex;
 use crate::data::wash::{effective_etsng_for_wash_tariff, supply_needs_wash};
 use crate::node::{DemandNode, DemandPurpose, SupplyNode, TariffNode};
 
@@ -296,13 +297,20 @@ impl DmziIndex {
 /// - инотерритории — с российских дорог порожние туда не назначают, кроме явных
 ///   исключений с надбавкой ([`PairOutcome::ForeignTerritory`]);
 /// - дефицитные дороги — порожние с них на другие дороги не забирают, кроме очень
-///   короткого плеча с надбавкой ([`PairOutcome::DeficitRoadExport`]).
+///   короткого плеча с надбавкой ([`PairOutcome::DeficitRoadExport`]);
+/// - загруженность станции погрузки (`backlog`, правило 4, см.
+///   [`crate::data::station_backlog`]) — станция с очередью больше
+///   `StationBacklogHardDays` суток работы закрыта во все периоды
+///   ([`PairOutcome::StationOverloaded`]); при меньшей очереди вагон, приезжающий
+///   раньше её рассасывания, ждёт: ожидаемые сутки погрузки сдвигаются (и проверяются
+///   окном периода), за сутки ожидания начисляется `StationBacklogWaitPenaltyRubPerDay`.
 ///
 /// Возвращает `(arcs, stats)`, где `stats` — счётчики для диагностики.
 ///
 /// `tariffs` — тарифы до станций **погрузки** (как из АПИ).
 /// `wash_tariffs` — тарифы до станций **промывки** с уже учтённой надбавкой
 /// [`WASH_PATH_SURCHARGE_RUB`] (промывка + порожний пробег до погрузки), ключ `(откуда, куда)`.
+/// `backlog` — индекс загруженности станций ([`StationBacklogIndex::disabled`] — без правила 4).
 #[allow(clippy::too_many_arguments)]
 pub fn build_task_arcs(
     supply: &[SupplyNode],
@@ -313,6 +321,7 @@ pub fn build_task_arcs(
     washed_empty_codes: &HashSet<String>,
     wash_tariffs: &HashMap<(String, String), TariffNode>,
     rules: &BusinessRules,
+    backlog: &StationBacklogIndex,
 ) -> (Vec<TaskArc>, ArcStats) {
     // Индекс тарифов погрузки: (код_откуда, код_куда) → TariffNode
     let tariff_index: HashMap<(&str, &str), &TariffNode> = tariffs
@@ -377,8 +386,10 @@ pub fn build_task_arcs(
     let mut too_far = 0usize;
     let mut foreign_territory = 0usize;
     let mut deficit_export = 0usize;
+    let mut station_overloaded = 0usize;
     let mut arcs_period_penalized = 0usize;
     let mut arcs_rule_surcharged = 0usize;
+    let mut arcs_backlog_wait = 0usize;
 
     // Порог «cap» для грязных вагонов: минимальная стоимость промывочного маршрута
     // по станции образования (см. classify_pair). Считается один раз.
@@ -389,7 +400,7 @@ pub fn build_task_arcs(
         for (d_idx, d) in demand.iter().enumerate() {
             // Жёсткие фильтры пары вынесены в classify_pair — та же логика
             // переиспользуется в диагностике незакрытого спроса.
-            let (tariff, cost, period_ok, rule_surcharged) = match classify_pair(
+            let (tariff, cost, period_ok, rule_surcharged, wait_days) = match classify_pair(
                 s,
                 d,
                 &tariff_index,
@@ -399,9 +410,10 @@ pub fn build_task_arcs(
                 wash_tariffs,
                 s_wash_min,
                 rules,
+                backlog,
             ) {
-                PairOutcome::Feasible { tariff, cost, period_ok, rule_surcharge_rub } => {
-                    (tariff, cost, period_ok, rule_surcharge_rub > 0.0)
+                PairOutcome::Feasible { tariff, cost, period_ok, rule_surcharge_rub, wait_days } => {
+                    (tariff, cost, period_ok, rule_surcharge_rub > 0.0, wait_days)
                 }
                 PairOutcome::NoTariff => { no_tariff += 1; continue; }
                 PairOutcome::BadType => { bad_type += 1; continue; }
@@ -410,6 +422,7 @@ pub fn build_task_arcs(
                 PairOutcome::TooFar => { too_far += 1; continue; }
                 PairOutcome::ForeignTerritory => { foreign_territory += 1; continue; }
                 PairOutcome::DeficitRoadExport => { deficit_export += 1; continue; }
+                PairOutcome::StationOverloaded => { station_overloaded += 1; continue; }
                 PairOutcome::BadPeriod => { bad_period += 1; continue; }
             };
             if !period_ok {
@@ -417,6 +430,9 @@ pub fn build_task_arcs(
             }
             if rule_surcharged {
                 arcs_rule_surcharged += 1;
+            }
+            if wait_days > 0 {
+                arcs_backlog_wait += 1;
             }
 
             // Ограничения минимальной партии действуют только для погрузки, не для промывки.
@@ -478,9 +494,11 @@ pub fn build_task_arcs(
         too_far,
         foreign_territory,
         deficit_export,
+        station_overloaded,
         feasible: arcs.len(),
         arcs_period_penalized,
         arcs_rule_surcharged,
+        arcs_backlog_wait,
     };
 
     (arcs, stats)
@@ -501,6 +519,9 @@ pub enum PairOutcome<'a> {
         cost: f64,
         period_ok: bool,
         rule_surcharge_rub: f64,
+        /// Сутки ожидания погрузки на станции из-за очереди (правило 4, мягкая часть);
+        /// `0` — вагон приезжает не раньше, чем очередь рассосётся.
+        wait_days: i32,
     },
     /// Нет тарифа (для Wash также: вагон не требует промывки либо нет wash-тарифа).
     NoTariff,
@@ -518,18 +539,23 @@ pub enum PairOutcome<'a> {
     ForeignTerritory,
     /// Бизнес-правило 2: вывоз порожнего с дефицитной дороги на плечо длиннее допустимого.
     DeficitRoadExport,
+    /// Бизнес-правило 4: станция погрузки закрыта — вагонов на ней не меньше
+    /// `StationBacklogHardDays` суток работы (`Q ≥ K_hard · C`).
+    StationOverloaded,
     /// Период спроса не имеет табличных границ (жёсткая отбраковка по сроку).
     BadPeriod,
 }
 
 /// Классифицирует пару `(supply, demand)` теми же жёсткими фильтрами, что и
 /// [`build_task_arcs`]: тариф → грязный ЕТСНГ → тип вагона → потолок расстояния →
-/// бизнес-правила дорог (инотерритории, дефицитные дороги) → окно срока.
-/// Фильтры расстояния и дорог действуют только на дуги погрузки.
+/// бизнес-правила дорог (инотерритории, дефицитные дороги) → загруженность станции
+/// (правило 4) → окно срока. Фильтры расстояния, дорог и загруженности действуют
+/// только на дуги погрузки.
 ///
 /// `tariff_index` — индекс тарифов погрузки `(код_откуда, код_куда) → тариф`.
 /// `wash_tariffs` — тарифы до промывки с уже учтённой надбавкой [`WASH_PATH_SURCHARGE_RUB`].
 /// `rules` — бизнес-правила ([`BusinessRules::default()`] — без ограничений).
+/// `backlog` — загруженность станций погрузки ([`StationBacklogIndex::disabled`] — без правила 4).
 #[allow(clippy::too_many_arguments)]
 pub fn classify_pair<'a>(
     s: &SupplyNode,
@@ -541,6 +567,7 @@ pub fn classify_pair<'a>(
     wash_tariffs: &'a HashMap<(String, String), TariffNode>,
     wash_route_min_cost: Option<f64>,
     rules: &BusinessRules,
+    backlog: &StationBacklogIndex,
 ) -> PairOutcome<'a> {
     // Грязный вагон, едущий под погрузку аналогичного груза (Load + same ЕТСНГ).
     // Для такой пары применяется «cap»: см. ниже после расчёта стоимости.
@@ -604,20 +631,37 @@ pub fn classify_pair<'a>(
         }
     }
 
+    // --- Правило 4: загруженность станции погрузки (только погрузка) ---
+    // Закрытая станция (Q ≥ K_hard·C) — дуги нет. Иначе вагон, прибывающий раньше
+    // рассасывания очереди, ждёт: сутки ожидания прибавляются к сроку подсыла и
+    // проверяются окном периода ниже, плюс штраф за простой.
+    let mut wait_days = 0_i32;
+    if let Some(b) = backlog.get(&d.station_code).filter(|_| d.purpose == DemandPurpose::Load) {
+        if b.closed {
+            return PairOutcome::StationOverloaded;
+        }
+        let arrival_day = supply_release_shift_days(s.supply_period) + tariff.period_of_delivery;
+        wait_days = b.wait_days(arrival_day);
+    }
+
     let penalty_rate = if s.supply_period == 10 {
         PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_PERIOD10_RUB
     } else {
         PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_RUB
     };
+    // Окном периода проверяются ожидаемые сутки погрузки: срок подсыла + ожидание в очереди.
     let Some(violation_days) = delivery_window_violation_days(
-        tariff.period_of_delivery,
+        tariff.period_of_delivery + wait_days,
         d.period,
         s.supply_period,
     ) else {
         return PairOutcome::BadPeriod;
     };
     let period_ok = violation_days == 0;
-    let mut cost = tariff.cost + violation_days as f64 * penalty_rate + rule_surcharge_rub;
+    let mut cost = tariff.cost
+        + violation_days as f64 * penalty_rate
+        + rule_surcharge_rub
+        + wait_days as f64 * backlog.wait_penalty_rub_per_day();
     // надбавка к стоимости дуг period=10 для приоритизации period=1.
     if s.supply_period == 10 {
         cost += PERIOD10_COST_SURCHARGE_RUB;
@@ -639,7 +683,7 @@ pub fn classify_pair<'a>(
         }
     }
 
-    PairOutcome::Feasible { tariff, cost, period_ok, rule_surcharge_rub }
+    PairOutcome::Feasible { tariff, cost, period_ok, rule_surcharge_rub, wait_days }
 }
 
 /// Минимальная стоимость промывочного маршрута по станциям образования.
@@ -686,6 +730,8 @@ pub struct ArcStats {
     pub foreign_territory: usize,
     /// Пар погрузки, запрещённых правилом дефицитных дорог (вывоз на длинное плечо).
     pub deficit_export: usize,
+    /// Пар погрузки на закрытые станции (правило 4: очередь не меньше `K_hard` суток работы).
+    pub station_overloaded: usize,
     /// Допустимых дуг (вошли в LP).
     pub feasible:   usize,
     /// Дуг с ненулевым штрафом за срок подсыла (вне окна `[L−3, U+3]` с учётом сдвига периода 10).
@@ -693,6 +739,8 @@ pub struct ArcStats {
     /// Допустимых дуг с надбавкой по бизнес-правилам (исключение для инотерритории,
     /// короткий вывоз с дефицитной дороги).
     pub arcs_rule_surcharged: usize,
+    /// Допустимых дуг с ожиданием в очереди станции (правило 4, мягкая часть).
+    pub arcs_backlog_wait: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -757,7 +805,7 @@ fn delivery_window_violation_days(
     supply_period:  u8,
 ) -> Option<i32> {
     let (l, u) = demand_period_day_bounds(demand_period)?;
-    let shift    = if supply_period == 10 { 5 } else { 0 };
+    let shift    = supply_release_shift_days(supply_period);
     let min_days = l - 3 - shift;
     let max_days = u + 3 - shift;
     if delivery_days < min_days {
@@ -767,6 +815,15 @@ fn delivery_window_violation_days(
     } else {
         Some(0)
     }
+}
+
+/// Сутки (от сегодня), когда порожний из узла предложения освобождается для подсыла:
+/// `0` для предложения периода 1 (АПИ, готов сегодня), `5` для дислокации
+/// (`supply_period == 10`, вагоны освобождаются в среднем на 5 суток позже).
+/// Тот же сдвиг применяется к окну срока в [`delivery_window_violation_days`] и к
+/// суткам прибытия на станцию для правила 4.
+fn supply_release_shift_days(supply_period: u8) -> i32 {
+    if supply_period == 10 { 5 } else { 0 }
 }
 
 /// Совместимость типа вагона с требованиями узла спроса.
@@ -934,6 +991,7 @@ mod tests {
             &HashSet::new(),
             &HashMap::new(),
             &BusinessRules::default(),
+            &StationBacklogIndex::disabled(),
         );
         arcs
     }
@@ -992,6 +1050,7 @@ mod tests {
             &supply, &demand, &[near, far],
             &HashSet::new(), &HashSet::new(), &HashSet::new(), &HashMap::new(),
             &rules_max_km(5_000),
+            &StationBacklogIndex::disabled(),
         );
         assert_eq!(arcs.len(), 1);
         assert_eq!(arcs[0].demand_station_code, "NEAR");
@@ -1010,6 +1069,7 @@ mod tests {
             &supply, &demand, &[far],
             &HashSet::new(), &HashSet::new(), &HashSet::new(), &HashMap::new(),
             &BusinessRules::default(),
+            &StationBacklogIndex::disabled(),
         );
         assert_eq!(arcs.len(), 1);
         assert_eq!(stats.too_far, 0);
@@ -1036,6 +1096,7 @@ mod tests {
             &[s], &[wash_node], &[],
             &wash_codes, &HashSet::new(), &HashSet::new(), &wash_tariffs,
             &rules,
+            &StationBacklogIndex::disabled(),
         );
         assert_eq!(arcs.len(), 1, "wash-дуга не ограничивается бизнес-правилами");
         assert_eq!(stats.too_far, 0);
@@ -1064,6 +1125,7 @@ mod tests {
             &[s], &[wash_node], &[],
             &wash_codes, &HashSet::new(), &HashSet::new(), &wash_tariffs,
             &BusinessRules::default(),
+            &StationBacklogIndex::disabled(),
         );
         assert_eq!(arcs.len(), 1);
         assert!((arcs[0].cost - (7_000.0 + WASH_PATH_SURCHARGE_RUB)).abs() < 1e-9);
@@ -1076,6 +1138,7 @@ mod tests {
             &supply, &demand, &[dummy_tariff("S_OKT", "D_KZH")],
             &HashSet::new(), &HashSet::new(), &HashSet::new(), &HashMap::new(),
             &rules_roads(),
+            &StationBacklogIndex::disabled(),
         );
         assert_eq!(arcs.len(), 1);
         assert!((arcs[0].cost - 51_000.0).abs() < 1e-9);
@@ -1102,6 +1165,7 @@ mod tests {
             &supply, &demand, &tariffs,
             &HashSet::new(), &HashSet::new(), &HashSet::new(), &HashMap::new(),
             &rules_roads(),
+            &StationBacklogIndex::disabled(),
         );
         assert_eq!(stats.foreign_territory, 1, "только ГОР → КЗХ запрещена");
         assert_eq!(arcs.len(), 3);
@@ -1135,6 +1199,7 @@ mod tests {
             &supply, &demand, &[t_msk, t_near, t_far],
             &HashSet::new(), &HashSet::new(), &HashSet::new(), &HashMap::new(),
             &rules_roads(),
+            &StationBacklogIndex::disabled(),
         );
         assert_eq!(stats.deficit_export, 1);
         assert_eq!(arcs.len(), 2);
@@ -1338,6 +1403,7 @@ mod tests {
             &[s], &[d], &[dummy_tariff("S1", "D1")],
             &wash_codes, &HashSet::new(), &HashSet::new(), &wash_tariffs,
             &BusinessRules::default(),
+            &StationBacklogIndex::disabled(),
         );
         assert!(arcs.is_empty(), "дальняя погрузка дороже промывки — дуги быть не должно");
         assert_eq!(stats.dirty_far_prefer_wash, 1);
@@ -1363,6 +1429,7 @@ mod tests {
             &[s], &[d], &[dummy_tariff("S1", "D1")],
             &wash_codes, &HashSet::new(), &HashSet::new(), &wash_tariffs,
             &BusinessRules::default(),
+            &StationBacklogIndex::disabled(),
         );
         assert_eq!(arcs.len(), 1, "прямая погрузка дешевле промывки — дуга должна остаться");
         assert_eq!(stats.dirty_far_prefer_wash, 0);
@@ -1384,8 +1451,188 @@ mod tests {
             &[s], &[d], &[dummy_tariff("S1", "D1")],
             &wash_codes, &HashSet::new(), &HashSet::new(), &wash_tariffs,
             &BusinessRules::default(),
+            &StationBacklogIndex::disabled(),
         );
         assert_eq!(arcs.len(), 1);
         assert_eq!(stats.dirty_far_prefer_wash, 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // Правило 4: загруженность станции погрузки
+    // -----------------------------------------------------------------------
+
+    /// Правила с включённым правилом 4: K_hard, K_soft, штраф ожидания 5 000 ₽/сут.
+    fn rules_backlog(hard: i32, soft: i32) -> BusinessRules {
+        BusinessRules {
+            station_backlog_hard_days: Some(hard),
+            station_backlog_soft_days: soft,
+            station_backlog_wait_penalty_rub_per_day: 5_000.0,
+            ..Default::default()
+        }
+    }
+
+    /// Индекс загруженности по мощности `capacity` станции `code` и Q из узлов спроса.
+    fn backlog_index(code: &str, capacity: i32, demand: &[DemandNode], rules: &BusinessRules) -> StationBacklogIndex {
+        let caps: HashMap<String, i32> = [(code.to_string(), capacity)].into_iter().collect();
+        StationBacklogIndex::build(&caps, demand, rules)
+    }
+
+    fn with_q(mut d: DemandNode, q: i32) -> DemandNode {
+        d.cars_on_station = q;
+        d
+    }
+
+    fn with_period(mut d: DemandNode, period: u8) -> DemandNode {
+        d.period = period;
+        d
+    }
+
+    /// Жёсткая часть: Q ≥ K_hard·C — станция закрыта во все периоды, дуг нет,
+    /// пары считаются в `station_overloaded`. Ниже K_hard·C — открыта.
+    #[test]
+    fn overloaded_station_closed_for_all_periods() {
+        let rules = rules_backlog(5, 1);
+        let supply = vec![dummy_supply(5, "S1", 1, false), dummy_supply(5, "S2", 10, false)];
+        // C = 10, Q = 50 ≥ 50 → закрыта; спрос в периодах 1 и 4.
+        let demand = vec![
+            with_q(with_period(dummy_demand(5, "D1", None), 1), 50),
+            with_q(with_period(dummy_demand(5, "D1", None), 4), 50),
+        ];
+        let idx = backlog_index("D1", 10, &demand, &rules);
+        let mut far = dummy_tariff("S2", "D1");
+        far.period_of_delivery = 6;
+        let (arcs, stats) = build_task_arcs(
+            &supply, &demand, &[dummy_tariff("S1", "D1"), far],
+            &HashSet::new(), &HashSet::new(), &HashSet::new(), &HashMap::new(),
+            &rules, &idx,
+        );
+        assert!(arcs.is_empty(), "закрытая станция: дуг нет даже в период 4 и от дислокации");
+        assert_eq!(stats.station_overloaded, 4);
+        assert_eq!(stats.feasible, 0);
+
+        // Q = 49 — ниже порога: открыта.
+        let demand_ok = vec![with_q(dummy_demand(5, "D1", None), 49)];
+        let idx_ok = backlog_index("D1", 10, &demand_ok, &rules);
+        let (arcs, stats) = build_task_arcs(
+            &supply[..1], &demand_ok, &[dummy_tariff("S1", "D1")],
+            &HashSet::new(), &HashSet::new(), &HashSet::new(), &HashMap::new(),
+            &rules, &idx_ok,
+        );
+        assert_eq!(arcs.len(), 1);
+        assert_eq!(stats.station_overloaded, 0);
+    }
+
+    /// Мягкая часть: очередь сдвигает ожидаемые сутки погрузки. C = 10, Q = 41,
+    /// K_soft = 1 → t* = ceil(31/10) = 4. Срок подсыла 1 сут. → ожидание 3 сут.:
+    /// погрузка на 4-е сутки — в окне периода 1 (0–4), штрафа за срок нет,
+    /// к тарифу добавлено 3 × 5 000 ₽ ожидания.
+    #[test]
+    fn backlog_wait_adds_penalty_and_keeps_window() {
+        let rules = rules_backlog(5, 1);
+        let s = dummy_supply(5, "S1", 1, false);
+        let demand = vec![with_q(dummy_demand(5, "D1", None), 41)];
+        let idx = backlog_index("D1", 10, &demand, &rules);
+        assert_eq!(idx.get("D1").unwrap().backlog_clear_day, 4);
+
+        let (arcs, stats) = build_task_arcs(
+            &[s], &demand, &[dummy_tariff("S1", "D1")],
+            &HashSet::new(), &HashSet::new(), &HashSet::new(), &HashMap::new(),
+            &rules, &idx,
+        );
+        assert_eq!(arcs.len(), 1);
+        let a = &arcs[0];
+        assert!(a.period_ok, "погрузка на 4-е сутки укладывается в период 1");
+        assert!((a.cost - (1_000.0 + 3.0 * 5_000.0)).abs() < 1e-6, "cost = тариф + 3 сут. ожидания");
+        assert!((a.tariff_cost - 1_000.0).abs() < 1e-6, "чистый тариф без штрафов");
+        assert_eq!(stats.arcs_backlog_wait, 1);
+        assert_eq!(stats.arcs_period_penalized, 0);
+    }
+
+    /// Ожидание выталкивает погрузку за окно периода: K_hard = 11, K_soft = 0,
+    /// C = 10, Q = 100 → t* = 10. Срок подсыла 1 сут. → ожидание 9, погрузка на 10-е
+    /// сутки: для периода 1 (окно до 7) нарушение 3 сут. → штраф 3 × 15 000 плюс
+    /// 9 × 5 000 ожидания; для периода 4 (10–14) — без нарушения, только ожидание.
+    #[test]
+    fn backlog_wait_can_violate_window_of_early_period() {
+        let rules = rules_backlog(11, 0);
+        let s = dummy_supply(5, "S1", 1, false);
+        let demand = vec![
+            with_q(with_period(dummy_demand(5, "D1", None), 1), 100),
+            with_q(with_period(dummy_demand(5, "D1", None), 4), 100),
+        ];
+        let idx = backlog_index("D1", 10, &demand, &rules);
+        assert_eq!(idx.get("D1").unwrap().backlog_clear_day, 10);
+
+        let (arcs, stats) = build_task_arcs(
+            &[s], &demand, &[dummy_tariff("S1", "D1")],
+            &HashSet::new(), &HashSet::new(), &HashSet::new(), &HashMap::new(),
+            &rules, &idx,
+        );
+        assert_eq!(arcs.len(), 2);
+        let p1 = arcs.iter().find(|a| a.d_idx == 0).unwrap();
+        let p4 = arcs.iter().find(|a| a.d_idx == 1).unwrap();
+        assert!(!p1.period_ok);
+        let expected_p1 = 1_000.0 + 3.0 * PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_RUB + 9.0 * 5_000.0;
+        assert!((p1.cost - expected_p1).abs() < 1e-6, "p1 cost {} != {expected_p1}", p1.cost);
+        assert!(p4.period_ok);
+        assert!((p4.cost - (1_000.0 + 9.0 * 5_000.0)).abs() < 1e-6);
+        assert_eq!(stats.arcs_backlog_wait, 2);
+        assert_eq!(stats.arcs_period_penalized, 1);
+    }
+
+    /// Вагон дислокации освобождается на 5 суток позже: прибытие 5 + 1 = 6 ≥ t* = 4 —
+    /// ожидания нет, стоимость как без правила 4 (тариф + надбавка периода 10).
+    #[test]
+    fn dislocation_supply_arrives_after_backlog_clears() {
+        let rules = rules_backlog(5, 1);
+        let s = dummy_supply(5, "S1", 10, false);
+        let demand = vec![with_q(with_period(dummy_demand(5, "D1", None), 2), 41)];
+        let idx = backlog_index("D1", 10, &demand, &rules);
+
+        let (arcs, stats) = build_task_arcs(
+            &[s], &demand, &[dummy_tariff("S1", "D1")],
+            &HashSet::new(), &HashSet::new(), &HashSet::new(), &HashMap::new(),
+            &rules, &idx,
+        );
+        assert_eq!(arcs.len(), 1);
+        assert!((arcs[0].cost - (1_000.0 + PERIOD10_COST_SURCHARGE_RUB)).abs() < 1e-6);
+        assert_eq!(stats.arcs_backlog_wait, 0);
+    }
+
+    /// Станция без мощности в справочнике (или C = 0) правилом не проверяется,
+    /// как и узлы промывки; отключённое правило (индекс пуст) ничего не меняет.
+    #[test]
+    fn backlog_rule_skips_unknown_capacity_and_wash() {
+        let rules = rules_backlog(5, 1);
+        let s = dummy_supply(5, "S1", 1, false);
+        let demand = vec![with_q(dummy_demand(5, "D1", None), 999)];
+        // Мощность известна только у другой станции.
+        let idx = backlog_index("OTHER", 10, &demand, &rules);
+        let (arcs, stats) = build_task_arcs(
+            &[s], &demand, &[dummy_tariff("S1", "D1")],
+            &HashSet::new(), &HashSet::new(), &HashSet::new(), &HashMap::new(),
+            &rules, &idx,
+        );
+        assert_eq!(arcs.len(), 1);
+        assert_eq!(stats.station_overloaded, 0);
+        assert!((arcs[0].cost - 1_000.0).abs() < 1e-6);
+
+        // Промывка: Q огромное, но Wash-узлы под правило не попадают.
+        let mut dirty = dummy_supply(5, "S1", 1, false);
+        dirty.prev_etsngs = vec!["421034".to_string()];
+        let mut wash_node = with_q(dummy_demand(5, "WASH", None), 999);
+        wash_node.purpose = DemandPurpose::Wash;
+        let wash_codes: HashSet<String> = ["421034".to_string()].into_iter().collect();
+        let mut wash_tariffs: HashMap<(String, String), TariffNode> = HashMap::new();
+        wash_tariffs.insert(("S1".to_string(), "WASH".to_string()), dummy_tariff("S1", "WASH"));
+        let idx_wash = backlog_index("WASH", 10, &[wash_node.clone()], &rules);
+        assert!(idx_wash.get("WASH").is_none(), "Wash-узлы в индекс не входят");
+        let (arcs, stats) = build_task_arcs(
+            &[dirty], &[wash_node], &[],
+            &wash_codes, &HashSet::new(), &HashSet::new(), &wash_tariffs,
+            &rules, &idx_wash,
+        );
+        assert_eq!(arcs.len(), 1);
+        assert_eq!(stats.station_overloaded, 0);
     }
 }

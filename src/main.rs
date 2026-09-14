@@ -42,7 +42,7 @@ async fn main() -> Result<()> {
     let business_rules = match data::BusinessRules::load("data/business_rules.json") {
         Ok(r) => {
             println!(
-                "Бизнес-правила (business_rules.json): потолок подсыла {}; инотерриторий {} (исключений {}); дефицитных дорог {} (вывоз ≤ {} км, надбавка {:.0} руб.); проверка ГУ-12 {}",
+                "Бизнес-правила (business_rules.json): потолок подсыла {}; инотерриторий {} (исключений {}); дефицитных дорог {} (вывоз ≤ {} км, надбавка {:.0} руб.); проверка ГУ-12 {}; загруженность станций (правило 4) {}",
                 r.max_empty_run_distance_km
                     .map(|km| format!("{km} км"))
                     .unwrap_or_else(|| "выкл.".to_string()),
@@ -52,6 +52,13 @@ async fn main() -> Result<()> {
                 r.deficit_export_max_distance_km,
                 r.deficit_export_surcharge_rub,
                 if r.gu12_check_enabled { "вкл." } else { "выкл." },
+                match r.station_backlog_hard_days {
+                    Some(hard) => format!(
+                        "закрытие при Q ≥ {hard}×C, очередь ≤ {}×C без ожидания, штраф ожидания {:.0} руб./сут.",
+                        r.station_backlog_soft_days, r.station_backlog_wait_penalty_rub_per_day,
+                    ),
+                    None => "выкл.".to_string(),
+                },
             );
             r
         }
@@ -517,6 +524,61 @@ async fn main() -> Result<()> {
     };
 
     // -----------------------------------------------------------------------
+    // Правило 4: загруженность станций погрузки. Q — CarsOnStation из АПИ спроса,
+    //     (по грузоотправителю, суммируется по станции), C — мощность погрузки из
+    //     data/load_stations.json. Q ≥ K_hard·C → станция
+    //     закрыта во все периоды; ниже порога вагон, приезжающий раньше рассасывания
+    //     очереди, ждёт (сдвиг суток погрузки + штраф). Справочник не загрузился =>
+    //     правило не применяется (громкое предупреждение).
+    // -----------------------------------------------------------------------
+    let station_backlog = if business_rules.station_backlog_enabled() {
+        match data::StationBacklogIndex::load_and_build(
+            data::station_backlog::DEFAULT_LOAD_STATIONS_PATH,
+            &demand_lp,
+            &business_rules,
+        ) {
+            Ok(idx) => {
+                let st = &idx.stats;
+                println!(
+                    "Загруженность станций (правило 4): мощность известна у {} станций справочника; станций спроса {}, проверено {}, без мощности {}",
+                    st.capacity_stations, st.demand_stations, st.checked_stations, st.unknown_capacity_stations,
+                );
+                println!(
+                    "  закрыто станций: {} ({} узлов / {} ваг. спроса); с очередью (ожидание подсыла): {}; станций с несколькими грузоотправителями: {}; грузоотправителей с разным CarsOnStation по узлам: {}",
+                    st.closed_stations, st.closed_demand_nodes, st.closed_demand_cars,
+                    st.waiting_stations, st.multi_sender_stations, st.inconsistent_q_senders,
+                );
+                for (name, railway, q, c) in st.closed_list.iter().take(10) {
+                    println!(
+                        "    · закрыта {name} ({railway}): на станции {q} ваг., мощность {c} ваг./сут. ({:.1} сут. работы)",
+                        *q as f64 / (*c).max(1) as f64,
+                    );
+                }
+                if st.closed_list.len() > 10 {
+                    println!("    · ...ещё {} закрытых станций", st.closed_list.len() - 10);
+                }
+                for (name, railway, q, c, t) in st.waiting_list.iter().take(10) {
+                    println!(
+                        "    · очередь {name} ({railway}): на станции {q} ваг., мощность {c} ваг./сут. — подсыл не раньше {t}-х суток",
+                    );
+                }
+                if st.waiting_list.len() > 10 {
+                    println!("    · ...ещё {} станций с очередью", st.waiting_list.len() - 10);
+                }
+                idx
+            }
+            Err(e) => {
+                eprintln!(
+                    "  [!] Загруженность станций (правило 4): справочник не загружен ({e}) — правило не применяется"
+                );
+                data::StationBacklogIndex::disabled()
+            }
+        }
+    } else {
+        data::StationBacklogIndex::disabled()
+    };
+
+    // -----------------------------------------------------------------------
     // 4. Построение дуг транспортной задачи
     // -----------------------------------------------------------------------
     let (arcs, arc_stats) = solver::build_task_arcs(
@@ -528,6 +590,7 @@ async fn main() -> Result<()> {
         &washed_empty_codes,
         &wash_tariff_map,
         &business_rules,
+        &station_backlog,
     );
 
     let total = arc_stats.total_pairs;
@@ -577,9 +640,19 @@ async fn main() -> Result<()> {
         100.0 * arc_stats.deficit_export as f64 / total.max(1) as f64,
     );
     println!(
+        "  станция закрыта очередью (правило 4): {} ({:.1}%)",
+        arc_stats.station_overloaded,
+        100.0 * arc_stats.station_overloaded as f64 / total.max(1) as f64,
+    );
+    println!(
         "  допустимых дуг с надбавкой по правилам: {} ({:.1}%)",
         arc_stats.arcs_rule_surcharged,
         100.0 * arc_stats.arcs_rule_surcharged as f64 / total.max(1) as f64,
+    );
+    println!(
+        "  допустимых дуг с ожиданием в очереди станции (правило 4): {} ({:.1}%)",
+        arc_stats.arcs_backlog_wait,
+        100.0 * arc_stats.arcs_backlog_wait as f64 / total.max(1) as f64,
     );
     println!(
         "  допустимых дуг со штрафом за срок:   {} ({:.1}%)",
@@ -863,6 +936,7 @@ async fn main() -> Result<()> {
             &wash_tariff_map,
             dmzi_limits.as_ref(),
             &business_rules,
+            &station_backlog,
         );
     }
 

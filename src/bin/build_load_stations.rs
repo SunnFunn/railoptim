@@ -1,9 +1,10 @@
 //! Генерация справочника станций погрузки `data/load_stations.json` из `data/LoadStations.xlsx`.
 //!
 //! Колонки Excel (1-based): D — станция погрузки, E — дорога (3 буквы),
-//! AF — мощность подъездных путей (вагоны единовременно), AO — мощность погрузки в сутки.
-//! Заголовок в строках 6–7, данные — строки 8..=1296. Одна станция может встречаться
-//! несколько раз (разные грузоотправители/элеваторы) — мощности суммируются.
+//! S — мощность подъездных путей (вагоны единовременно), U — мощность погрузки в сутки.
+//! Заголовок в строке 6, данные — с строки 8 до конца листа (в текущем файле 8..=1298).
+//! Одна станция может встречаться несколько раз (разные грузоотправители/элеваторы) —
+//! мощности суммируются. Пустые и текстовые ячейки S/U отбрасываются.
 //!
 //! Коды ЕСР-6 в Excel отсутствуют: они подбираются по имени станции + дороге в MSSQL
 //! через самодостаточный Python-хелпер `src/data/load_stations_esr.py`.
@@ -25,12 +26,14 @@ use serde::{Deserialize, Serialize};
 /// 1-based номера колонок Excel.
 const COL_STATION: usize = 4; // D
 const COL_RAILWAY: usize = 5; // E
-const COL_ROAD_CAP: usize = 32; // AF — ёмкость путей (вагоны единовременно)
-const COL_LOAD_CAP: usize = 41; // AO — погрузка в сутки
+const COL_ROAD_CAP: usize = 19; // S — вместимость путей (вагоны единовременно)
+const COL_LOAD_CAP: usize = 21; // U — фактическая мощность погрузки в сутки
 
-/// 1-based диапазон строк с данными (заголовок в 6–7).
+/// 1-based диапазон строк с данными (заголовок в строке 6).
 const ROW_FIRST: usize = 8;
-const ROW_LAST: usize = 1296;
+/// Ожидаемая последняя строка текущего `LoadStations.xlsx` (dimension `A1:XDU1298`).
+/// Фактически читаем до конца листа, чтобы не отрезать новые строки.
+const ROW_LAST: usize = 1298;
 
 #[derive(Debug, Default, Clone)]
 struct Agg {
@@ -90,9 +93,9 @@ fn main() -> Result<()> {
         }
     }
 
-    let aggregated = parse_workbook(&input)?;
+    let (aggregated, last_row) = parse_workbook(&input)?;
     eprintln!(
-        "Excel разобран: {} уникальных станций (строки {ROW_FIRST}..={ROW_LAST})",
+        "Excel разобран: {} уникальных станций (строки {ROW_FIRST}..={last_row}, ожид. {ROW_LAST})",
         aggregated.len()
     );
 
@@ -133,7 +136,8 @@ fn main() -> Result<()> {
 }
 
 /// Парсит xlsx и агрегирует мощности по паре (станция, дорога).
-fn parse_workbook(path: &Path) -> Result<Vec<Agg>> {
+/// Второй элемент — фактическая последняя прочитанная 1-based строка листа.
+fn parse_workbook(path: &Path) -> Result<(Vec<Agg>, usize)> {
     let mut wb = open_workbook_auto(path)
         .with_context(|| format!("открытие {}", path.display()))?;
     let sheet = wb
@@ -148,8 +152,13 @@ fn parse_workbook(path: &Path) -> Result<Vec<Agg>> {
     // Ключ агрегации — (станция, дорога) без учёта регистра/пробелов;
     // отображаемые значения берём из первой встреченной строки.
     let mut map: BTreeMap<(String, String), Agg> = BTreeMap::new();
+    let last_row = range
+        .end()
+        .map(|c| (c.0 as usize).saturating_add(1))
+        .unwrap_or(ROW_LAST)
+        .max(ROW_FIRST);
 
-    for row in ROW_FIRST..=ROW_LAST {
+    for row in ROW_FIRST..=last_row {
         let r = (row - 1) as u32; // calamine 0-based
         let station = cell_string(&range, r, COL_STATION - 1);
         if station.is_empty() {
@@ -170,7 +179,7 @@ fn parse_workbook(path: &Path) -> Result<Vec<Agg>> {
         entry.load_capacity += load_cap.unwrap_or(0);
     }
 
-    Ok(map.into_values().collect())
+    Ok((map.into_values().collect(), last_row))
 }
 
 /// Значение ячейки как строка (trim, NBSP→пробел, схлопывание пробелов).
@@ -190,10 +199,7 @@ fn cell_string(range: &calamine::Range<Data>, row: u32, col: usize) -> String {
     }
 }
 
-/// Парсит мощность из ячейки AF/AO.
-///
-/// Правила: «6-11» → среднее целое (округление к ближайшему, .5 вверх);
-/// «31 и более» / «5 и менее» / «8» → одно число; текст без цифр → None.
+/// Парсит мощность из ячейки S/U: число → округлённое целое; пусто и любой текст → None.
 fn cell_capacity(range: &calamine::Range<Data>, row: u32, col: usize) -> Option<i64> {
     match range.get((row as usize, col)) {
         Some(Data::Int(i)) => Some(*i),
@@ -204,32 +210,29 @@ fn cell_capacity(range: &calamine::Range<Data>, row: u32, col: usize) -> Option<
     }
 }
 
-/// Парсер строковой мощности (см. [`cell_capacity`]).
+/// Только однозначное число (пробелы/NBSP и десятичная запятая допускаются).
+/// Диапазоны (`6-11`) и текст (`1000 тонн`, `реконструкция`, `10 зрв`) — None.
 fn parse_capacity_str(raw: &str) -> Option<i64> {
-    let s = raw.replace('\u{00a0}', " ");
-    let s = s.trim();
+    let s = raw
+        .replace('\u{00a0}', " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join("");
     if s.is_empty() {
         return None;
     }
-
-    // Числовые токены по порядку.
-    let nums: Vec<i64> = s
-        .split(|c: char| !c.is_ascii_digit())
-        .filter(|t| !t.is_empty())
-        .filter_map(|t| t.parse::<i64>().ok())
-        .collect();
-    if nums.is_empty() {
+    let s = s.replace(',', ".");
+    if !s.chars().all(|c| c.is_ascii_digit() || c == '.') {
         return None;
     }
-
-    let has_dash = s.contains('-') || s.contains('\u{2013}') || s.contains('\u{2014}');
-    if has_dash && nums.len() >= 2 {
-        // Диапазон «a-b» → среднее целое, округление .5 вверх.
-        let avg = (nums[0] + nums[1]) as f64 / 2.0;
-        return Some((avg + 0.5).floor() as i64);
+    if s.starts_with('.') || s.ends_with('.') || s.matches('.').count() > 1 {
+        return None;
     }
-
-    Some(nums[0])
+    if s.contains('.') {
+        s.parse::<f64>().ok().map(|f| f.round() as i64)
+    } else {
+        s.parse::<i64>().ok()
+    }
 }
 
 fn normalize_ws(s: &str) -> String {
@@ -288,4 +291,30 @@ fn lookup_esr_codes(aggregated: &[Agg]) -> Result<Vec<Option<String>>> {
     }
 
     Ok(answers.into_iter().map(|a| a.code).collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_capacity_str;
+
+    #[test]
+    fn parse_capacity_accepts_plain_numbers() {
+        assert_eq!(parse_capacity_str("8"), Some(8));
+        assert_eq!(parse_capacity_str("  12 "), Some(12));
+        assert_eq!(parse_capacity_str("7.4"), Some(7));
+        assert_eq!(parse_capacity_str("7,6"), Some(8));
+        assert_eq!(parse_capacity_str("1\u{00a0}000"), Some(1000));
+    }
+
+    #[test]
+    fn parse_capacity_rejects_text_and_ranges() {
+        assert_eq!(parse_capacity_str(""), None);
+        assert_eq!(parse_capacity_str("реконструкция"), None);
+        assert_eq!(parse_capacity_str("1000 тонн"), None);
+        assert_eq!(parse_capacity_str("10 зрв"), None);
+        assert_eq!(parse_capacity_str("1 крытые"), None);
+        assert_eq!(parse_capacity_str("8 (фронт погрузки 10 ваг)"), None);
+        assert_eq!(parse_capacity_str("6-11"), None);
+        assert_eq!(parse_capacity_str("31 и более"), None);
+    }
 }

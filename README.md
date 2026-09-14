@@ -388,6 +388,17 @@ cargo run --release --bin railoptim
 Секреты извлекаются только из self-hosted Infisical
 (см. `auth-infisical.sh`); в коде и репозитории их быть не должно.
 
+Конвенции РЖД (`conv-redis`, HASH `telegrams_db`) на старте batch читаются
+как заглушка шага 1: снимок одной телеграммы (по умолчанию №4702) пишется в
+`data/conventions_from_redis.json` (файл в `.gitignore`). Нужны `REDIS_CONV_PASS`
+и при отличии от localhost — `REDIS_CONV_HOST` / `REDIS_CONV_PORT` (не путать
+с `REDIS_SUPPLY_*`). Нет пароля или Redis недоступен — в лог `[!]`, оптимизация
+продолжается. Проверка без полного прогона:
+
+```bash
+cargo run --release --bin railoptim-dump-conventions
+```
+
 ### Справочник станций (ЕСР + координаты)
 
 Отдельный ETL, не входит в `./run.sh` оптимизации. Подробности: [`data/stations/README.md`](data/stations/README.md).

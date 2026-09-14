@@ -1,5 +1,6 @@
 pub mod business_rules;
 pub mod client;
+pub mod conventions;
 pub mod demand;
 pub mod demand_reserves;
 pub mod dislocations;
@@ -18,6 +19,9 @@ pub mod wash;
 
 pub use business_rules::{BusinessRules, ForeignException, RuleOutcome};
 pub use client::ApiClient;
+pub use conventions::{
+    dump_conventions_stub, probe_conventions_at_startup, TelegramData, DUMP_PATH,
+};
 pub use demand_reserves::{
     load_active_reserve_nodes, open_reserves_db, reserve_station_refs, reserves_db_path,
     sync_reserves_to_db, ReserveData, ReserveSyncStats,

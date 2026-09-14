@@ -95,17 +95,17 @@ Excel `tmp/КОНВЕНЦИИ_2026.xlsx` на этой машине нет (ге
 
 ## Что не берём в v1
 
-- Класс `Others` (крытые, цистерны, фитосанитария).
-- `convention_info` ∈ {WashingStation, ReserveStation, RepairStation} — в `railoptim` уже есть свои справочники промывки/отстоя/ремонта.
+- Класс `Others` (крытые, цистерны, фитосанитария), кроме записей промывки/ремонта/отстоя (их класс в HASH часто `Others` — трактуем как Empty).
 - Повторный LLM / MSSQL.
 - Запись в `telegrams_db` из оптимизатора (только чтение).
-- Глобальные «все станции КЗХ / Казахстан» и прочие `ForeignRoads`.
+- Истёкшие / ещё не начавшиеся / без дат — HASH читается целиком (`HGETALL`), но в память и снимок не кладутся.
+- Глобальные «все станции КЗХ / Казахстан». Остальные инотерритории (БЕЛ, УЗБ, …) применяются.
 
 ---
 
 ## Правила матчинга v1 (после импорта)
 
-Только `DemandPurpose::Load`. Место — `classify_pair` → новый `PairOutcome::ConventionBan`. Дуги нет, пока действует `date_beg…date_end` (горизонт планирования: сегодня … сегодня+15 суток; `date_end >= сегодня`, `date_beg <= конец горизонта`).
+`DemandPurpose::Load`, а также назначения в промывку, ремонт и отстой (`WashingStation` / `RepairStation` / `ReserveStation`). Место — `classify_pair` → новый `PairOutcome::ConventionBan`. Дуги нет, пока действует `date_beg…date_end` (горизонт планирования: сегодня … сегодня+14 суток; `date_end >= сегодня`, `date_beg <= конец горизонта`).
 
 ### А. Конкретные ЕСР назначения
 
@@ -121,7 +121,7 @@ Excel `tmp/КОНВЕНЦИИ_2026.xlsx` на этой машине нет (ге
 
 ### Б. Без ЕСР: «Все станции» дорог РФ
 
-Код станции = `Все станции` (нет цифр ЕСР). Разобрать имена дорог из `departure_st` и `destination_st`. Инотерритории (в т.ч. КЗХ) в списках — выкинуть; если после этого список назначения пуст — телеграмму не применять.
+Код станции = `Все станции` (нет цифр ЕСР). Разобрать имена дорог из `departure_st` и `destination_st`. Из инотерриторий выкидывается только **КЗХ**; БЕЛ, УЗБ и прочие остаются. Если после снятия КЗХ список назначения пуст — телеграмму не применять.
 
 | Списки дорог | `Empty` | `All` (и «все грузы») |
 |---|---|---|
@@ -140,25 +140,25 @@ Excel `tmp/КОНВЕНЦИИ_2026.xlsx` на этой машине нет (ге
 ### Шаг 1. Секреты и доступ к `conv-redis`
 
 - [x] Переменные: `REDIS_CONV_HOST` (по умолчанию `127.0.0.1`), `REDIS_CONV_PORT` (`6379`), `REDIS_CONV_DB` (`0`), `REDIS_CONV_PASS` (обязателен). Не путать с `REDIS_SUPPLY_*`.
-- [ ] В Infisical проекта `railoptim` завести/прокинуть `REDIS_CONV_PASS` (тот же пароль, что у `conv-redis` / path `/conventions`). `run.sh` уже грузит секреты `--path / --recursive`.
+- [x] В Infisical папки railoptim (токен `infisical_optim_token`) добавлен `REDIS_CONV_PASS`.
 - [x] Fail-open: нет пароля или Redis лёг → `[!]` в лог, оптимизация идёт дальше.
-- [x] Заглушка: на старте `railoptim` и бинарник `railoptim-dump-conventions` делают `HGETALL telegrams_db`, берут образец (по умолчанию №4702, иначе первый ключ) и пишут `data/conventions_from_redis.json`. Пример JSON №4702: `data/conventions/telegram_4702.example.json`.
-- [ ] На прод-машине: `REDIS_CONV_PASS` в Infisical → `cargo run --release --bin railoptim-dump-conventions` (или полный `./run.sh prod`) → открыть `data/conventions_from_redis.json`.
+- [x] Заглушка: снимок **действующих** в `data/conventions_from_redis.json`. Пример JSON (в т.ч. истёкший 4702 для тестов): `data/conventions/telegram_4702.example.json`.
+- [x] На прод-машине снимок появился (67 записей в HASH, образец 4702).
 
 ### Шаг 2. Загрузчик HASH → Rust-структуры
 
 - [x] Зависимость `redis`.
-- [x] Модуль `src/data/conventions.rs`: `HGETALL telegrams_db` + разбор JSON `TelegramData` (без фильтра дат/класса и без `classify_pair` — это следующие шаги).
-- [ ] Фильтр дат: оставить действующие на горизонт; пустые даты — не применять, в лог.
-- [ ] Фильтр класса: взять `Empty`, `All`, `Grain`; отбросить `Others` и LLM-маркеры ошибки.
-- [ ] Разобрать CSV-поля в `Vec`; ЕСР — `normalize_esr6`; ОКПО — `normalize_okpo`; имена — `normalize_party_name`.
-- [ ] Разобрать «Все станции … железных дорог» → список коротких кодов через `supermap_rw_name_to_rw.csv` + нормализация падежей.
-- [x] Вызов в `main.rs` на старте (пока только снимок, не солвер).
-- [ ] Флаг `ConventionCheckEnabled` в `data/business_rules.json` (по умолчанию `true`).
+- [x] Модуль `src/data/conventions.rs`: `HGETALL telegrams_db` + разбор JSON `TelegramData`.
+- [x] Фильтр дат: действующие на горизонт сегодня…сегодня+14 (`DEMAND_PERIODS`); пустые даты не применяются.
+- [x] Фильтр класса: `Empty` / `All` / `Grain`; `Others`/`LLM_ERROR` — отброс, кроме промывки/ремонта/отстоя (оставляем, класс Others → Empty).
+- [x] CSV-поля → `Vec`; ЕСР — `normalize_esr6`; ОКПО — `normalize_okpo`; имена — `normalize_party_name`.
+- [x] «Все станции … железных дорог» → короткие коды через `data/map/supermap_rw_name_to_rw.csv` (падежи); из инотерриторий для дорожного запрета отбрасывается только КЗХ.
+- [x] Вызов в `main.rs` после загрузки `business_rules` (снимок + лог действующих, не солвер).
+- [x] Флаг `ConventionCheckEnabled` в `data/business_rules.json` (по умолчанию `true`).
 
 ### Шаг 3. Снимок для dev (опционально, параллельно шагу 2)
 
-- [x] Снимок в `data/conventions_from_redis.json` (gitignore). Пример №4702 закоммичен в `data/conventions/telegram_4702.example.json`.
+- [x] Снимок в `data/conventions_from_redis.json` (gitignore) — **только действующие**, без полного HASH. Пример №4702 закоммичен в `data/conventions/telegram_4702.example.json`.
 - [x] Если Redis нет — фикстура 4702 разбирается юнит-тестом; прод без Redis не падает.
 
 ### Шаг 4. Индекс для солвера
@@ -173,7 +173,7 @@ Excel `tmp/КОНВЕНЦИИ_2026.xlsx` на этой машине нет (ге
 ### Шаг 5. `classify_pair` + диагностика
 
 - [ ] `PairOutcome::ConventionBan` (номер телеграммы в статистике/причине).
-- [ ] Только Load; промывка/отстой не трогать.
+- [ ] Load + промывка/ремонт/отстой.
 - [ ] Лог старта: HASH size, разобрано / отброшено / истекло / чужой класс; число действующих запретов; топ станций и дорог; для 4702-подобных — пары дорог A→B.
 - [ ] `diagnose_unmet_demand`: причина «конвенция РЖД №…».
 - [ ] README + комментарий в `business_rules.json`.
@@ -196,4 +196,4 @@ Excel `tmp/КОНВЕНЦИИ_2026.xlsx` на этой машине нет (ге
 
 ## Порядок работ дальше
 
-Следующий практический шаг — **шаг 2 (остаток)**: фильтр дат/класса и разбор станций/дорог. Матчинг в солвере — шаги 4–5.
+Следующий практический шаг — **шаг 4**: индекс для `classify_pair`. Матчинг в солвере — шаг 5.

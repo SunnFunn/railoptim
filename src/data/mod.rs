@@ -20,7 +20,7 @@ pub mod wash;
 pub use business_rules::{BusinessRules, ForeignException, RuleOutcome};
 pub use client::ApiClient;
 pub use conventions::{
-    dump_conventions_stub, probe_conventions_at_startup, TelegramData, DUMP_PATH,
+    dump_conventions_stub, load_conventions_at_startup, TelegramData, DUMP_PATH,
 };
 pub use demand_reserves::{
     load_active_reserve_nodes, open_reserves_db, reserve_station_refs, reserves_db_path,

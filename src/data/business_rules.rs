@@ -65,6 +65,31 @@ pub struct BusinessRules {
     /// отключена (спрос АПИ берётся как есть).
     #[serde(rename = "Gu12CheckEnabled")]
     pub gu12_check_enabled: bool,
+
+    /// Правило 4 (жёсткая часть): станция погрузки **закрыта** для подсыла во все
+    /// периоды, если вагонов на станции (`CarsOnStation` из АПИ спроса) больше, чем
+    /// `K_hard × мощность погрузки в сутки` (`station_load_capacity` из
+    /// `data/load_stations.json`). Большая очередь — признак остановившейся погрузки
+    /// (отказ принимать груз), экстраполировать её рассасывание нельзя.
+    /// `None`/`0` — правило 4 целиком отключено. Станции с неизвестной мощностью
+    /// (0 или нет в справочнике) не проверяются.
+    #[serde(rename = "StationBacklogHardDays", deserialize_with = "de_positive_i32")]
+    pub station_backlog_hard_days: Option<i32>,
+
+    /// Правило 4 (мягкая часть): допустимая очередь на станции в **сутках работы**
+    /// на момент прибытия вагона. Пока очередь длиннее `K_soft × мощность`, вагон
+    /// стоит; ожидаемые сутки погрузки сдвигаются на срок рассасывания очереди
+    /// (`t* = ceil((Q − K_soft·C) / C)`), и уже они проверяются окном периода спроса.
+    /// Должно быть меньше `StationBacklogHardDays`, иначе мягкая часть не работает.
+    #[serde(rename = "StationBacklogSoftDays")]
+    pub station_backlog_soft_days: i32,
+
+    /// Штраф к тарифу (руб./ваг. за сутки) за каждые сутки ожидания погрузки на
+    /// станции из-за очереди (мягкая часть правила 4). Вагон стоит на путях клиента,
+    /// поэтому при близких тарифах предпочтителен тот, что приедет к моменту, когда
+    /// очередь рассосётся.
+    #[serde(rename = "StationBacklogWaitPenaltyRubPerDay")]
+    pub station_backlog_wait_penalty_rub_per_day: f64,
 }
 
 impl Default for BusinessRules {
@@ -77,6 +102,9 @@ impl Default for BusinessRules {
             deficit_export_max_distance_km: 0,
             deficit_export_surcharge_rub: 0.0,
             gu12_check_enabled: true,
+            station_backlog_hard_days: None,
+            station_backlog_soft_days: 1,
+            station_backlog_wait_penalty_rub_per_day: 0.0,
         }
     }
 }
@@ -135,6 +163,22 @@ impl BusinessRules {
             e.demand_railway = e.demand_railway.trim().to_string();
             e.from_railways = trim_set(&e.from_railways);
         }
+        // Правило 4: мягкий порог не отрицательный и строго меньше жёсткого,
+        // иначе t* всегда 0 и мягкая часть не действует.
+        self.station_backlog_soft_days = self.station_backlog_soft_days.max(0);
+        if let Some(hard) = self.station_backlog_hard_days.filter(|h| self.station_backlog_soft_days >= *h) {
+            eprintln!(
+                "  [!] business_rules.json: StationBacklogSoftDays ({}) >= StationBacklogHardDays ({hard}) — мягкая часть правила 4 не действует",
+                self.station_backlog_soft_days,
+            );
+        }
+        self.station_backlog_wait_penalty_rub_per_day =
+            self.station_backlog_wait_penalty_rub_per_day.max(0.0);
+    }
+
+    /// Правило 4 включено (задан жёсткий порог `StationBacklogHardDays`).
+    pub fn station_backlog_enabled(&self) -> bool {
+        self.station_backlog_hard_days.is_some()
     }
 
     /// Есть ли хоть одно активное правило (для логов).
@@ -292,6 +336,31 @@ mod tests {
         assert!(matches!(r.check_load_pair("ЮВС", "СКВ", 200), RuleOutcome::Allowed { surcharge_rub } if surcharge_rub > 0.0));
         // Правило 3 включено.
         assert!(r.gu12_check_enabled);
+        // Правило 4: жёсткий порог задан, мягкий строго меньше.
+        let hard = r.station_backlog_hard_days.expect("StationBacklogHardDays задан");
+        assert!(hard >= 1);
+        assert!(r.station_backlog_soft_days < hard);
+        assert!(r.station_backlog_wait_penalty_rub_per_day >= 0.0);
+    }
+
+    #[test]
+    fn station_backlog_params_parse_and_default_off() {
+        let r = BusinessRules::default();
+        assert!(!r.station_backlog_enabled());
+        let r: BusinessRules = serde_json::from_str("{}").unwrap();
+        assert!(!r.station_backlog_enabled());
+        // 0 → отключено.
+        let r: BusinessRules = serde_json::from_str(r#"{"StationBacklogHardDays": 0}"#).unwrap();
+        assert!(!r.station_backlog_enabled());
+        let mut r: BusinessRules = serde_json::from_str(
+            r#"{"StationBacklogHardDays": "5", "StationBacklogSoftDays": -2, "StationBacklogWaitPenaltyRubPerDay": 7000}"#,
+        )
+        .unwrap();
+        r.normalize();
+        assert!(r.station_backlog_enabled());
+        assert_eq!(r.station_backlog_hard_days, Some(5));
+        assert_eq!(r.station_backlog_soft_days, 0, "отрицательный мягкий порог зажимается в 0");
+        assert_eq!(r.station_backlog_wait_penalty_rub_per_day, 7000.0);
     }
 
     #[test]

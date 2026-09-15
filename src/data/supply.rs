@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use chrono::Utc;
 use serde::Deserialize;
@@ -259,17 +259,71 @@ fn group_supply(
         .collect()
 }
 
+/// Убирает повторы номерных вагонов по `CarNumber` (остаётся первое вхождение).
+///
+/// Внутри одного источника вагон должен встречаться один раз: в АПИ — в одной дороге,
+/// в дислокации — одним ключом HASH `supply_data`. Повторы возможны из-за JOIN'ов в
+/// `dislocations.py` (`NSI.FrETSNG` по имени, `dynamic.CarComment` по `CarId`) или
+/// аномалий выгрузки; без снятия дубля вагон учитывался бы в предложении дважды.
+fn dedup_numbered_by_car_number(items: Vec<NumberedCarItem>) -> (Vec<NumberedCarItem>, usize) {
+    let before = items.len();
+    let mut seen: HashSet<u64> = HashSet::with_capacity(before);
+    let items: Vec<NumberedCarItem> = items.into_iter().filter(|c| seen.insert(c.car_number)).collect();
+    let duplicates = before - items.len();
+    (items, duplicates)
+}
+
+/// Узлы дислокации (период 10) вместе со статистикой сверки номеров.
+#[derive(Debug, Default)]
+pub struct DislocationSupply {
+    /// Узлы предложения `supply_period = 10` после снятия дублей и пересечения с периодом 1.
+    pub nodes: Vec<SupplyNode>,
+    /// Вагонов в JSON `dislocations.py` до проверок.
+    pub cars_total: usize,
+    /// Повторов номера внутри выгрузки дислокации (оставлено первое вхождение).
+    pub duplicates_within: usize,
+    /// Номера, уже присутствующие в предложении периода 1 (АПИ) — из периода 10 исключены.
+    /// Сегодняшняя дислокация из АПИ точнее прогноза на 2–10 сутки, поэтому приоритет у неё.
+    pub overlap_with_period1: Vec<u64>,
+}
+
+impl DislocationSupply {
+    /// Вагонов, вошедших в узлы периода 10.
+    pub fn cars_kept(&self) -> i32 {
+        self.nodes.iter().map(|n| n.car_count).sum()
+    }
+}
+
 /// Узлы предложения из JSON, который печатает `dislocations.py`
 /// (массив объектов в формате полей `NumberedCarItem` из АПИ).
 ///
-/// Период предложения `supply_period = 10` (2–10 сутки).
-pub fn supply_nodes_from_dislocation_json(json: &str) -> Result<Vec<SupplyNode>, serde_json::Error> {
+/// Период предложения `supply_period = 10` (2–10 сутки). `period1_cars` — номера
+/// вагонов, уже вошедших в предложение периода 1 из АПИ: такие вагоны из дислокации
+/// исключаются, чтобы один вагон не участвовал в оптимизации дважды. Повторы номера
+/// внутри самой выгрузки схлопываются. Фильтрация идёт по записям **до** группировки,
+/// иначе разошлись бы выровненные по вагонам списки узла (`car_numbers`, `stations_from*`).
+pub fn supply_nodes_from_dislocation_json(
+    json: &str,
+    period1_cars: &HashSet<u64>,
+) -> Result<DislocationSupply, serde_json::Error> {
     let numbered: Vec<NumberedCarItem> = serde_json::from_str(json)?;
-    Ok(group_supply(
-        numbered.into_iter(),
-        std::iter::empty::<NoNumberItem>(),
-        10,
-    ))
+    let cars_total = numbered.len();
+    let (numbered, duplicates_within) = dedup_numbered_by_car_number(numbered);
+
+    let mut overlap_with_period1: Vec<u64> = Vec::new();
+    let numbered: Vec<NumberedCarItem> = numbered
+        .into_iter()
+        .filter(|c| {
+            let overlaps = period1_cars.contains(&c.car_number);
+            if overlaps {
+                overlap_with_period1.push(c.car_number);
+            }
+            !overlaps
+        })
+        .collect();
+
+    let nodes = group_supply(numbered.into_iter(), std::iter::empty::<NoNumberItem>(), 10);
+    Ok(DislocationSupply { nodes, cars_total, duplicates_within, overlap_with_period1 })
 }
 
 /// Помечает узлы предложения, относящиеся к станциям массовой выгрузки.
@@ -328,10 +382,131 @@ impl ApiClient {
             no_number_all.extend(item.no_number);
         }
 
+        // Один вагон — одна запись: повтор номера между дорогами ответа удвоил бы предложение.
+        let (numbered_all, duplicates) = dedup_numbered_by_car_number(numbered_all);
+        if duplicates > 0 {
+            eprintln!(
+                "  [!] АПИ предложения: {duplicates} повторов номеров вагонов в opzCarNumberModelCollection — оставлено первое вхождение"
+            );
+        }
+
         Ok(group_supply(
             numbered_all.into_iter(),
             no_number_all.into_iter(),
             1,
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Запись дислокации в формате `dislocations.py`: только поля, влияющие на ключ группы.
+    fn car_json(car_number: u64, station_to_code: &str, station_from_code: &str) -> String {
+        format!(
+            r#"{{"CarNumber": {car_number}, "StationTo": "СТ-{station_to_code}", "StationToCode": "{station_to_code}",
+                "RailWayToShort": "СКВ", "StationFromCode": "{station_from_code}", "OPZRailWayId": null,
+                "OPZComment1": "БКТ", "GRPOName": "ПОР", "PrevFrETSNGCode": "011005"}}"#
+        )
+    }
+
+    fn json_of(cars: &[String]) -> String {
+        format!("[{}]", cars.join(","))
+    }
+
+    fn all_car_numbers(nodes: &[SupplyNode]) -> Vec<u64> {
+        let mut v: Vec<u64> = nodes.iter().flat_map(|n| n.car_numbers.iter().copied()).collect();
+        v.sort_unstable();
+        v
+    }
+
+    /// Вагоны, уже вошедшие в период 1 (АПИ), из дислокации исключаются; остальные — узлы периода 10.
+    #[test]
+    fn dislocation_drops_cars_already_in_period1() {
+        let json = json_of(&[
+            car_json(1001, "100001", "200001"),
+            car_json(1002, "100001", "200002"),
+            car_json(1003, "100002", "200003"),
+        ]);
+        let period1: HashSet<u64> = [1002_u64, 9999].into_iter().collect();
+
+        let d = supply_nodes_from_dislocation_json(&json, &period1).unwrap();
+        assert_eq!(d.cars_total, 3);
+        assert_eq!(d.duplicates_within, 0);
+        assert_eq!(d.overlap_with_period1, vec![1002]);
+        assert_eq!(d.cars_kept(), 2);
+        assert_eq!(all_car_numbers(&d.nodes), vec![1001, 1003]);
+        assert!(d.nodes.iter().all(|n| n.supply_period == 10));
+        // Выровненные по вагонам списки узла не расходятся после фильтрации.
+        for n in &d.nodes {
+            assert_eq!(n.car_numbers.len(), n.stations_from_code.len());
+            assert_eq!(n.car_count as usize, n.car_numbers.len());
+        }
+        let node_100001 = d.nodes.iter().find(|n| n.station_to_code == "100001").unwrap();
+        assert_eq!(node_100001.stations_from_code, vec!["200001"], "станция отправления вагона 1002 не должна остаться");
+    }
+
+    /// Повтор номера внутри выгрузки (размножение строк JOIN'ами в dislocations.py) схлопывается,
+    /// остаётся первое вхождение; пересечение с периодом 1 считается по уникальным номерам.
+    #[test]
+    fn dislocation_dedups_repeated_car_numbers_within_dump() {
+        let json = json_of(&[
+            car_json(1001, "100001", "200001"),
+            car_json(1001, "100001", "200001"),
+            car_json(1001, "100002", "200009"),
+            car_json(1002, "100001", "200002"),
+            car_json(1002, "100001", "200002"),
+        ]);
+        let period1: HashSet<u64> = [1002_u64].into_iter().collect();
+
+        let d = supply_nodes_from_dislocation_json(&json, &period1).unwrap();
+        assert_eq!(d.cars_total, 5);
+        assert_eq!(d.duplicates_within, 3);
+        assert_eq!(d.overlap_with_period1, vec![1002]);
+        assert_eq!(d.cars_kept(), 1);
+        assert_eq!(all_car_numbers(&d.nodes), vec![1001]);
+        assert_eq!(d.nodes[0].station_to_code, "100001", "первое вхождение вагона 1001");
+    }
+
+    /// Без пересечений и дублей выгрузка проходит как есть; пустой набор периода 1 ничего не режет.
+    #[test]
+    fn dislocation_without_overlap_is_unchanged() {
+        let json = json_of(&[car_json(1001, "100001", "200001"), car_json(1002, "100001", "200002")]);
+        let d = supply_nodes_from_dislocation_json(&json, &HashSet::new()).unwrap();
+        assert_eq!(d.cars_total, 2);
+        assert_eq!(d.duplicates_within, 0);
+        assert!(d.overlap_with_period1.is_empty());
+        assert_eq!(d.cars_kept(), 2);
+        assert_eq!(d.nodes.len(), 1, "одна группа: станция, тип, ЕТСНГ и статус совпадают");
+        assert_eq!(d.nodes[0].car_numbers, vec![1001, 1002]);
+    }
+
+    /// Все вагоны выгрузки уже в периоде 1 — узлов периода 10 нет, статистика заполнена.
+    #[test]
+    fn dislocation_fully_covered_by_period1_yields_no_nodes() {
+        let json = json_of(&[car_json(1001, "100001", "200001")]);
+        let period1: HashSet<u64> = [1001_u64].into_iter().collect();
+        let d = supply_nodes_from_dislocation_json(&json, &period1).unwrap();
+        assert!(d.nodes.is_empty());
+        assert_eq!(d.cars_total, 1);
+        assert_eq!(d.overlap_with_period1, vec![1001]);
+        assert_eq!(d.cars_kept(), 0);
+    }
+
+    /// Дедупликация номерных записей АПИ: повтор номера между дорогами ответа — одно вхождение.
+    #[test]
+    fn api_numbered_items_dedup_keeps_first() {
+        let items: Vec<NumberedCarItem> = serde_json::from_str(&json_of(&[
+            car_json(1001, "100001", "200001"),
+            car_json(1002, "100001", "200002"),
+            car_json(1001, "100003", "200003"),
+        ]))
+        .unwrap();
+        let (items, dups) = dedup_numbered_by_car_number(items);
+        assert_eq!(dups, 1);
+        let nums: Vec<u64> = items.iter().map(|c| c.car_number).collect();
+        assert_eq!(nums, vec![1001, 1002]);
+        assert_eq!(items[0].station_to_code.as_deref(), Some("100001"), "оставлено первое вхождение");
     }
 }

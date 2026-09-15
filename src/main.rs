@@ -149,19 +149,48 @@ async fn main() -> Result<()> {
                 .sum();
     println!("Получено узлов предложения 1 сут.:  {} или {} вагонов", supply_nodes.len(), supply1_total_cars);
 
-    match data::dislocations::fetch_dislocation_supply_nodes() {
-        Ok(extra) if !extra.is_empty() => {
-            let extra_total_cars: i32 = extra.iter()
-                .map(|e| e.car_count)
-                .sum();
-            println!(
-                "  узлов дислокации (2-10 сут., период 10): {} или {} вагонов",
-                extra.len(),
-                extra_total_cars
-            );
-            supply_nodes.extend(extra);
+    // Сверка периодов по номерам: вагон, уже присутствующий в предложении АПИ (период 1,
+    // Free и Assigned), из дислокации (период 10) исключается — иначе он участвовал бы в
+    // оптимизации дважды. Приоритет у периода 1: это сегодняшняя дислокация, а не прогноз.
+    let period1_cars: HashSet<u64> = supply_nodes
+        .iter()
+        .flat_map(|s| s.car_numbers.iter().copied())
+        .collect();
+    match data::dislocations::fetch_dislocation_supply_nodes(&period1_cars) {
+        Ok(disl) => {
+            if disl.duplicates_within > 0 {
+                eprintln!(
+                    "  [!] дислокация: {} повторов номеров внутри выгрузки dislocations.py — оставлено первое вхождение",
+                    disl.duplicates_within,
+                );
+            }
+            if !disl.overlap_with_period1.is_empty() {
+                let n = disl.overlap_with_period1.len();
+                let sample: Vec<String> =
+                    disl.overlap_with_period1.iter().take(10).map(|c| c.to_string()).collect();
+                eprintln!(
+                    "  [!] дислокация: {n} вагонов периода 10 уже есть в предложении АПИ (период 1) — из периода 10 исключены, оставлены в периоде 1: {}{}",
+                    sample.join(", "),
+                    if n > sample.len() { ", …" } else { "" },
+                );
+            }
+            if !disl.nodes.is_empty() {
+                println!(
+                    "  узлов дислокации (2-10 сут., период 10): {} или {} вагонов (в выгрузке {}, дублей {}, пересечений с периодом 1 {})",
+                    disl.nodes.len(),
+                    disl.cars_kept(),
+                    disl.cars_total,
+                    disl.duplicates_within,
+                    disl.overlap_with_period1.len(),
+                );
+                supply_nodes.extend(disl.nodes);
+            } else if disl.cars_total > 0 {
+                println!(
+                    "  узлов дислокации (2-10 сут., период 10): 0 — все {} вагонов выгрузки уже в периоде 1 либо дубли",
+                    disl.cars_total,
+                );
+            }
         }
-        Ok(_) => {}
         Err(e) => eprintln!(
             "  дислокация 2-10 сут.: не загружена ({}), продолжаем только АПИ",
             e

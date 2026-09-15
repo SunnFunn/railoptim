@@ -1,5 +1,5 @@
 {
-  "fetched_at": "2026-09-15 11:51:59",
+  "fetched_at": "2026-09-15 17:44:55",
   "host": "127.0.0.1",
   "port": 6379,
   "db": 0,
@@ -15,6 +15,7 @@
       "empty_dates": 0,
       "skipped_class": 6,
       "skipped_kzh": 0,
+      "unresolved": 0,
       "active": 8,
       "active_empty": 2,
       "active_all": 5,
@@ -52,13 +53,7 @@
         "all_parties": true,
         "recipient_okpo": [],
         "recipient_names": [],
-        "unknown_road_fragments": [
-          "рыльск",
-          "коренево",
-          "глушково",
-          "суджа",
-          "псел мск"
-        ],
+        "unknown_road_fragments": [],
         "convention_info": {
           "type": "Historical",
           "expiration_date": "2025-06-30"
@@ -92,12 +87,7 @@
         "all_parties": true,
         "recipient_okpo": [],
         "recipient_names": [],
-        "unknown_road_fragments": [
-          "наумовка",
-          "толоконное",
-          "долбино",
-          "хотмыжск ювс"
-        ],
+        "unknown_road_fragments": [],
         "convention_info": {
           "type": "Historical",
           "expiration_date": "2025-12-31"
@@ -130,9 +120,7 @@
         "recipient_names": [
           "ПАОНОВОРОССИЙСКИЙКОМБИНАТХЛЕБОПРОДУКТОВ"
         ],
-        "unknown_road_fragments": [
-          "новороссийск скв"
-        ],
+        "unknown_road_fragments": [],
         "convention_info": {
           "type": "Historical",
           "expiration_date": "2026-08-31"
@@ -146,7 +134,9 @@
         "date_end": "3000-01-01",
         "dest_esr": [],
         "dest_names": [],
-        "dest_railways": [],
+        "dest_railways": [
+          "УЗБ"
+        ],
         "dest_all_stations": true,
         "dep_esr": [],
         "dep_names": [],
@@ -156,9 +146,7 @@
         "all_parties": true,
         "recipient_okpo": [],
         "recipient_names": [],
-        "unknown_road_fragments": [
-          "узбекской"
-        ],
+        "unknown_road_fragments": [],
         "convention_info": {
           "type": "Other"
         }
@@ -185,9 +173,7 @@
         "all_parties": true,
         "recipient_okpo": [],
         "recipient_names": [],
-        "unknown_road_fragments": [
-          "свекловичная ювс"
-        ],
+        "unknown_road_fragments": [],
         "convention_info": {
           "type": "Historical",
           "expiration_date": "2025-03-31"
@@ -217,11 +203,7 @@
         "all_parties": true,
         "recipient_okpo": [],
         "recipient_names": [],
-        "unknown_road_fragments": [
-          "шебекино",
-          "нежеголь ювс",
-          "российских"
-        ],
+        "unknown_road_fragments": [],
         "convention_info": {
           "type": "Historical",
           "expiration_date": "2023-04-30"
@@ -249,9 +231,7 @@
         "all_parties": true,
         "recipient_okpo": [],
         "recipient_names": [],
-        "unknown_road_fragments": [
-          "свекловичная ювс"
-        ],
+        "unknown_road_fragments": [],
         "convention_info": {
           "type": "Historical",
           "expiration_date": "2025-03-31"
@@ -281,15 +261,13 @@
         "all_parties": true,
         "recipient_okpo": [],
         "recipient_names": [],
-        "unknown_road_fragments": [
-          "шебекино",
-          "нежеголь ювс"
-        ],
+        "unknown_road_fragments": [],
         "convention_info": {
           "type": "Historical",
           "expiration_date": "2023-04-30"
         }
       }
-    ]
+    ],
+    "unresolved": []
   }
 }

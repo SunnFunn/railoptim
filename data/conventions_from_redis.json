@@ -1,98 +1,295 @@
 {
-  "fetched_at": "2026-09-14 18:29:08",
+  "fetched_at": "2026-09-15 11:51:59",
   "host": "127.0.0.1",
   "port": 6379,
   "db": 0,
   "hash": "telegrams_db",
   "hash_fields": 67,
-  "sample_rzd_number": "4702",
-  "sample": {
-    "id": 8,
-    "rzd_number": "4702",
-    "date_create": "2026-03-11",
-    "date_beg": "2026-03-03",
-    "date_end": "2026-03-04",
-    "text": "ОАО «РЖД» ТЕЛЕГРАММА Адрес 75 дорог России Копия: ЦФТО, ТЦФТО (передано по ЕАСД) Росжелдор (передано по эл.почте) Вследствие сложившихся у перевозчика при использовании инфраструктуры обстоятельств, препятствующих осуществлению перевозок по причине схода подвижного состава на перегоне Ферма - Бахаревка Свердловской железной дороги на основании абзаца 3 статьи 29 Устава железнодорожного транспорта Российской Федерации ввести ограничение погрузки всех грузов на 50% от технического плана со всех железнодорожных станций Красноярской, Западно-Сибирской, Южно-Уральской и Свердловской железных дорог назначением на все железнодорожные станции Октябрьской, Северной, Московской и Горьковской железных дорог сроком на 2 суток с 3 по 4 марта 2026 г. ЦЗ-1 С.А.Кобзев",
-    "cargo_class": "All",
-    "cargo_name": "все грузы",
-    "departure_st": "Все станции Красноярской, Западно-Сибирской, Южно-Уральской и Свердловской железных дорог",
-    "departure_st_code": "Все станции",
-    "destination_st": "Все станции Октябрьской, Северной, Московской и Горьковской железных дорог",
-    "destination_st_code": "Все станции",
-    "railroad_junction": "None",
-    "recipient_name": "все грузополучатели",
-    "recipient_okpo": "All",
-    "convention_info": {
-      "type": "Other"
-    }
-  },
-  "rzd_numbers": [
-    "1039",
-    "10453",
-    "10509",
-    "1169",
-    "11779",
-    "1343",
-    "14175",
-    "1517",
-    "1540",
-    "1656",
-    "16761",
-    "17204",
-    "17893",
-    "18392",
-    "1852",
-    "18924",
-    "18927",
-    "19412",
-    "19692",
-    "20514",
-    "2126",
-    "2177",
-    "2178",
-    "25",
-    "257",
-    "2734",
-    "27638",
-    "28757",
-    "31",
-    "32247",
-    "32441",
-    "32442",
-    "32676",
-    "32796",
-    "32803",
-    "32806",
-    "32833",
-    "32984",
-    "3462",
-    "3769",
-    "40",
-    "406",
-    "4110",
-    "4702",
-    "4806",
-    "4810",
-    "4811",
-    "5104",
-    "558",
-    "5605",
-    "5606",
-    "5616",
-    "5618",
-    "567",
-    "6",
-    "634",
-    "754",
-    "7627",
-    "7659",
-    "7660",
-    "86",
-    "863",
-    "89",
-    "926",
-    "930",
-    "ДП-3400",
-    "ДП-726"
-  ]
+  "load": {
+    "stats": {
+      "hash_fields": 67,
+      "parsed_ok": 67,
+      "bad_json": 0,
+      "expired": 53,
+      "not_yet": 0,
+      "empty_dates": 0,
+      "skipped_class": 6,
+      "skipped_kzh": 0,
+      "active": 8,
+      "active_empty": 2,
+      "active_all": 5,
+      "active_grain": 1,
+      "active_service": 0
+    },
+    "active": [
+      {
+        "rzd_number": "19412",
+        "cargo_class": "All",
+        "cargo_name": "все грузы",
+        "date_beg": "2026-09-01",
+        "date_end": "2026-12-31",
+        "dest_esr": [
+          "207603",
+          "207406",
+          "207302",
+          "206507",
+          "206704"
+        ],
+        "dest_names": [
+          "Рыльск",
+          "Коренево",
+          "Глушково",
+          "Суджа",
+          "Псел (МСК)"
+        ],
+        "dest_railways": [],
+        "dest_all_stations": false,
+        "dep_esr": [],
+        "dep_names": [],
+        "dep_railways": [],
+        "dep_all_stations": true,
+        "junction": null,
+        "all_parties": true,
+        "recipient_okpo": [],
+        "recipient_names": [],
+        "unknown_road_fragments": [
+          "рыльск",
+          "коренево",
+          "глушково",
+          "суджа",
+          "псел мск"
+        ],
+        "convention_info": {
+          "type": "Historical",
+          "expiration_date": "2025-06-30"
+        }
+      },
+      {
+        "rzd_number": "19692",
+        "cargo_class": "All",
+        "cargo_name": "все грузы",
+        "date_beg": "2026-09-01",
+        "date_end": "2026-09-30",
+        "dest_esr": [
+          "434231",
+          "434301",
+          "434405",
+          "436203"
+        ],
+        "dest_names": [
+          "Наумовка",
+          "Толоконное",
+          "Долбино",
+          "Хотмыжск (ЮВС)"
+        ],
+        "dest_railways": [],
+        "dest_all_stations": false,
+        "dep_esr": [],
+        "dep_names": [],
+        "dep_railways": [],
+        "dep_all_stations": true,
+        "junction": null,
+        "all_parties": true,
+        "recipient_okpo": [],
+        "recipient_names": [],
+        "unknown_road_fragments": [
+          "наумовка",
+          "толоконное",
+          "долбино",
+          "хотмыжск ювс"
+        ],
+        "convention_info": {
+          "type": "Historical",
+          "expiration_date": "2025-12-31"
+        }
+      },
+      {
+        "rzd_number": "20514",
+        "cargo_class": "Grain",
+        "cargo_name": "пшеница",
+        "date_beg": "2026-09-13",
+        "date_end": "2026-10-12",
+        "dest_esr": [
+          "521001",
+          "520901"
+        ],
+        "dest_names": [
+          "Новороссийск (СКВ)"
+        ],
+        "dest_railways": [],
+        "dest_all_stations": false,
+        "dep_esr": [],
+        "dep_names": [],
+        "dep_railways": [],
+        "dep_all_stations": true,
+        "junction": null,
+        "all_parties": false,
+        "recipient_okpo": [
+          "935191"
+        ],
+        "recipient_names": [
+          "ПАОНОВОРОССИЙСКИЙКОМБИНАТХЛЕБОПРОДУКТОВ"
+        ],
+        "unknown_road_fragments": [
+          "новороссийск скв"
+        ],
+        "convention_info": {
+          "type": "Historical",
+          "expiration_date": "2026-08-31"
+        }
+      },
+      {
+        "rzd_number": "27638",
+        "cargo_class": "Empty",
+        "cargo_name": "Порожние вагоны",
+        "date_beg": "2025-11-11",
+        "date_end": "3000-01-01",
+        "dest_esr": [],
+        "dest_names": [],
+        "dest_railways": [],
+        "dest_all_stations": true,
+        "dep_esr": [],
+        "dep_names": [],
+        "dep_railways": [],
+        "dep_all_stations": true,
+        "junction": null,
+        "all_parties": true,
+        "recipient_okpo": [],
+        "recipient_names": [],
+        "unknown_road_fragments": [
+          "узбекской"
+        ],
+        "convention_info": {
+          "type": "Other"
+        }
+      },
+      {
+        "rzd_number": "4810",
+        "cargo_class": "All",
+        "cargo_name": "все грузы",
+        "date_beg": "2026-03-05",
+        "date_end": "3000-01-01",
+        "dest_esr": [
+          "436701"
+        ],
+        "dest_names": [
+          "Свекловичная (ЮВС)"
+        ],
+        "dest_railways": [],
+        "dest_all_stations": false,
+        "dep_esr": [],
+        "dep_names": [],
+        "dep_railways": [],
+        "dep_all_stations": true,
+        "junction": null,
+        "all_parties": true,
+        "recipient_okpo": [],
+        "recipient_names": [],
+        "unknown_road_fragments": [
+          "свекловичная ювс"
+        ],
+        "convention_info": {
+          "type": "Historical",
+          "expiration_date": "2025-03-31"
+        }
+      },
+      {
+        "rzd_number": "4811",
+        "cargo_class": "Empty",
+        "cargo_name": "Порожние вагоны",
+        "date_beg": "2026-03-05",
+        "date_end": "3000-01-01",
+        "dest_esr": [
+          "434208",
+          "434104"
+        ],
+        "dest_names": [
+          "Шебекино",
+          "Нежеголь (ЮВС)"
+        ],
+        "dest_railways": [],
+        "dest_all_stations": false,
+        "dep_esr": [],
+        "dep_names": [],
+        "dep_railways": [],
+        "dep_all_stations": true,
+        "junction": null,
+        "all_parties": true,
+        "recipient_okpo": [],
+        "recipient_names": [],
+        "unknown_road_fragments": [
+          "шебекино",
+          "нежеголь ювс",
+          "российских"
+        ],
+        "convention_info": {
+          "type": "Historical",
+          "expiration_date": "2023-04-30"
+        }
+      },
+      {
+        "rzd_number": "7659",
+        "cargo_class": "All",
+        "cargo_name": "все грузы",
+        "date_beg": "2026-04-06",
+        "date_end": "2026-09-30",
+        "dest_esr": [
+          "436701"
+        ],
+        "dest_names": [
+          "Свекловичная (ЮВС)"
+        ],
+        "dest_railways": [],
+        "dest_all_stations": false,
+        "dep_esr": [],
+        "dep_names": [],
+        "dep_railways": [],
+        "dep_all_stations": true,
+        "junction": null,
+        "all_parties": true,
+        "recipient_okpo": [],
+        "recipient_names": [],
+        "unknown_road_fragments": [
+          "свекловичная ювс"
+        ],
+        "convention_info": {
+          "type": "Historical",
+          "expiration_date": "2025-03-31"
+        }
+      },
+      {
+        "rzd_number": "7660",
+        "cargo_class": "All",
+        "cargo_name": "все грузы",
+        "date_beg": "2026-04-06",
+        "date_end": "2026-09-30",
+        "dest_esr": [
+          "434208",
+          "434104"
+        ],
+        "dest_names": [
+          "Шебекино",
+          "Нежеголь (ЮВС)"
+        ],
+        "dest_railways": [],
+        "dest_all_stations": false,
+        "dep_esr": [],
+        "dep_names": [],
+        "dep_railways": [],
+        "dep_all_stations": true,
+        "junction": null,
+        "all_parties": true,
+        "recipient_okpo": [],
+        "recipient_names": [],
+        "unknown_road_fragments": [
+          "шебекино",
+          "нежеголь ювс"
+        ],
+        "convention_info": {
+          "type": "Historical",
+          "expiration_date": "2023-04-30"
+        }
+      }
+    ]
+  }
 }

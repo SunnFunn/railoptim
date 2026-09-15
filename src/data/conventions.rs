@@ -2,7 +2,8 @@
 //!
 //! Шаг 1 — подключение. Шаг 2 — разбор JSON, в память и снимок только действующие
 //! (даты пересекают горизонт планирования). Шаг 4 — [`super::convention_index::ConventionIndex`].
-//! В `classify_pair` индекс пока не подключён (шаг 5).
+//! В `classify_pair` индекс применяется (шаг 5). Ограничение «на N% от плана»
+//! в JSON нет — трактуем как жёсткий запрет.
 //!
 //! Переменные окружения (не путать с `REDIS_SUPPLY_*` дислокации на порту 6380):
 //!   `REDIS_CONV_HOST` (по умолчанию `127.0.0.1`)
@@ -260,6 +261,7 @@ pub fn load_conventions_at_startup(enabled: bool) -> ConventionIndex {
             }
             let index = ConventionIndex::build(probe.load.active);
             println!("  {}", index.summary_line());
+            index.log_geography();
             index
         }
         Err(e) => {
@@ -485,6 +487,16 @@ fn parse_iso_date(raw: &str) -> Option<NaiveDate> {
         return None;
     }
     NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()
+}
+
+impl ParsedConvention {
+    /// Прибытие `day` попадает в `date_beg…date_end` (уже отфильтрованные на горизонт записи).
+    pub fn covers_date(&self, day: NaiveDate) -> bool {
+        match (parse_iso_date(&self.date_beg), parse_iso_date(&self.date_end)) {
+            (Some(b), Some(e)) => day >= b && day <= e,
+            _ => true,
+        }
+    }
 }
 
 fn parse_esr_list(raw: &str) -> Vec<String> {

@@ -25,5 +25,6 @@ fn main() -> Result<()> {
     );
     let index = ConventionIndex::build(probe.load.active);
     println!("  {}", index.summary_line());
+    index.log_geography();
     Ok(())
 }

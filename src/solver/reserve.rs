@@ -13,12 +13,15 @@
 //!   вагонов, затем минимум тарифной стоимости.
 //!
 //! Ограничения типа вагона, промывки, MIN_BATCH и ДМЗИ к отстою не применяются.
+//! Конвенции РЖД (правило 5) закрывают отдельные пары станция→отстой.
 
 use std::collections::HashMap;
 
 use highs::{ColProblem, Sense};
 
+use crate::data::convention_index::{ConventionIndex, ConventionScope, EmptyDestRef};
 use crate::node::{ReserveNode, SupplyNode, TariffNode};
+use super::model::supply_release_shift_days;
 
 /// «Премия» за размещение одного вагона в отстой.
 ///
@@ -50,12 +53,14 @@ pub struct ReserveAssignment {
 /// - `tariffs` — карта `(код станции предложения, код станции отстоя) → тариф`
 ///   (направление: **от** станции дислокации порожнего `SupplyNode::station_to_code`
 ///   **к** станции резерва);
-/// - пары без тарифа переменной не получают.
+/// - пары без тарифа переменной не получают;
+/// - `conventions` — запрет порожнего на станцию отстоя ([`ConventionIndex::disabled`] — без правила 5).
 pub fn solve_reserve_assignment(
     excess: &[i32],
     supply: &[SupplyNode],
     reserves: &[ReserveNode],
     tariffs: &HashMap<(String, String), TariffNode>,
+    conventions: &ConventionIndex,
 ) -> Vec<ReserveAssignment> {
     let mut model = ColProblem::default();
 
@@ -79,12 +84,40 @@ pub fn solve_reserve_assignment(
     let mut cols: Vec<(usize, usize, f64, i32, i32)> = Vec::new();
     let mut sorted_s: Vec<usize> = supply_rows.keys().copied().collect();
     sorted_s.sort_unstable();
+    let mut convention_skip = 0usize;
     for &s_idx in &sorted_s {
-        let from_code = supply[s_idx].station_to_code.as_str();
+        let s = &supply[s_idx];
+        let from_code = s.station_to_code.as_str();
+        let shift = supply_release_shift_days(s.supply_period);
         for (r_idx, r) in reserves.iter().enumerate() {
             let Some(t) = tariffs.get(&(from_code.to_string(), r.station_code.clone())) else {
                 continue;
             };
+            let rec_okpo: &[String] = match &r.owner_okpo {
+                Some(o) => std::slice::from_ref(o),
+                None => &[],
+            };
+            let rec_names: &[String] = match &r.owner {
+                Some(n) => std::slice::from_ref(n),
+                None => &[],
+            };
+            let dest = EmptyDestRef {
+                supply_railway: &s.railway_to,
+                station_code: &r.station_code,
+                station_name: &r.station_name,
+                railway: &r.railway_short,
+                sender_okpo: None,
+                sender_name: None,
+                recipient_okpos: rec_okpo,
+                recipient_names: rec_names,
+            };
+            if conventions
+                .ban_for_empty_dest_arrival(dest, ConventionScope::Reserve, shift + t.period_of_delivery)
+                .is_some()
+            {
+                convention_skip += 1;
+                continue;
+            }
             model.add_column(
                 t.cost - RESERVE_PLACEMENT_REWARD,
                 0.0..,
@@ -95,6 +128,9 @@ pub fn solve_reserve_assignment(
             );
             cols.push((s_idx, r_idx, t.cost, t.distance, t.period_of_delivery));
         }
+    }
+    if convention_skip > 0 {
+        println!("  отстой: {convention_skip} пар станция→резерв закрыты конвенцией РЖД");
     }
     if cols.is_empty() {
         return Vec::new();
@@ -127,7 +163,18 @@ pub fn solve_reserve_assignment(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::data::convention_index::ConventionIndex;
+    use crate::data::conventions::{ConventionCargoClass, ConventionStatus, ParsedConvention};
     use crate::node::{CarKind, RepairStatus};
+
+    fn solve(
+        excess: &[i32],
+        supply: &[SupplyNode],
+        reserves: &[ReserveNode],
+        tariffs: &HashMap<(String, String), TariffNode>,
+    ) -> Vec<ReserveAssignment> {
+        solve_reserve_assignment(excess, supply, reserves, tariffs, &ConventionIndex::disabled())
+    }
 
     fn supply_at(code: &str, count: i32) -> SupplyNode {
         SupplyNode {
@@ -201,7 +248,7 @@ mod tests {
         let supply = vec![supply_at("S1", 5)];
         let reserves = vec![reserve_at("R1", 3)];
         let tariffs: HashMap<_, _> = [tariff("S1", "R1", 10_000.0)].into();
-        let a = solve_reserve_assignment(&[5], &supply, &reserves, &tariffs);
+        let a = solve(&[5], &supply, &reserves, &tariffs);
         assert_eq!(a.len(), 1);
         assert_eq!(a[0].quantity, 3);
     }
@@ -213,7 +260,7 @@ mod tests {
         let reserves = vec![reserve_at("R1", 10), reserve_at("R2", 10)];
         let tariffs: HashMap<_, _> =
             [tariff("S1", "R1", 50_000.0), tariff("S1", "R2", 10_000.0)].into();
-        let a = solve_reserve_assignment(&[4], &supply, &reserves, &tariffs);
+        let a = solve(&[4], &supply, &reserves, &tariffs);
         assert_eq!(a.len(), 1);
         assert_eq!(a[0].r_idx, 1);
         assert_eq!(a[0].quantity, 4);
@@ -226,7 +273,7 @@ mod tests {
         let reserves = vec![reserve_at("R1", 1), reserve_at("R2", 1)];
         let tariffs: HashMap<_, _> =
             [tariff("S1", "R1", 5_000.0), tariff("S1", "R2", 900_000.0)].into();
-        let a = solve_reserve_assignment(&[2], &supply, &reserves, &tariffs);
+        let a = solve(&[2], &supply, &reserves, &tariffs);
         let placed: i32 = a.iter().map(|x| x.quantity).sum();
         assert_eq!(placed, 2);
     }
@@ -237,7 +284,7 @@ mod tests {
         let supply = vec![supply_at("S1", 3), supply_at("S2", 2)];
         let reserves = vec![reserve_at("R1", 10)];
         let tariffs: HashMap<_, _> = [tariff("S2", "R1", 10_000.0)].into();
-        let a = solve_reserve_assignment(&[3, 2], &supply, &reserves, &tariffs);
+        let a = solve(&[3, 2], &supply, &reserves, &tariffs);
         assert_eq!(a.len(), 1);
         assert_eq!(a[0].s_idx, 1);
         assert_eq!(a[0].quantity, 2);
@@ -249,7 +296,47 @@ mod tests {
         let supply = vec![supply_at("S1", 3)];
         let reserves = vec![reserve_at("R1", 10)];
         let tariffs: HashMap<_, _> = [tariff("S1", "R1", 10_000.0)].into();
-        let a = solve_reserve_assignment(&[0], &supply, &reserves, &tariffs);
+        let a = solve(&[0], &supply, &reserves, &tariffs);
         assert!(a.is_empty());
+    }
+
+    fn conv_empty_esr(rzd: &str, esr: &str) -> ParsedConvention {
+        ParsedConvention {
+            rzd_number: rzd.into(),
+            cargo_class: ConventionCargoClass::Empty,
+            cargo_name: String::new(),
+            date_beg: "2026-01-01".into(),
+            date_end: "3000-01-01".into(),
+            dest_esr: vec![esr.into()],
+            dest_names: vec![],
+            dest_railways: vec![],
+            dest_all_stations: false,
+            dep_esr: vec![],
+            dep_names: vec![],
+            dep_railways: vec![],
+            dep_all_stations: false,
+            junction: None,
+            all_parties: true,
+            recipient_okpo: vec![],
+            recipient_names: vec![],
+            unknown_road_fragments: vec![],
+            convention_info: ConventionStatus::Other,
+            kzh_stripped_dest: false,
+            kzh_stripped_dep: false,
+        }
+    }
+
+    /// Дешёвый отстой закрыт конвенцией — берём следующий.
+    #[test]
+    fn convention_skips_banned_reserve() {
+        let supply = vec![supply_at("S1", 4)];
+        let reserves = vec![reserve_at("987303", 10), reserve_at("R2", 10)];
+        let tariffs: HashMap<_, _> =
+            [tariff("S1", "987303", 10_000.0), tariff("S1", "R2", 50_000.0)].into();
+        let idx = ConventionIndex::build(vec![conv_empty_esr("9001", "987303")]);
+        let a = solve_reserve_assignment(&[4], &supply, &reserves, &tariffs, &idx);
+        assert_eq!(a.len(), 1);
+        assert_eq!(a[0].r_idx, 1);
+        assert_eq!(a[0].quantity, 4);
     }
 }

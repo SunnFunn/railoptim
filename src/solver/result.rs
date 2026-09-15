@@ -6,13 +6,14 @@ use serde::{Deserialize, Serialize};
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
+use crate::data::convention_index::{ConventionIndex, ConventionScope, EmptyDestRef};
 use crate::data::wash;
 use crate::data::free_loadroads::FreeLoadRoad;
 use crate::node::{CarKind, DemandNode, DemandPurpose, ReserveNode, SupplyNode, TariffNode};
 use crate::data::repairs::RepairStation;
 use super::lp::OptimResult;
 use super::loadroads::LoadRoadAssignment;
-use super::model::TaskArc;
+use super::model::{supply_release_shift_days, TaskArc};
 use super::reserve::ReserveAssignment;
 
 // ---------------------------------------------------------------------------
@@ -716,15 +717,35 @@ pub fn output_records_for_api(records: &[OutputRecord]) -> Vec<OutputRecord> {
         .collect()
 }
 
-/// Возвращает тарифный узел с минимальной стоимостью среди всех тарифов,
-/// отправление которых совпадает с `station_from_code`.
+/// Самый дешёвый тариф до ремонтной станции, не закрытой конвенцией РЖД.
 fn best_repair_tariff<'a>(
-    station_from_code: &str,
+    s: &SupplyNode,
     repair_tariffs: &'a [TariffNode],
+    station_by_code: &HashMap<&str, &RepairStation>,
+    conventions: &ConventionIndex,
 ) -> Option<&'a TariffNode> {
+    let shift = supply_release_shift_days(s.supply_period);
     repair_tariffs
         .iter()
-        .filter(|t| t.station_from_code == station_from_code)
+        .filter(|t| t.station_from_code == s.station_to_code)
+        .filter(|t| {
+            let rs = station_by_code.get(t.station_to_code.as_str()).copied();
+            let rec_okpo = rs.map(|r| r.recip_okpo.as_slice()).unwrap_or(&[]);
+            let rec_names = rs.map(|r| r.recip_name.as_slice()).unwrap_or(&[]);
+            let dest = EmptyDestRef {
+                supply_railway: &s.railway_to,
+                station_code: &t.station_to_code,
+                station_name: &t.station_to,
+                railway: &t.railway_to,
+                sender_okpo: None,
+                sender_name: None,
+                recipient_okpos: rec_okpo,
+                recipient_names: rec_names,
+            };
+            conventions
+                .ban_for_empty_dest_arrival(dest, ConventionScope::Repair, shift + t.period_of_delivery)
+                .is_none()
+        })
         .min_by(|a, b| a.cost.partial_cmp(&b.cost).unwrap_or(std::cmp::Ordering::Equal))
 }
 
@@ -732,16 +753,23 @@ fn best_repair_tariff<'a>(
 ///
 /// Тип назначения — «В ремонт». Ремонтная станция выбирается из `repair_tariffs`
 /// как станция с минимальным тарифом подсыла от текущего местонахождения вагона.
-/// Если тариф не найден, станция назначения совпадает с текущей.
+/// Станции, закрытые конвенцией РЖД (правило 5), пропускаются — берётся следующая
+/// по тарифу. Если ни одна ремонтная станция не осталась, станция назначения
+/// совпадает с текущей.
 /// Поле `customer` заполняется из `repair_stations` по коду выбранной ремонтной станции.
 pub fn build_repair_output_records(
     repair_supply:   &[SupplyNode],
     repair_tariffs:  &[TariffNode],
     repair_stations: &[RepairStation],
+    conventions:     &ConventionIndex,
 ) -> Vec<OutputRecord> {
     let now_str = Local::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
 
-    // Индекс: код ремонтной станции → грузополучатель (первый RecipName).
+    // Индекс: код ремонтной станции → запись словаря (грузополучатель + ОКПО).
+    let station_by_code: HashMap<&str, &RepairStation> = repair_stations
+        .iter()
+        .map(|rs| (rs.station_code.as_str(), rs))
+        .collect();
     let recip_by_code: HashMap<&str, &str> = repair_stations
         .iter()
         .filter_map(|rs| rs.recip_name.first().map(|name| (rs.station_code.as_str(), name.as_str())))
@@ -750,7 +778,7 @@ pub fn build_repair_output_records(
     repair_supply
         .iter()
         .map(|s| {
-            let best = best_repair_tariff(&s.station_to_code, repair_tariffs);
+            let best = best_repair_tariff(s, repair_tariffs, &station_by_code, conventions);
             let repair_station_code = best
                 .map(|t| t.station_to_code.as_str())
                 .unwrap_or(s.station_to_code.as_str());
@@ -1080,6 +1108,83 @@ mod tests {
 
         let (recs, sup) = output_balance(&records, &supply);
         assert_eq!(recs, sup);
+    }
+
+    fn repair_tariff(from: &str, to: &str, cost: f64) -> TariffNode {
+        TariffNode {
+            station_from: from.to_string(),
+            station_from_code: from.to_string(),
+            railway_from: "МСК".to_string(),
+            railway_from_code: 17,
+            station_to: format!("Рем-{to}"),
+            station_to_code: to.to_string(),
+            railway_to: "МСК".to_string(),
+            railway_to_code: 17,
+            distance: 100,
+            period_of_delivery: 2,
+            cost,
+            actual_date: chrono::NaiveDate::from_ymd_opt(2026, 6, 11)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap(),
+        }
+    }
+
+    fn repair_station(code: &str, recip: &str) -> RepairStation {
+        RepairStation {
+            railway: "МСК".into(),
+            station_name: format!("Рем-{code}"),
+            station_code: code.into(),
+            recip_name: vec![recip.into()],
+            recip_okpo: vec![],
+        }
+    }
+
+    fn conv_empty_esr(rzd: &str, esr: &str) -> crate::data::conventions::ParsedConvention {
+        crate::data::conventions::ParsedConvention {
+            rzd_number: rzd.into(),
+            cargo_class: crate::data::conventions::ConventionCargoClass::Empty,
+            cargo_name: String::new(),
+            date_beg: "2026-01-01".into(),
+            date_end: "3000-01-01".into(),
+            dest_esr: vec![esr.into()],
+            dest_names: vec![],
+            dest_railways: vec![],
+            dest_all_stations: false,
+            dep_esr: vec![],
+            dep_names: vec![],
+            dep_railways: vec![],
+            dep_all_stations: false,
+            junction: None,
+            all_parties: true,
+            recipient_okpo: vec![],
+            recipient_names: vec![],
+            unknown_road_fragments: vec![],
+            convention_info: crate::data::conventions::ConventionStatus::Other,
+            kzh_stripped_dest: false,
+            kzh_stripped_dep: false,
+        }
+    }
+
+    /// Дешёвая ремонтная станция закрыта конвенцией — берём следующую.
+    #[test]
+    fn convention_skips_banned_repair_station() {
+        let mut s = dummy_supply(2, vec![1, 2], CarKind::Free);
+        s.repair_status = RepairStatus::NeedsRepair;
+        let tariffs = vec![
+            repair_tariff("S1", "987303", 10_000.0),
+            repair_tariff("S1", "R2", 50_000.0),
+        ];
+        let stations = vec![
+            repair_station("987303", "ООО А"),
+            repair_station("R2", "ООО Б"),
+        ];
+        let idx = ConventionIndex::build(vec![conv_empty_esr("9001", "987303")]);
+        let recs = build_repair_output_records(&[s], &tariffs, &stations, &idx);
+        assert_eq!(recs.len(), 1);
+        assert_eq!(recs[0].station_to_code, "R2");
+        assert_eq!(recs[0].customer.as_deref(), Some("ООО Б"));
+        assert!((recs[0].cost - 50_000.0).abs() < 1e-6);
     }
 }
 

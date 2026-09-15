@@ -3,10 +3,11 @@
 //! Не сканируем весь список на каждую пару supply×demand: кандидаты берутся по
 //! ЕСР станции погрузки, ЕСР назначения груза и коротким кодам дорог. Фильтр
 //! «все грузополучатели» vs ОКПО/имя применяется к уже найденным кандидатам.
-//!
-//! Подключение к солверу — шаг 5.
+//! Ограничение «на 50% от плана» в JSON нет — в v1 такая телеграмма = жёсткий запрет.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+
+use chrono::{Duration, Local, NaiveDate};
 
 use crate::node::{DemandNode, DemandPurpose, SupplyNode};
 
@@ -72,6 +73,8 @@ pub struct ConventionIndex {
     empty_pair_by_dest_rw: HashMap<String, Vec<usize>>,
     /// All/Grain, оба списка: dest = дорога назначения груза, затем dep = дорога погрузки.
     all_pair_by_dest_rw: HashMap<String, Vec<usize>>,
+    /// День прогона (для пересечения с `date_beg…date_end` на дуге). `None` — даты не фильтруем.
+    today: Option<NaiveDate>,
     pub stats: ConventionIndexStats,
 }
 
@@ -86,6 +89,10 @@ impl ConventionIndex {
 
     pub fn len(&self) -> usize {
         self.rules.len()
+    }
+
+    pub fn today(&self) -> NaiveDate {
+        self.today.unwrap_or_else(|| Local::now().date_naive())
     }
 
     pub fn summary_line(&self) -> String {
@@ -103,13 +110,97 @@ impl ConventionIndex {
         )
     }
 
+    /// ЕСР, дороги и пары dep→dest для лога старта.
+    pub fn log_geography(&self) {
+        fn preview(keys: impl Iterator<Item = String>, n: usize) -> (Vec<String>, usize) {
+            let mut v: Vec<String> = keys.collect();
+            v.sort();
+            let extra = v.len().saturating_sub(n);
+            v.truncate(n);
+            (v, extra)
+        }
+        let (esr, extra) = preview(self.empty_by_load_esr.keys().cloned(), 15);
+        if !esr.is_empty() {
+            println!(
+                "  ЕСР погрузки (Empty/All): {}{}",
+                esr.join(", "),
+                if extra > 0 { format!(" …ещё {extra}") } else { String::new() },
+            );
+        }
+        let (gesr, extra) = preview(self.grain_by_cargo_esr.keys().cloned(), 15);
+        if !gesr.is_empty() {
+            println!(
+                "  ЕСР назн.груза (Grain/All): {}{}",
+                gesr.join(", "),
+                if extra > 0 { format!(" …ещё {extra}") } else { String::new() },
+            );
+        }
+        let st = &self.stats;
+        if st.wash_rules + st.repair_rules + st.reserve_rules > 0 {
+            println!(
+                "  служебные станции: промывка {}, ремонт {}, отстой {}",
+                st.wash_rules, st.repair_rules, st.reserve_rules,
+            );
+        }
+        let (dest_rw, extra) = preview(
+            self.empty_by_dest_rw
+                .keys()
+                .chain(self.grain_by_dest_rw.keys())
+                .chain(self.empty_pair_by_dest_rw.keys())
+                .chain(self.all_pair_by_dest_rw.keys())
+                .cloned()
+                .collect::<HashSet<_>>()
+                .into_iter(),
+            15,
+        );
+        if !dest_rw.is_empty() {
+            println!(
+                "  dest-дороги: {}{}",
+                dest_rw.join(", "),
+                if extra > 0 { format!(" …ещё {extra}") } else { String::new() },
+            );
+        }
+        let (dep_rw, extra) = preview(self.all_by_dep_rw.keys().cloned(), 15);
+        if !dep_rw.is_empty() {
+            println!(
+                "  dep-дороги (All/Grain без dest): {}{}",
+                dep_rw.join(", "),
+                if extra > 0 { format!(" …ещё {extra}") } else { String::new() },
+            );
+        }
+        let pairs: Vec<&ParsedConvention> = self
+            .rules
+            .iter()
+            .filter(|r| r.dest_all_stations && !r.dest_railways.is_empty() && !r.dep_railways.is_empty())
+            .collect();
+        if !pairs.is_empty() {
+            println!("  пары дорог dep→dest (как 4702):");
+            for r in pairs.iter().take(15) {
+                println!(
+                    "    · №{} {} → {}",
+                    r.rzd_number,
+                    r.dep_railways.join(","),
+                    r.dest_railways.join(","),
+                );
+            }
+            if pairs.len() > 15 {
+                println!("    · ...ещё {} пар", pairs.len() - 15);
+            }
+        }
+    }
+
     pub fn build(active: Vec<ParsedConvention>) -> Self {
+        Self::build_at(active, Local::now().date_naive())
+    }
+
+    pub fn build_at(active: Vec<ParsedConvention>, today: NaiveDate) -> Self {
         let mut idx = Self {
             stats: ConventionIndexStats {
                 rules: active.len(),
                 ..Default::default()
             },
             rules: active,
+            today: Some(today),
             ..Default::default()
         };
         for i in 0..idx.rules.len() {
@@ -257,7 +348,45 @@ impl ConventionIndex {
             rec_okpo,
             rec_names,
             scope,
+            on: None,
         })
+    }
+
+    /// Как [`Self::ban_for`], но только если телеграмма покрывает дату прибытия.
+    pub fn ban_for_on(&self, s: &SupplyNode, d: &DemandNode, on: NaiveDate) -> Option<&ParsedConvention> {
+        if self.rules.is_empty() {
+            return None;
+        }
+        let rec_okpo = d.loader_to_okpo.as_deref().unwrap_or(&[]);
+        let rec_names = d.recipient.as_deref().unwrap_or(&[]);
+        let cargo_code = d.station_to_code.as_deref().unwrap_or("");
+        let cargo_name = d.station_to_name.as_deref().unwrap_or("");
+        let cargo_rw = d.railway_to_name.as_deref().unwrap_or("");
+        let scope = match d.purpose {
+            DemandPurpose::Load => ConventionScope::Load,
+            DemandPurpose::Wash => ConventionScope::Wash,
+        };
+        self.ban_query(&Query {
+            supply_rw: &s.railway_to,
+            load_code: &d.station_code,
+            load_name: &d.station_name,
+            load_rw: &d.railway_name,
+            cargo_code,
+            cargo_name,
+            cargo_rw,
+            sender_okpo: d.sender_okpo.as_deref(),
+            sender_name: d.sender.as_deref(),
+            rec_okpo,
+            rec_names,
+            scope,
+            on: Some(on),
+        })
+    }
+
+    /// Запрет на дату прибытия: `today` индекса + `arrival_day` суток от сегодня.
+    pub fn ban_for_arrival(&self, s: &SupplyNode, d: &DemandNode, arrival_day: i32) -> Option<&ParsedConvention> {
+        let on = self.today() + Duration::days(i64::from(arrival_day.max(0)));
+        self.ban_for_on(s, d, on)
     }
 
     /// Empty-запрет на станцию ремонта или отстоя.
@@ -278,6 +407,35 @@ impl ConventionIndex {
             rec_okpo: dest.recipient_okpos,
             rec_names: dest.recipient_names,
             scope,
+            on: None,
+        })
+    }
+
+    /// Empty-запрет на дату прибытия (`today` + `arrival_day`).
+    pub fn ban_for_empty_dest_arrival(
+        &self,
+        dest: EmptyDestRef<'_>,
+        scope: ConventionScope,
+        arrival_day: i32,
+    ) -> Option<&ParsedConvention> {
+        if self.rules.is_empty() {
+            return None;
+        }
+        let on = self.today() + Duration::days(i64::from(arrival_day.max(0)));
+        self.ban_query(&Query {
+            supply_rw: dest.supply_railway,
+            load_code: dest.station_code,
+            load_name: dest.station_name,
+            load_rw: dest.railway,
+            cargo_code: "",
+            cargo_name: "",
+            cargo_rw: "",
+            sender_okpo: dest.sender_okpo,
+            sender_name: dest.sender_name,
+            rec_okpo: dest.recipient_okpos,
+            rec_names: dest.recipient_names,
+            scope,
+            on: Some(on),
         })
     }
 
@@ -313,6 +471,7 @@ impl ConventionIndex {
         for i in ids {
             let r = &self.rules[i];
             if self.rule_hits(r, q, &supply_rw, &load_esr, &load_name, &load_rw, &cargo_esr, &cargo_name, &cargo_rw)
+                && q.on.is_none_or(|day| r.covers_date(day))
             {
                 return Some(r);
             }
@@ -424,6 +583,7 @@ struct Query<'a> {
     rec_okpo: &'a [String],
     rec_names: &'a [String],
     scope: ConventionScope,
+    on: Option<NaiveDate>,
 }
 
 fn empty_rule_applies(r: &ParsedConvention, scope: ConventionScope) -> bool {

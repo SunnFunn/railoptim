@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::data::business_rules::{BusinessRules, RuleOutcome};
+use crate::data::convention_index::ConventionIndex;
 use crate::data::references::normalize_etsng_code;
 use crate::data::station_backlog::StationBacklogIndex;
 use crate::data::wash::{effective_etsng_for_wash_tariff, supply_needs_wash};
@@ -303,7 +304,10 @@ impl DmziIndex {
 ///   `StationBacklogHardDays` суток работы закрыта во все периоды
 ///   ([`PairOutcome::StationOverloaded`]); при меньшей очереди вагон, приезжающий
 ///   раньше её рассасывания, ждёт: ожидаемые сутки погрузки сдвигаются (и проверяются
-///   окном периода), за сутки ожидания начисляется `StationBacklogWaitPenaltyRubPerDay`.
+///   окном периода), за сутки ожидания начисляется `StationBacklogWaitPenaltyRubPerDay`;
+/// - конвенции РЖД (`conventions`, правило 5) — действующая телеграмма закрывает
+///   пару Load или Wash ([`PairOutcome::ConventionBan`]); ремонт и отстой
+///   проверяются отдельно. «50% от плана» в JSON нет — жёсткий запрет.
 ///
 /// Возвращает `(arcs, stats)`, где `stats` — счётчики для диагностики.
 ///
@@ -311,6 +315,7 @@ impl DmziIndex {
 /// `wash_tariffs` — тарифы до станций **промывки** с уже учтённой надбавкой
 /// [`WASH_PATH_SURCHARGE_RUB`] (промывка + порожний пробег до погрузки), ключ `(откуда, куда)`.
 /// `backlog` — индекс загруженности станций ([`StationBacklogIndex::disabled`] — без правила 4).
+/// `conventions` — индекс конвенций ([`ConventionIndex::disabled`] — без правила 5).
 #[allow(clippy::too_many_arguments)]
 pub fn build_task_arcs(
     supply: &[SupplyNode],
@@ -322,6 +327,7 @@ pub fn build_task_arcs(
     wash_tariffs: &HashMap<(String, String), TariffNode>,
     rules: &BusinessRules,
     backlog: &StationBacklogIndex,
+    conventions: &ConventionIndex,
 ) -> (Vec<TaskArc>, ArcStats) {
     // Индекс тарифов погрузки: (код_откуда, код_куда) → TariffNode
     let tariff_index: HashMap<(&str, &str), &TariffNode> = tariffs
@@ -387,6 +393,8 @@ pub fn build_task_arcs(
     let mut foreign_territory = 0usize;
     let mut deficit_export = 0usize;
     let mut station_overloaded = 0usize;
+    let mut convention_ban = 0usize;
+    let mut convention_by_number: HashMap<String, usize> = HashMap::new();
     let mut arcs_period_penalized = 0usize;
     let mut arcs_rule_surcharged = 0usize;
     let mut arcs_backlog_wait = 0usize;
@@ -411,6 +419,7 @@ pub fn build_task_arcs(
                 s_wash_min,
                 rules,
                 backlog,
+                conventions,
             ) {
                 PairOutcome::Feasible { tariff, cost, period_ok, rule_surcharge_rub, wait_days } => {
                     (tariff, cost, period_ok, rule_surcharge_rub > 0.0, wait_days)
@@ -423,6 +432,11 @@ pub fn build_task_arcs(
                 PairOutcome::ForeignTerritory => { foreign_territory += 1; continue; }
                 PairOutcome::DeficitRoadExport => { deficit_export += 1; continue; }
                 PairOutcome::StationOverloaded => { station_overloaded += 1; continue; }
+                PairOutcome::ConventionBan { rzd_number } => {
+                    convention_ban += 1;
+                    *convention_by_number.entry(rzd_number).or_insert(0) += 1;
+                    continue;
+                }
                 PairOutcome::BadPeriod => { bad_period += 1; continue; }
             };
             if !period_ok {
@@ -495,6 +509,8 @@ pub fn build_task_arcs(
         foreign_territory,
         deficit_export,
         station_overloaded,
+        convention_ban,
+        convention_by_number,
         feasible: arcs.len(),
         arcs_period_penalized,
         arcs_rule_surcharged,
@@ -542,20 +558,23 @@ pub enum PairOutcome<'a> {
     /// Бизнес-правило 4: станция погрузки закрыта — вагонов на ней не меньше
     /// `StationBacklogHardDays` суток работы (`Q ≥ K_hard · C`).
     StationOverloaded,
+    /// Бизнес-правило 5: конвенция РЖД запрещает пару (номер телеграммы).
+    ConventionBan { rzd_number: String },
     /// Период спроса не имеет табличных границ (жёсткая отбраковка по сроку).
     BadPeriod,
 }
 
 /// Классифицирует пару `(supply, demand)` теми же жёсткими фильтрами, что и
 /// [`build_task_arcs`]: тариф → грязный ЕТСНГ → тип вагона → потолок расстояния →
-/// бизнес-правила дорог (инотерритории, дефицитные дороги) → загруженность станции
-/// (правило 4) → окно срока. Фильтры расстояния, дорог и загруженности действуют
-/// только на дуги погрузки.
+/// бизнес-правила дорог (инотерритории, дефицитные дороги) → конвенции РЖД (правило 5)
+/// → загруженность станции (правило 4) → окно срока. Фильтры расстояния, дорог и
+/// загруженности действуют только на дуги погрузки; конвенции — на Load и Wash.
 ///
 /// `tariff_index` — индекс тарифов погрузки `(код_откуда, код_куда) → тариф`.
 /// `wash_tariffs` — тарифы до промывки с уже учтённой надбавкой [`WASH_PATH_SURCHARGE_RUB`].
 /// `rules` — бизнес-правила ([`BusinessRules::default()`] — без ограничений).
 /// `backlog` — загруженность станций погрузки ([`StationBacklogIndex::disabled`] — без правила 4).
+/// `conventions` — конвенции РЖД ([`ConventionIndex::disabled`] — без правила 5).
 #[allow(clippy::too_many_arguments)]
 pub fn classify_pair<'a>(
     s: &SupplyNode,
@@ -568,6 +587,7 @@ pub fn classify_pair<'a>(
     wash_route_min_cost: Option<f64>,
     rules: &BusinessRules,
     backlog: &StationBacklogIndex,
+    conventions: &ConventionIndex,
 ) -> PairOutcome<'a> {
     // Грязный вагон, едущий под погрузку аналогичного груза (Load + same ЕТСНГ).
     // Для такой пары применяется «cap»: см. ниже после расчёта стоимости.
@@ -608,6 +628,14 @@ pub fn classify_pair<'a>(
 
     if !car_type_compatible(s.car_type.as_deref(), d.car_type.as_deref()) {
         return PairOutcome::BadType;
+    }
+
+    // Правило 5: конвенция РЖД (Load и Wash). Дата — сутки прибытия на станцию спроса.
+    let arrival_day = supply_release_shift_days(s.supply_period) + tariff.period_of_delivery;
+    if let Some(rule) = conventions.ban_for_arrival(s, d, arrival_day) {
+        return PairOutcome::ConventionBan {
+            rzd_number: rule.rzd_number.clone(),
+        };
     }
 
     // --- Бизнес-правила (только погрузка) ---
@@ -732,6 +760,10 @@ pub struct ArcStats {
     pub deficit_export: usize,
     /// Пар погрузки на закрытые станции (правило 4: очередь не меньше `K_hard` суток работы).
     pub station_overloaded: usize,
+    /// Пар, запрещённых конвенцией РЖД (правило 5).
+    pub convention_ban: usize,
+    /// Сколько пар закрыла каждая телеграмма (номер → число).
+    pub convention_by_number: HashMap<String, usize>,
     /// Допустимых дуг (вошли в LP).
     pub feasible:   usize,
     /// Дуг с ненулевым штрафом за срок подсыла (вне окна `[L−3, U+3]` с учётом сдвига периода 10).
@@ -821,8 +853,8 @@ fn delivery_window_violation_days(
 /// `0` для предложения периода 1 (АПИ, готов сегодня), `5` для дислокации
 /// (`supply_period == 10`, вагоны освобождаются в среднем на 5 суток позже).
 /// Тот же сдвиг применяется к окну срока в [`delivery_window_violation_days`] и к
-/// суткам прибытия на станцию для правила 4.
-fn supply_release_shift_days(supply_period: u8) -> i32 {
+/// суткам прибытия на станцию для правил 4 и 5.
+pub(crate) fn supply_release_shift_days(supply_period: u8) -> i32 {
     if supply_period == 10 { 5 } else { 0 }
 }
 
@@ -992,6 +1024,7 @@ mod tests {
             &HashMap::new(),
             &BusinessRules::default(),
             &StationBacklogIndex::disabled(),
+            &ConventionIndex::disabled(),
         );
         arcs
     }
@@ -1051,6 +1084,7 @@ mod tests {
             &HashSet::new(), &HashSet::new(), &HashSet::new(), &HashMap::new(),
             &rules_max_km(5_000),
             &StationBacklogIndex::disabled(),
+            &ConventionIndex::disabled(),
         );
         assert_eq!(arcs.len(), 1);
         assert_eq!(arcs[0].demand_station_code, "NEAR");
@@ -1070,6 +1104,7 @@ mod tests {
             &HashSet::new(), &HashSet::new(), &HashSet::new(), &HashMap::new(),
             &BusinessRules::default(),
             &StationBacklogIndex::disabled(),
+            &ConventionIndex::disabled(),
         );
         assert_eq!(arcs.len(), 1);
         assert_eq!(stats.too_far, 0);
@@ -1097,6 +1132,7 @@ mod tests {
             &wash_codes, &HashSet::new(), &HashSet::new(), &wash_tariffs,
             &rules,
             &StationBacklogIndex::disabled(),
+            &ConventionIndex::disabled(),
         );
         assert_eq!(arcs.len(), 1, "wash-дуга не ограничивается бизнес-правилами");
         assert_eq!(stats.too_far, 0);
@@ -1126,6 +1162,7 @@ mod tests {
             &wash_codes, &HashSet::new(), &HashSet::new(), &wash_tariffs,
             &BusinessRules::default(),
             &StationBacklogIndex::disabled(),
+            &ConventionIndex::disabled(),
         );
         assert_eq!(arcs.len(), 1);
         assert!((arcs[0].cost - (7_000.0 + WASH_PATH_SURCHARGE_RUB)).abs() < 1e-9);
@@ -1139,6 +1176,7 @@ mod tests {
             &HashSet::new(), &HashSet::new(), &HashSet::new(), &HashMap::new(),
             &rules_roads(),
             &StationBacklogIndex::disabled(),
+            &ConventionIndex::disabled(),
         );
         assert_eq!(arcs.len(), 1);
         assert!((arcs[0].cost - 51_000.0).abs() < 1e-9);
@@ -1166,6 +1204,7 @@ mod tests {
             &HashSet::new(), &HashSet::new(), &HashSet::new(), &HashMap::new(),
             &rules_roads(),
             &StationBacklogIndex::disabled(),
+            &ConventionIndex::disabled(),
         );
         assert_eq!(stats.foreign_territory, 1, "только ГОР → КЗХ запрещена");
         assert_eq!(arcs.len(), 3);
@@ -1200,6 +1239,7 @@ mod tests {
             &HashSet::new(), &HashSet::new(), &HashSet::new(), &HashMap::new(),
             &rules_roads(),
             &StationBacklogIndex::disabled(),
+            &ConventionIndex::disabled(),
         );
         assert_eq!(stats.deficit_export, 1);
         assert_eq!(arcs.len(), 2);
@@ -1404,6 +1444,7 @@ mod tests {
             &wash_codes, &HashSet::new(), &HashSet::new(), &wash_tariffs,
             &BusinessRules::default(),
             &StationBacklogIndex::disabled(),
+            &ConventionIndex::disabled(),
         );
         assert!(arcs.is_empty(), "дальняя погрузка дороже промывки — дуги быть не должно");
         assert_eq!(stats.dirty_far_prefer_wash, 1);
@@ -1430,6 +1471,7 @@ mod tests {
             &wash_codes, &HashSet::new(), &HashSet::new(), &wash_tariffs,
             &BusinessRules::default(),
             &StationBacklogIndex::disabled(),
+            &ConventionIndex::disabled(),
         );
         assert_eq!(arcs.len(), 1, "прямая погрузка дешевле промывки — дуга должна остаться");
         assert_eq!(stats.dirty_far_prefer_wash, 0);
@@ -1452,6 +1494,7 @@ mod tests {
             &wash_codes, &HashSet::new(), &HashSet::new(), &wash_tariffs,
             &BusinessRules::default(),
             &StationBacklogIndex::disabled(),
+            &ConventionIndex::disabled(),
         );
         assert_eq!(arcs.len(), 1);
         assert_eq!(stats.dirty_far_prefer_wash, 0);
@@ -1505,6 +1548,7 @@ mod tests {
             &supply, &demand, &[dummy_tariff("S1", "D1"), far],
             &HashSet::new(), &HashSet::new(), &HashSet::new(), &HashMap::new(),
             &rules, &idx,
+            &ConventionIndex::disabled(),
         );
         assert!(arcs.is_empty(), "закрытая станция: дуг нет даже в период 4 и от дислокации");
         assert_eq!(stats.station_overloaded, 4);
@@ -1517,6 +1561,7 @@ mod tests {
             &supply[..1], &demand_ok, &[dummy_tariff("S1", "D1")],
             &HashSet::new(), &HashSet::new(), &HashSet::new(), &HashMap::new(),
             &rules, &idx_ok,
+            &ConventionIndex::disabled(),
         );
         assert_eq!(arcs.len(), 1);
         assert_eq!(stats.station_overloaded, 0);
@@ -1538,6 +1583,7 @@ mod tests {
             &[s], &demand, &[dummy_tariff("S1", "D1")],
             &HashSet::new(), &HashSet::new(), &HashSet::new(), &HashMap::new(),
             &rules, &idx,
+            &ConventionIndex::disabled(),
         );
         assert_eq!(arcs.len(), 1);
         let a = &arcs[0];
@@ -1567,6 +1613,7 @@ mod tests {
             &[s], &demand, &[dummy_tariff("S1", "D1")],
             &HashSet::new(), &HashSet::new(), &HashSet::new(), &HashMap::new(),
             &rules, &idx,
+            &ConventionIndex::disabled(),
         );
         assert_eq!(arcs.len(), 2);
         let p1 = arcs.iter().find(|a| a.d_idx == 0).unwrap();
@@ -1593,6 +1640,7 @@ mod tests {
             &[s], &demand, &[dummy_tariff("S1", "D1")],
             &HashSet::new(), &HashSet::new(), &HashSet::new(), &HashMap::new(),
             &rules, &idx,
+            &ConventionIndex::disabled(),
         );
         assert_eq!(arcs.len(), 1);
         assert!((arcs[0].cost - (1_000.0 + PERIOD10_COST_SURCHARGE_RUB)).abs() < 1e-6);
@@ -1612,6 +1660,7 @@ mod tests {
             &[s], &demand, &[dummy_tariff("S1", "D1")],
             &HashSet::new(), &HashSet::new(), &HashSet::new(), &HashMap::new(),
             &rules, &idx,
+            &ConventionIndex::disabled(),
         );
         assert_eq!(arcs.len(), 1);
         assert_eq!(stats.station_overloaded, 0);
@@ -1631,8 +1680,179 @@ mod tests {
             &[dirty], &[wash_node], &[],
             &wash_codes, &HashSet::new(), &HashSet::new(), &wash_tariffs,
             &rules, &idx_wash,
+            &ConventionIndex::disabled(),
         );
         assert_eq!(arcs.len(), 1);
         assert_eq!(stats.station_overloaded, 0);
+    }
+
+    fn conv_rule_empty_esr(rzd: &str, esr: &str) -> crate::data::conventions::ParsedConvention {
+        crate::data::conventions::ParsedConvention {
+            rzd_number: rzd.into(),
+            cargo_class: crate::data::conventions::ConventionCargoClass::Empty,
+            cargo_name: String::new(),
+            date_beg: "2026-01-01".into(),
+            date_end: "3000-01-01".into(),
+            dest_esr: vec![esr.into()],
+            dest_names: vec![],
+            dest_railways: vec![],
+            dest_all_stations: false,
+            dep_esr: vec![],
+            dep_names: vec![],
+            dep_railways: vec![],
+            dep_all_stations: false,
+            junction: None,
+            all_parties: true,
+            recipient_okpo: vec![],
+            recipient_names: vec![],
+            unknown_road_fragments: vec![],
+            convention_info: crate::data::conventions::ConventionStatus::Other,
+            kzh_stripped_dest: false,
+            kzh_stripped_dep: false,
+        }
+    }
+
+    #[test]
+    fn convention_empty_esr_drops_load_arc() {
+        let idx = ConventionIndex::build(vec![conv_rule_empty_esr("9001", "D1")]);
+        let supply = vec![dummy_supply(3, "S1", 1, false)];
+        let demand = vec![dummy_demand(3, "D1", None), dummy_demand(3, "D2", None)];
+        let (arcs, stats) = build_task_arcs(
+            &supply, &demand, &[dummy_tariff("S1", "D1"), dummy_tariff("S1", "D2")],
+            &HashSet::new(), &HashSet::new(), &HashSet::new(), &HashMap::new(),
+            &BusinessRules::default(),
+            &StationBacklogIndex::disabled(),
+            &idx,
+        );
+        assert_eq!(arcs.len(), 1);
+        assert_eq!(arcs[0].demand_station_code, "D2");
+        assert_eq!(stats.convention_ban, 1);
+        assert_eq!(stats.convention_by_number.get("9001"), Some(&1));
+    }
+
+    #[test]
+    fn convention_4702_style_closes_only_dep_to_dest_pair() {
+        let mut r = conv_rule_empty_esr("4702", "x");
+        r.dest_esr.clear();
+        r.cargo_class = crate::data::conventions::ConventionCargoClass::All;
+        r.dep_railways = vec!["ЗСБ".into()];
+        r.dest_railways = vec!["ОКТ".into()];
+        r.dest_all_stations = true;
+        r.dep_all_stations = true;
+        let idx = ConventionIndex::build(vec![r]);
+        let s = with_railway_s(dummy_supply(3, "S1", 1, false), "ЗСБ");
+        let mut zsb_okt = with_railway_d(dummy_demand(3, "D1", None), "ЗСБ");
+        zsb_okt.railway_to_name = Some("ОКТ".into());
+        let mut zsb_skv = with_railway_d(dummy_demand(3, "D2", None), "ЗСБ");
+        zsb_skv.railway_to_name = Some("СКВ".into());
+        let mut msk_okt = with_railway_d(dummy_demand(3, "D3", None), "МСК");
+        msk_okt.railway_to_name = Some("ОКТ".into());
+        let (arcs, stats) = build_task_arcs(
+            &[s],
+            &[zsb_okt, zsb_skv, msk_okt],
+            &[dummy_tariff("S1", "D1"), dummy_tariff("S1", "D2"), dummy_tariff("S1", "D3")],
+            &HashSet::new(), &HashSet::new(), &HashSet::new(), &HashMap::new(),
+            &BusinessRules::default(),
+            &StationBacklogIndex::disabled(),
+            &idx,
+        );
+        let dests: Vec<&str> = arcs.iter().map(|a| a.demand_station_code.as_str()).collect();
+        assert!(!dests.contains(&"D1"));
+        assert!(dests.contains(&"D2"));
+        assert!(dests.contains(&"D3"));
+        assert_eq!(stats.convention_ban, 1);
+    }
+
+    #[test]
+    fn convention_wash_telegram_drops_wash_not_load() {
+        let mut r = conv_rule_empty_esr("W1", "WASH");
+        r.convention_info = crate::data::conventions::ConventionStatus::WashingStation;
+        let idx = ConventionIndex::build(vec![r]);
+        let mut s = dummy_supply(3, "S1", 1, false);
+        s.prev_etsngs = vec!["421034".into()];
+        let mut wash = dummy_demand(3, "WASH", None);
+        wash.purpose = DemandPurpose::Wash;
+        let mut load = dummy_demand(3, "WASH", None);
+        load.etsng = Some("421034".into());
+        let wash_codes: HashSet<String> = ["421034".into()].into_iter().collect();
+        let mut wash_tariffs = HashMap::new();
+        wash_tariffs.insert(("S1".into(), "WASH".into()), dummy_tariff("S1", "WASH"));
+        let (arcs, stats) = build_task_arcs(
+            &[s.clone()], &[wash, load], &[dummy_tariff("S1", "WASH")],
+            &wash_codes, &HashSet::new(), &HashSet::new(), &wash_tariffs,
+            &BusinessRules::default(),
+            &StationBacklogIndex::disabled(),
+            &idx,
+        );
+        assert_eq!(stats.convention_ban, 1);
+        assert_eq!(arcs.len(), 1);
+        assert_eq!(arcs[0].d_idx, 1, "осталась дуга погрузки, промывка закрыта конвенцией");
+    }
+
+    #[test]
+    fn convention_empty_esr_closes_only_matching_sender_okpo() {
+        let mut r = conv_rule_empty_esr("P1", "D1");
+        r.all_parties = false;
+        r.recipient_okpo = vec![crate::data::gu12::normalize_okpo("00111")];
+        let idx = ConventionIndex::build(vec![r]);
+        let s = dummy_supply(3, "S1", 1, false);
+        let mut hit = dummy_demand(3, "D1", None);
+        hit.sender_okpo = Some("00111".into());
+        let mut miss = dummy_demand(3, "D1", None);
+        miss.sender_okpo = Some("00222".into());
+        let (arcs, stats) = build_task_arcs(
+            &[s], &[hit, miss], &[dummy_tariff("S1", "D1")],
+            &HashSet::new(), &HashSet::new(), &HashSet::new(), &HashMap::new(),
+            &BusinessRules::default(),
+            &StationBacklogIndex::disabled(),
+            &idx,
+        );
+        assert_eq!(stats.convention_ban, 1);
+        assert_eq!(arcs.len(), 1);
+        assert_eq!(arcs[0].d_idx, 1);
+    }
+
+    #[test]
+    fn convention_grain_closes_cargo_dest_not_load_station() {
+        let mut r = conv_rule_empty_esr("G1", "514003");
+        r.cargo_class = crate::data::conventions::ConventionCargoClass::Grain;
+        let idx = ConventionIndex::build(vec![r]);
+        let s = dummy_supply(3, "S1", 1, false);
+        let mut closed = dummy_demand(3, "LOAD1", None);
+        closed.station_to_code = Some("514003".into());
+        let mut open = dummy_demand(3, "LOAD2", None);
+        open.station_to_code = Some("200002".into());
+        let (arcs, stats) = build_task_arcs(
+            &[s], &[closed, open],
+            &[dummy_tariff("S1", "LOAD1"), dummy_tariff("S1", "LOAD2")],
+            &HashSet::new(), &HashSet::new(), &HashSet::new(), &HashMap::new(),
+            &BusinessRules::default(),
+            &StationBacklogIndex::disabled(),
+            &idx,
+        );
+        let dests: Vec<&str> = arcs.iter().map(|a| a.demand_station_code.as_str()).collect();
+        assert!(!dests.contains(&"LOAD1"));
+        assert!(dests.contains(&"LOAD2"));
+        assert_eq!(stats.convention_ban, 1);
+    }
+
+    #[test]
+    fn convention_expired_on_arrival_does_not_ban() {
+        let mut r = conv_rule_empty_esr("E1", "D1");
+        r.date_beg = "2026-01-01".into();
+        r.date_end = "2026-09-01".into();
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 9, 15).unwrap();
+        let idx = ConventionIndex::build_at(vec![r], today);
+        let s = dummy_supply(3, "S1", 1, false);
+        let d = dummy_demand(3, "D1", None);
+        let (arcs, stats) = build_task_arcs(
+            &[s], &[d], &[dummy_tariff("S1", "D1")],
+            &HashSet::new(), &HashSet::new(), &HashSet::new(), &HashMap::new(),
+            &BusinessRules::default(),
+            &StationBacklogIndex::disabled(),
+            &idx,
+        );
+        assert_eq!(arcs.len(), 1);
+        assert_eq!(stats.convention_ban, 0);
     }
 }

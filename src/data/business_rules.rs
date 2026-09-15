@@ -67,8 +67,8 @@ pub struct BusinessRules {
     pub gu12_check_enabled: bool,
 
     /// Правило 5: конвенции РЖД из HASH `telegrams_db` (`conv-redis`).
-    /// В сервис только действующие на горизонт (индекс шага 4);
-    /// `false` — к Redis не ходим.
+    /// Действующие запреты идут в `classify_pair` (погрузка/промывка), отстой и ремонт;
+    /// `false` — к Redis не ходим, индекс пустой.
     #[serde(rename = "ConventionCheckEnabled")]
     pub convention_check_enabled: bool,
 

@@ -1,6 +1,6 @@
 //! Дислокация вагонов (2–10 сутки): данные из Redis + MSSQL через Python (`dislocations.py`).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -8,7 +8,7 @@ use std::process::{Command, Stdio};
 use anyhow::{Context, Result};
 use serde_json::Value;
 
-use super::supply::supply_nodes_from_dislocation_json;
+use super::supply::{supply_nodes_from_dislocation_json, DislocationSupply};
 
 fn dislocations_script_path() -> Result<PathBuf> {
     Ok(
@@ -82,7 +82,10 @@ pub fn fetch_shipment_goals_for_car_numbers(car_numbers: &[u64]) -> Result<HashM
 }
 
 /// Запускает `src/data/dislocations.py` (pymssql + redis), читает JSON массива вагонов со stdout.
-pub fn fetch_dislocation_supply_nodes() -> Result<Vec<crate::node::SupplyNode>> {
+///
+/// `period1_cars` — номера вагонов предложения периода 1 (АПИ): вагоны дислокации с такими
+/// номерами исключаются — приоритет у сегодняшних данных АПИ (см. [`DislocationSupply`]).
+pub fn fetch_dislocation_supply_nodes(period1_cars: &HashSet<u64>) -> Result<DislocationSupply> {
     // let script = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/data/dislocations.py");
     // Получаем текущую директорию и ПРИСОЕДИНЯЕМ путь к файлу
     let script = dislocations_script_path()?;
@@ -102,8 +105,9 @@ pub fn fetch_dislocation_supply_nodes() -> Result<Vec<crate::node::SupplyNode>> 
     let stdout = String::from_utf8(output.stdout).context("stdout dislocations.py не UTF-8")?;
     let trimmed = stdout.trim();
     if trimmed.is_empty() || trimmed == "[]" {
-        return Ok(Vec::new());
+        return Ok(DislocationSupply::default());
     }
 
-    supply_nodes_from_dislocation_json(trimmed).map_err(|e| anyhow::anyhow!("JSON от dislocations.py: {e}"))
+    supply_nodes_from_dislocation_json(trimmed, period1_cars)
+        .map_err(|e| anyhow::anyhow!("JSON от dislocations.py: {e}"))
 }

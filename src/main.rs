@@ -37,12 +37,14 @@ async fn main() -> Result<()> {
     println!("Получено узлов спроса (погрузка): {} или {} вагонов", demand_nodes.len(), demand_total_cars);
 
     // Бизнес-правила логистов (data/business_rules.json): потолок дальности подсыла,
-    // инотерритории, дефицитные дороги (дуги погрузки), проверка ГУ-12 (спрос).
-    // Не загрузились => правил 1–2 нет, ограничения на дуги не применяются.
+    // инотерритории, дефицитные дороги (дуги погрузки), проверка ГУ-12 (спрос),
+    // грязный вагон под аналогичный груз (правило 6: стоимость промывочного маршрута,
+    // потолок и поощрение). Не загрузились => правил 1–2 нет, ограничения на дуги не
+    // применяются, правило 6 — с прежними константами (10 000 + 40 000) без поощрения.
     let business_rules = match data::BusinessRules::load("data/business_rules.json") {
         Ok(r) => {
             println!(
-                "Бизнес-правила (business_rules.json): потолок подсыла {}; инотерриторий {} (исключений {}); дефицитных дорог {} (вывоз ≤ {} км, надбавка {:.0} руб.); проверка ГУ-12 {}; загруженность станций (правило 4) {}; конвенции РЖД (правило 5) {}",
+                "Бизнес-правила (business_rules.json): потолок подсыла {}; инотерриторий {} (исключений {}); дефицитных дорог {} (вывоз ≤ {} км, надбавка {:.0} руб.); проверка ГУ-12 {}; загруженность станций (правило 4) {}; конвенции РЖД (правило 5) {}; грязный под свой груз (правило 6): промывочный маршрут +{:.0}+{:.0} руб., потолок {}, поощрение {}",
                 r.max_empty_run_distance_km
                     .map(|km| format!("{km} км"))
                     .unwrap_or_else(|| "выкл.".to_string()),
@@ -60,11 +62,23 @@ async fn main() -> Result<()> {
                     None => "выкл.".to_string(),
                 },
                 if r.convention_check_enabled { "вкл." } else { "выкл." },
+                r.wash_procedure_cost_rub,
+                r.empty_run_after_wash_cost_rub,
+                if r.dirty_same_cargo_cap_enabled() {
+                    format!("≤ {:.2} × промывочного маршрута", r.dirty_same_cargo_max_cost_ratio_to_wash)
+                } else {
+                    "выкл.".to_string()
+                },
+                if r.dirty_same_cargo_reward_share > 0.0 {
+                    format!("{:.2} × (тариф до промывки + промывка)", r.dirty_same_cargo_reward_share)
+                } else {
+                    "выкл.".to_string()
+                },
             );
             r
         }
         Err(e) => {
-            eprintln!("  business_rules.json: не загружен ({e}) — бизнес-правила 1–2 не применяются");
+            eprintln!("  business_rules.json: не загружен ({e}) — бизнес-правила 1–2 не применяются, правило 6 без поощрения");
             data::BusinessRules::default()
         }
     };
@@ -371,7 +385,8 @@ async fn main() -> Result<()> {
     };
 
     // -----------------------------------------------------------------------
-    // 3б. Тарифы до станций промывки + надбавки (промывка + порожний пробег до погрузки).
+    // 3б. Тарифы до станций промывки + надбавка правила 6 (промывка + порожний пробег
+    //     до погрузки, WashProcedureCostRub + EmptyRunAfterWashCostRub).
     //     В LP используется только суммарная стоимость дуги «до промывки».
     //     FrETSNGCode: груженый — текущий груз, порожний — PrevFrETSNG (доминирующий в группе).
     // -----------------------------------------------------------------------
@@ -391,7 +406,7 @@ async fn main() -> Result<()> {
             match client.fetch_tariffs(&wash_from, &wash_station_refs).await {
                 Ok(items) => {
                     for mut t in items {
-                        t.cost += solver::WASH_PATH_SURCHARGE_RUB;
+                        t.cost += business_rules.wash_path_surcharge_rub();
                         wash_tariff_map.insert(
                             (t.station_from_code.clone(), t.station_to_code.clone()),
                             t,
@@ -402,9 +417,9 @@ async fn main() -> Result<()> {
             }
             println!(
                 "Тарифов до промывки (с надбавкой {}+{}={} руб.): {}",
-                solver::WASH_PROCEDURE_AVG_COST_RUB as i64,
-                solver::EMPTY_RUN_AFTER_WASH_TO_LOAD_AVG_COST_RUB as i64,
-                solver::WASH_PATH_SURCHARGE_RUB as i64,
+                business_rules.wash_procedure_cost_rub as i64,
+                business_rules.empty_run_after_wash_cost_rub as i64,
+                business_rules.wash_path_surcharge_rub() as i64,
                 wash_tariff_map.len(),
             );
         }
@@ -617,12 +632,12 @@ async fn main() -> Result<()> {
         100.0 * arc_stats.bad_type as f64 / total.max(1) as f64,
     );
     println!(
-        "  грязный вагон → чужой ЕТСНГ:       {} ({:.1}%)",
+        "  грязный вагон → чужой ЕТСНГ (правило 6): {} ({:.1}%)",
         arc_stats.dirty_etsng_mismatch,
         100.0 * arc_stats.dirty_etsng_mismatch as f64 / total.max(1) as f64,
     );
     println!(
-        "  грязный: дальняя погрузка дороже промывки → в промывку: {} ({:.1}%)",
+        "  грязный: погрузка дороже промывочного маршрута → в промывку (правило 6): {} ({:.1}%)",
         arc_stats.dirty_far_prefer_wash,
         100.0 * arc_stats.dirty_far_prefer_wash as f64 / total.max(1) as f64,
     );
@@ -678,6 +693,14 @@ async fn main() -> Result<()> {
         arc_stats.arcs_backlog_wait,
         100.0 * arc_stats.arcs_backlog_wait as f64 / total.max(1) as f64,
     );
+    if arc_stats.arcs_dirty_rewarded > 0 {
+        println!(
+            "  допустимых дуг «грязный → свой груз» с поощрением (правило 6): {} ({:.1}%), в среднем {:.0} руб./дугу",
+            arc_stats.arcs_dirty_rewarded,
+            100.0 * arc_stats.arcs_dirty_rewarded as f64 / total.max(1) as f64,
+            arc_stats.dirty_reward_total_rub / arc_stats.arcs_dirty_rewarded as f64,
+        );
+    }
     println!(
         "  допустимых дуг со штрафом за срок:   {} ({:.1}%)",
         arc_stats.arcs_period_penalized,

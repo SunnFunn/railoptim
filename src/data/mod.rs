@@ -18,7 +18,7 @@ pub mod supply;
 pub mod tariffs;
 pub mod wash;
 
-pub use business_rules::{BusinessRules, ForeignException, RuleOutcome};
+pub use business_rules::{BusinessRules, DirtyLoadOutcome, ForeignException, RuleOutcome};
 pub use client::ApiClient;
 pub use convention_index::{ConventionIndex, ConventionIndexStats, ConventionScope, EmptyDestRef};
 pub use conventions::{

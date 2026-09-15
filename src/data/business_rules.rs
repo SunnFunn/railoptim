@@ -2,8 +2,9 @@
 //! (`data/business_rules.json`, машиночитаемое зеркало `business_rules.txt`).
 //!
 //! Правила применяются в [`crate::solver::model::classify_pair`] к дугам **погрузки**
-//! как жёсткие фильтры и/или надбавки к тарифу. Промывка, отстой и пути клиента
-//! правилами не ограничиваются.
+//! как жёсткие фильтры и/или надбавки (правило 6 — поощрение) к тарифу. Промывка,
+//! отстой и пути клиента правилами не ограничиваются; правило 6 задаёт лишь
+//! стоимость промывочного маршрута, с которой сравнивается прямая погрузка.
 //!
 //! Дороги сравниваются по коротким кодам: `SupplyNode::railway_to` (RailWayToShort)
 //! и `DemandNode::railway_name` (RailWayShortFrom).
@@ -97,6 +98,43 @@ pub struct BusinessRules {
     /// очередь рассосётся.
     #[serde(rename = "StationBacklogWaitPenaltyRubPerDay")]
     pub station_backlog_wait_penalty_rub_per_day: f64,
+
+    /// Правило 6: средняя стоимость самой промывки вагона (руб./ваг.). Вместе с
+    /// [`Self::empty_run_after_wash_cost_rub`] образует надбавку к тарифу до станции
+    /// промывки ([`Self::wash_path_surcharge_rub`]) — модельную стоимость
+    /// «промывочного маршрута» (доехать до промывки, промыться, доехать чистым
+    /// под погрузку), с которой сравнивается прямая погрузка аналогичного груза.
+    #[serde(rename = "WashProcedureCostRub")]
+    pub wash_procedure_cost_rub: f64,
+
+    /// Правило 6: средний тариф порожнего пробега от станции промывки до
+    /// следующей погрузки (руб./ваг.). Сама погрузка после промывки в прогон не
+    /// попадает (вагон вернётся в предложение следующих суток чистым), поэтому
+    /// этот пробег учитывается средней надбавкой.
+    #[serde(rename = "EmptyRunAfterWashCostRub")]
+    pub empty_run_after_wash_cost_rub: f64,
+
+    /// Правило 6 (потолок дальности): дуга «грязный → погрузка того же ЕТСНГ»
+    /// строится, только если её модельная стоимость не больше
+    /// `k × min(промывочный маршрут со станции образования)`, где промывочный
+    /// маршрут = тариф до промывки + [`Self::wash_path_surcharge_rub`].
+    /// `1.0` — прямая погрузка не дороже, чем промыться и подослать чистым;
+    /// `> 1` — допускается более дальняя прямая погрузка; `≤ 0` — потолок отключён
+    /// (остаётся только `MaxEmptyRunDistanceKm`). Без промывочного маршрута
+    /// (нет wash-тарифа) потолок не применяется — прямая погрузка единственный шанс.
+    #[serde(rename = "DirtySameCargoMaxCostRatioToWash")]
+    pub dirty_same_cargo_max_cost_ratio_to_wash: f64,
+
+    /// Правило 6 (поощрение): доля `p ∈ [0, 1]` отложенной промывки, снимаемая со
+    /// стоимости дуги «грязный → погрузка того же ЕТСНГ». Грязный вагон, не
+    /// погруженный сегодня под свой груз, завтра с вероятностью `p` поедет в
+    /// промывку: тариф до ближайшей промывки + сама промывка
+    /// (`wash_procedure_cost_rub`); чистый вагон такой «повинности» не несёт.
+    /// Поощрение = `p × (тариф до ближайшей промывки + промывка)`; без wash-тарифа —
+    /// `p × wash_path_surcharge_rub`. `0` — без поощрения (грязный и чистый вагон
+    /// конкурируют за заявку по одному тарифу); `1` — промывка неизбежна.
+    #[serde(rename = "DirtySameCargoRewardShare")]
+    pub dirty_same_cargo_reward_share: f64,
 }
 
 impl Default for BusinessRules {
@@ -113,6 +151,10 @@ impl Default for BusinessRules {
             station_backlog_hard_days: None,
             station_backlog_soft_days: 1,
             station_backlog_wait_penalty_rub_per_day: 0.0,
+            wash_procedure_cost_rub: 10_000.0,
+            empty_run_after_wash_cost_rub: 40_000.0,
+            dirty_same_cargo_max_cost_ratio_to_wash: 1.0,
+            dirty_same_cargo_reward_share: 0.0,
         }
     }
 }
@@ -146,6 +188,17 @@ pub enum RuleOutcome {
     ForeignTerritory,
     /// Правило 2: вывоз порожнего с дефицитной дороги (плечо длиннее допустимого).
     DeficitExport,
+}
+
+/// Результат проверки дуги «грязный вагон → погрузка того же ЕТСНГ» правилом 6.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DirtyLoadOutcome {
+    /// Дуга допустима; `reward_rub` — поощрение (≥ 0), которое снимается со стоимости
+    /// дуги, чтобы грязный вагон выигрывал заявку у чистого при близких тарифах.
+    Allowed { reward_rub: f64 },
+    /// Прямая погрузка дороже промывочного маршрута с учётом коэффициента —
+    /// вагон должен идти в промывку, дуга не строится.
+    PreferWash,
 }
 
 impl BusinessRules {
@@ -182,11 +235,73 @@ impl BusinessRules {
         }
         self.station_backlog_wait_penalty_rub_per_day =
             self.station_backlog_wait_penalty_rub_per_day.max(0.0);
+        // Правило 6: стоимости не отрицательные, доля поощрения в [0, 1].
+        self.wash_procedure_cost_rub = self.wash_procedure_cost_rub.max(0.0);
+        self.empty_run_after_wash_cost_rub = self.empty_run_after_wash_cost_rub.max(0.0);
+        if self.dirty_same_cargo_reward_share > 1.0 {
+            eprintln!(
+                "  [!] business_rules.json: DirtySameCargoRewardShare ({}) > 1 — поощрение не может превышать стоимость отложенной промывки, берётся 1",
+                self.dirty_same_cargo_reward_share,
+            );
+        }
+        self.dirty_same_cargo_reward_share = self.dirty_same_cargo_reward_share.clamp(0.0, 1.0);
     }
 
     /// Правило 4 включено (задан жёсткий порог `StationBacklogHardDays`).
     pub fn station_backlog_enabled(&self) -> bool {
         self.station_backlog_hard_days.is_some()
+    }
+
+    /// Правило 6: надбавка к тарифу до станции промывки (руб./ваг.) — промывка +
+    /// средний порожний пробег после неё до погрузки. Прибавляется к wash-тарифам
+    /// при их загрузке, чтобы Wash-дуга стоила как весь промывочный маршрут.
+    pub fn wash_path_surcharge_rub(&self) -> f64 {
+        self.wash_procedure_cost_rub + self.empty_run_after_wash_cost_rub
+    }
+
+    /// Правило 6: потолок дальности прямой погрузки грязного вагона включён.
+    pub fn dirty_same_cargo_cap_enabled(&self) -> bool {
+        self.dirty_same_cargo_max_cost_ratio_to_wash > 0.0
+    }
+
+    /// Правило 6: проверка дуги «грязный вагон → погрузка того же ЕТСНГ».
+    ///
+    /// - `direct_cost` — полная модельная стоимость прямой погрузки (тариф + штрафы за
+    ///   срок и очередь + надбавки правил дорог) **до** поощрения;
+    /// - `wash_route_min_cost` — минимальная стоимость промывочного маршрута со станции
+    ///   образования (тариф до промывки + [`Self::wash_path_surcharge_rub`]), `None` —
+    ///   промывка для вагона недоступна (нет wash-тарифа).
+    ///
+    /// Потолок: `direct_cost > k × wash_route_min_cost` → [`DirtyLoadOutcome::PreferWash`]
+    /// (`k` = [`Self::dirty_same_cargo_max_cost_ratio_to_wash`], `≤ 0` — потолка нет).
+    /// Поощрение: `p × (тариф до ближайшей промывки + промывка)` — ожидаемая стоимость
+    /// отложенной промывки, которой чистый вагон-конкурент не несёт; без промывочного
+    /// маршрута тариф до промывки неизвестен, берётся средняя надбавка целиком.
+    /// Поощрение считается **от того же порога**, что и потолок: чем дороже вагону
+    /// промывка, тем больше он «стоит» под своим грузом и тем дальше за ним можно ехать.
+    pub fn check_dirty_same_cargo(
+        &self,
+        direct_cost: f64,
+        wash_route_min_cost: Option<f64>,
+    ) -> DirtyLoadOutcome {
+        let surcharge = self.wash_path_surcharge_rub();
+        let deferred_wash_cost = match wash_route_min_cost {
+            Some(wash_cost) => {
+                if self.dirty_same_cargo_cap_enabled()
+                    && direct_cost > self.dirty_same_cargo_max_cost_ratio_to_wash * wash_cost
+                {
+                    return DirtyLoadOutcome::PreferWash;
+                }
+                // wash_cost уже содержит надбавку; отложенная промывка = доехать до
+                // ближайшей промывки + сама промывка (порожний пробег после неё будет
+                // и у чистого вагона, поэтому в разницу не входит).
+                (wash_cost - surcharge).max(0.0) + self.wash_procedure_cost_rub
+            }
+            None => surcharge,
+        };
+        DirtyLoadOutcome::Allowed {
+            reward_rub: (self.dirty_same_cargo_reward_share * deferred_wash_cost).max(0.0),
+        }
     }
 
     /// Есть ли хоть одно активное правило (для логов).
@@ -350,6 +465,90 @@ mod tests {
         assert!(hard >= 1);
         assert!(r.station_backlog_soft_days < hard);
         assert!(r.station_backlog_wait_penalty_rub_per_day >= 0.0);
+        // Правило 6: стоимость промывочного маршрута задана, потолок и поощрение в разумных пределах.
+        assert!(r.wash_procedure_cost_rub > 0.0);
+        assert!(r.empty_run_after_wash_cost_rub > 0.0);
+        assert!(r.dirty_same_cargo_cap_enabled(), "потолок дальности прямой погрузки включён");
+        assert!((0.0..=1.0).contains(&r.dirty_same_cargo_reward_share));
+    }
+
+    // -----------------------------------------------------------------------
+    // Правило 6: грязный вагон под аналогичный груз
+    // -----------------------------------------------------------------------
+
+    /// Значения по умолчанию воспроизводят прежние константы: надбавка 10 000 + 40 000,
+    /// потолок «не дороже промывочного маршрута», поощрения нет.
+    #[test]
+    fn dirty_same_cargo_defaults_match_legacy_behaviour() {
+        let r = BusinessRules::default();
+        assert_eq!(r.wash_path_surcharge_rub(), 50_000.0);
+        assert!(r.dirty_same_cargo_cap_enabled());
+        // Промывочный маршрут 70 000 (тариф 20 000 + надбавка): 70 000 ещё допустимо, 70 001 — нет.
+        assert_eq!(r.check_dirty_same_cargo(70_000.0, Some(70_000.0)), DirtyLoadOutcome::Allowed { reward_rub: 0.0 });
+        assert_eq!(r.check_dirty_same_cargo(70_001.0, Some(70_000.0)), DirtyLoadOutcome::PreferWash);
+        // Промывки нет — потолка нет, поощрения нет.
+        assert_eq!(r.check_dirty_same_cargo(900_000.0, None), DirtyLoadOutcome::Allowed { reward_rub: 0.0 });
+        let r: BusinessRules = serde_json::from_str("{}").unwrap();
+        assert_eq!(r.wash_path_surcharge_rub(), 50_000.0);
+        assert_eq!(r.dirty_same_cargo_reward_share, 0.0);
+    }
+
+    /// Поощрение = p × (тариф до ближайшей промывки + промывка): зависит от того,
+    /// насколько промывка далека от станции образования, а не от дальности погрузки.
+    #[test]
+    fn dirty_same_cargo_reward_is_share_of_deferred_wash() {
+        let r = BusinessRules {
+            dirty_same_cargo_reward_share: 0.5,
+            ..Default::default()
+        };
+        // Промывка в 20 000 от станции: маршрут 70 000; отложенная промывка 20 000 + 10 000.
+        assert_eq!(r.check_dirty_same_cargo(30_000.0, Some(70_000.0)), DirtyLoadOutcome::Allowed { reward_rub: 15_000.0 });
+        // Поощрение одинаково для ближней и дальней погрузки с той же станции.
+        assert_eq!(r.check_dirty_same_cargo(69_000.0, Some(70_000.0)), DirtyLoadOutcome::Allowed { reward_rub: 15_000.0 });
+        // Промывка рядом (тариф 2 000): поощрение почти только за саму промывку.
+        assert_eq!(r.check_dirty_same_cargo(30_000.0, Some(52_000.0)), DirtyLoadOutcome::Allowed { reward_rub: 6_000.0 });
+        // Промывка далеко (тариф 100 000): вагон дорого мыть — дорого стоит под своим грузом.
+        assert_eq!(r.check_dirty_same_cargo(30_000.0, Some(150_000.0)), DirtyLoadOutcome::Allowed { reward_rub: 55_000.0 });
+        // Промывка недоступна: тариф до неё неизвестен — берётся средняя надбавка целиком.
+        assert_eq!(r.check_dirty_same_cargo(30_000.0, None), DirtyLoadOutcome::Allowed { reward_rub: 25_000.0 });
+        // Потолок проверяется по стоимости ДО поощрения.
+        assert_eq!(r.check_dirty_same_cargo(70_001.0, Some(70_000.0)), DirtyLoadOutcome::PreferWash);
+    }
+
+    /// Коэффициент потолка: > 1 допускает более дальнюю прямую погрузку, ≤ 0 отключает потолок.
+    #[test]
+    fn dirty_same_cargo_cap_ratio() {
+        let mut r = BusinessRules { dirty_same_cargo_max_cost_ratio_to_wash: 1.5, ..Default::default() };
+        assert_eq!(r.check_dirty_same_cargo(105_000.0, Some(70_000.0)), DirtyLoadOutcome::Allowed { reward_rub: 0.0 });
+        assert_eq!(r.check_dirty_same_cargo(105_001.0, Some(70_000.0)), DirtyLoadOutcome::PreferWash);
+        r.dirty_same_cargo_max_cost_ratio_to_wash = 0.0;
+        assert!(!r.dirty_same_cargo_cap_enabled());
+        assert_eq!(r.check_dirty_same_cargo(900_000.0, Some(70_000.0)), DirtyLoadOutcome::Allowed { reward_rub: 0.0 });
+    }
+
+    /// Нормализация: доля поощрения зажимается в [0, 1], стоимости — не отрицательные;
+    /// надбавка промывочного маршрута следует за заданными стоимостями.
+    #[test]
+    fn dirty_same_cargo_params_parse_and_normalize() {
+        let mut r: BusinessRules = serde_json::from_str(
+            r#"{"WashProcedureCostRub": 12000, "EmptyRunAfterWashCostRub": 30000,
+                "DirtySameCargoMaxCostRatioToWash": 1.2, "DirtySameCargoRewardShare": 1.5}"#,
+        )
+        .unwrap();
+        r.normalize();
+        assert_eq!(r.wash_path_surcharge_rub(), 42_000.0);
+        assert_eq!(r.dirty_same_cargo_max_cost_ratio_to_wash, 1.2);
+        assert_eq!(r.dirty_same_cargo_reward_share, 1.0, "доля > 1 зажимается в 1");
+        // Промывочный маршрут 62 000 = тариф 20 000 + 42 000; поощрение 1 × (20 000 + 12 000).
+        assert_eq!(r.check_dirty_same_cargo(50_000.0, Some(62_000.0)), DirtyLoadOutcome::Allowed { reward_rub: 32_000.0 });
+
+        let mut r: BusinessRules = serde_json::from_str(
+            r#"{"WashProcedureCostRub": -5, "EmptyRunAfterWashCostRub": -1, "DirtySameCargoRewardShare": -0.3}"#,
+        )
+        .unwrap();
+        r.normalize();
+        assert_eq!(r.wash_path_surcharge_rub(), 0.0);
+        assert_eq!(r.dirty_same_cargo_reward_share, 0.0);
     }
 
     #[test]

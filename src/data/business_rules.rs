@@ -2,7 +2,8 @@
 //! (`data/business_rules.json`, машиночитаемое зеркало `business_rules.txt`).
 //!
 //! Правила применяются в [`crate::solver::model::classify_pair`] к дугам **погрузки**
-//! как жёсткие фильтры и/или надбавки (правило 6 — поощрение) к тарифу. Промывка,
+//! как жёсткие фильтры и/или надбавки (правило 6 — поощрение) к тарифу и при
+//! группировке предложения (правило 7 — горизонт вывода в ремонт). Промывка,
 //! отстой и пути клиента правилами не ограничиваются; правило 6 задаёт лишь
 //! стоимость промывочного маршрута, с которой сравнивается прямая погрузка.
 //!
@@ -135,6 +136,19 @@ pub struct BusinessRules {
     /// конкурируют за заявку по одному тарифу); `1` — промывка неизбежна.
     #[serde(rename = "DirtySameCargoRewardShare")]
     pub dirty_same_cargo_reward_share: f64,
+
+    /// Правило 7: горизонт вывода в ремонт на российских дорогах (сут.). Вагон с
+    /// `CarNextRepairDays` строго меньше этого порога идёт в ремонт (`NeedsRepair`),
+    /// а не в оптимизацию. `IsCarRepair = true` выводит независимо от срока.
+    /// `0` — проверка по дням отключена (остаётся только флаг АПИ).
+    #[serde(rename = "RepairDaysThreshold")]
+    pub repair_days_threshold: i32,
+
+    /// Правило 7: тот же горизонт на инотерритории ([`Self::foreign_railways`],
+    /// дорога образования `SupplyNode::railway_to`). Длиннее российского: вагон
+    /// нужно успеть вывезти с инотерритории до ремонта. `0` — как российский порог.
+    #[serde(rename = "RepairDaysThresholdForeign")]
+    pub repair_days_threshold_foreign: i32,
 }
 
 impl Default for BusinessRules {
@@ -155,6 +169,8 @@ impl Default for BusinessRules {
             empty_run_after_wash_cost_rub: 40_000.0,
             dirty_same_cargo_max_cost_ratio_to_wash: 1.0,
             dirty_same_cargo_reward_share: 0.0,
+            repair_days_threshold: 15,
+            repair_days_threshold_foreign: 45,
         }
     }
 }
@@ -245,6 +261,19 @@ impl BusinessRules {
             );
         }
         self.dirty_same_cargo_reward_share = self.dirty_same_cargo_reward_share.clamp(0.0, 1.0);
+        // Правило 7: пороги не отрицательные; инотерриториальный не короче российского
+        // (иначе вывоз с инотерритории успевали бы меньше, чем ремонт в России).
+        self.repair_days_threshold = self.repair_days_threshold.max(0);
+        self.repair_days_threshold_foreign = self.repair_days_threshold_foreign.max(0);
+        if self.repair_days_threshold_foreign > 0
+            && self.repair_days_threshold_foreign < self.repair_days_threshold
+        {
+            eprintln!(
+                "  [!] business_rules.json: RepairDaysThresholdForeign ({}) < RepairDaysThreshold ({}) — для инотерритории берётся российский порог",
+                self.repair_days_threshold_foreign, self.repair_days_threshold,
+            );
+            self.repair_days_threshold_foreign = self.repair_days_threshold;
+        }
     }
 
     /// Правило 4 включено (задан жёсткий порог `StationBacklogHardDays`).
@@ -262,6 +291,44 @@ impl BusinessRules {
     /// Правило 6: потолок дальности прямой погрузки грязного вагона включён.
     pub fn dirty_same_cargo_cap_enabled(&self) -> bool {
         self.dirty_same_cargo_max_cost_ratio_to_wash > 0.0
+    }
+
+    /// Правило 7: горизонт вывода в ремонт (сут.) для дороги образования вагона.
+    ///
+    /// `supply_railway` — короткий код `RailWayToShort` (где вагон сейчас). На дороге
+    /// из [`Self::foreign_railways`] — [`Self::repair_days_threshold_foreign`] (если > 0),
+    /// иначе российский [`Self::repair_days_threshold`]. `0` — проверка по дням выключена.
+    pub fn repair_days_threshold_for(&self, supply_railway: &str) -> i32 {
+        let rw = supply_railway.trim();
+        if !rw.is_empty()
+            && self.foreign_railways.contains(rw)
+            && self.repair_days_threshold_foreign > 0
+        {
+            self.repair_days_threshold_foreign
+        } else {
+            self.repair_days_threshold
+        }
+    }
+
+    /// Правило 7: вагон идёт в ремонт, а не в оптимизацию.
+    ///
+    /// `IsCarRepair` — безусловно. Иначе `CarNextRepairDays` строго меньше порога
+    /// для дороги образования ([`Self::repair_days_threshold_for`]). Нет срока — не
+    /// выводим (как прежнее `unwrap_or(false)`).
+    pub fn wagon_needs_repair(
+        &self,
+        is_car_repair: bool,
+        days_to_repair: Option<f64>,
+        supply_railway: &str,
+    ) -> bool {
+        if is_car_repair {
+            return true;
+        }
+        let threshold = self.repair_days_threshold_for(supply_railway);
+        if threshold <= 0 {
+            return false;
+        }
+        days_to_repair.map(|d| d < threshold as f64).unwrap_or(false)
     }
 
     /// Правило 6: проверка дуги «грязный вагон → погрузка того же ЕТСНГ».
@@ -470,6 +537,13 @@ mod tests {
         assert!(r.empty_run_after_wash_cost_rub > 0.0);
         assert!(r.dirty_same_cargo_cap_enabled(), "потолок дальности прямой погрузки включён");
         assert!((0.0..=1.0).contains(&r.dirty_same_cargo_reward_share));
+        // Правило 7: российский порог 15, инотерритория 45 (вывоз до ремонта).
+        assert_eq!(r.repair_days_threshold, 15);
+        assert_eq!(r.repair_days_threshold_foreign, 45);
+        assert!(!r.wagon_needs_repair(false, Some(15.0), "МСК"));
+        assert!(r.wagon_needs_repair(false, Some(14.0), "МСК"));
+        assert!(r.wagon_needs_repair(false, Some(20.0), "КЗХ"));
+        assert!(!r.wagon_needs_repair(false, Some(45.0), "КЗХ"));
     }
 
     // -----------------------------------------------------------------------
@@ -624,5 +698,51 @@ mod tests {
         assert_eq!(BusinessRules::load(&path).unwrap().max_empty_run_distance_km, None);
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // -----------------------------------------------------------------------
+    // Правило 7: горизонт вывода в ремонт
+    // -----------------------------------------------------------------------
+
+    /// По умолчанию 15 / 45; без списка инотерриторий все дороги — как российские.
+    #[test]
+    fn repair_days_defaults_and_foreign_list() {
+        let r = BusinessRules::default();
+        assert_eq!(r.repair_days_threshold, 15);
+        assert_eq!(r.repair_days_threshold_foreign, 45);
+        assert_eq!(r.repair_days_threshold_for("МСК"), 15);
+        assert_eq!(r.repair_days_threshold_for("КЗХ"), 15, "пустой ForeignRailways — 45 не применяется");
+        assert!(r.wagon_needs_repair(false, Some(14.9), "МСК"));
+        assert!(!r.wagon_needs_repair(false, Some(15.0), "МСК"));
+        assert!(!r.wagon_needs_repair(false, None, "МСК"));
+        assert!(r.wagon_needs_repair(true, Some(100.0), "МСК"), "IsCarRepair безусловен");
+
+        let mut r = BusinessRules::default();
+        r.foreign_railways = ["КЗХ".into()].into_iter().collect();
+        assert_eq!(r.repair_days_threshold_for("КЗХ"), 45);
+        assert_eq!(r.repair_days_threshold_for(" кзх "), 15, "сравнение строгое, без нормализации регистра");
+        assert!(r.wagon_needs_repair(false, Some(20.0), "КЗХ"));
+        assert!(r.wagon_needs_repair(false, Some(44.9), "КЗХ"));
+        assert!(!r.wagon_needs_repair(false, Some(45.0), "КЗХ"));
+        assert!(!r.wagon_needs_repair(false, Some(20.0), "МСК"));
+    }
+
+    #[test]
+    fn repair_days_params_parse_and_normalize() {
+        let mut r: BusinessRules = serde_json::from_str(
+            r#"{"RepairDaysThreshold": 15, "RepairDaysThresholdForeign": 10, "ForeignRailways": ["КЗХ"]}"#,
+        )
+        .unwrap();
+        r.normalize();
+        assert_eq!(r.repair_days_threshold_foreign, 15, "инотерриториальный порог не короче российского");
+
+        let mut r: BusinessRules = serde_json::from_str(
+            r#"{"RepairDaysThreshold": -3, "RepairDaysThresholdForeign": 0}"#,
+        )
+        .unwrap();
+        r.normalize();
+        assert_eq!(r.repair_days_threshold, 0);
+        assert!(!r.wagon_needs_repair(false, Some(1.0), "МСК"), "0 — проверка по дням выключена");
+        assert!(r.wagon_needs_repair(true, Some(1.0), "МСК"));
     }
 }

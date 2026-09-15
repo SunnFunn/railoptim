@@ -39,12 +39,14 @@ async fn main() -> Result<()> {
     // Бизнес-правила логистов (data/business_rules.json): потолок дальности подсыла,
     // инотерритории, дефицитные дороги (дуги погрузки), проверка ГУ-12 (спрос),
     // грязный вагон под аналогичный груз (правило 6: стоимость промывочного маршрута,
-    // потолок и поощрение). Не загрузились => правил 1–2 нет, ограничения на дуги не
-    // применяются, правило 6 — с прежними константами (10 000 + 40 000) без поощрения.
+    // потолок и поощрение), вывод в ремонт (правило 7: 15 сут. / 45 сут. на инотерритории).
+    // Не загрузились => правил 1–2 нет, ограничения на дуги не применяются, правило 6 — с
+    // прежними константами (10 000 + 40 000) без поощрения, правило 7 — 15/45 сут. без списка
+    // инотерриторий (все дороги как российские).
     let business_rules = match data::BusinessRules::load("data/business_rules.json") {
         Ok(r) => {
             println!(
-                "Бизнес-правила (business_rules.json): потолок подсыла {}; инотерриторий {} (исключений {}); дефицитных дорог {} (вывоз ≤ {} км, надбавка {:.0} руб.); проверка ГУ-12 {}; загруженность станций (правило 4) {}; конвенции РЖД (правило 5) {}; грязный под свой груз (правило 6): промывочный маршрут +{:.0}+{:.0} руб., потолок {}, поощрение {}",
+                "Бизнес-правила (business_rules.json): потолок подсыла {}; инотерриторий {} (исключений {}); дефицитных дорог {} (вывоз ≤ {} км, надбавка {:.0} руб.); проверка ГУ-12 {}; загруженность станций (правило 4) {}; конвенции РЖД (правило 5) {}; грязный под свой груз (правило 6): промывочный маршрут +{:.0}+{:.0} руб., потолок {}, поощрение {}; ремонт (правило 7): {} сут. / инотерритория {} сут.",
                 r.max_empty_run_distance_km
                     .map(|km| format!("{km} км"))
                     .unwrap_or_else(|| "выкл.".to_string()),
@@ -74,11 +76,13 @@ async fn main() -> Result<()> {
                 } else {
                     "выкл.".to_string()
                 },
+                r.repair_days_threshold,
+                r.repair_days_threshold_foreign,
             );
             r
         }
         Err(e) => {
-            eprintln!("  business_rules.json: не загружен ({e}) — бизнес-правила 1–2 не применяются, правило 6 без поощрения");
+            eprintln!("  business_rules.json: не загружен ({e}) — бизнес-правила 1–2 не применяются, правило 6 без поощрения, правило 7 без инотерриторий");
             data::BusinessRules::default()
         }
     };
@@ -143,7 +147,7 @@ async fn main() -> Result<()> {
         }
     }
 
-    let mut supply_nodes = client.fetch_supply_nodes().await?;
+    let mut supply_nodes = client.fetch_supply_nodes(&business_rules).await?;
     let supply1_total_cars: i32 = supply_nodes.iter()
                 .map(|s| s.car_count)
                 .sum();
@@ -156,7 +160,7 @@ async fn main() -> Result<()> {
         .iter()
         .flat_map(|s| s.car_numbers.iter().copied())
         .collect();
-    match data::dislocations::fetch_dislocation_supply_nodes(&period1_cars) {
+    match data::dislocations::fetch_dislocation_supply_nodes(&period1_cars, &business_rules) {
         Ok(disl) => {
             if disl.duplicates_within > 0 {
                 eprintln!(

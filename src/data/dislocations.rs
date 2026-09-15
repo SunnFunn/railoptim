@@ -8,6 +8,7 @@ use std::process::{Command, Stdio};
 use anyhow::{Context, Result};
 use serde_json::Value;
 
+use super::business_rules::BusinessRules;
 use super::supply::{supply_nodes_from_dislocation_json, DislocationSupply};
 
 fn dislocations_script_path() -> Result<PathBuf> {
@@ -85,7 +86,11 @@ pub fn fetch_shipment_goals_for_car_numbers(car_numbers: &[u64]) -> Result<HashM
 ///
 /// `period1_cars` — номера вагонов предложения периода 1 (АПИ): вагоны дислокации с такими
 /// номерами исключаются — приоритет у сегодняшних данных АПИ (см. [`DislocationSupply`]).
-pub fn fetch_dislocation_supply_nodes(period1_cars: &HashSet<u64>) -> Result<DislocationSupply> {
+/// `rules` — правило 7 при группировке узлов (горизонт вывода в ремонт).
+pub fn fetch_dislocation_supply_nodes(
+    period1_cars: &HashSet<u64>,
+    rules: &BusinessRules,
+) -> Result<DislocationSupply> {
     // let script = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/data/dislocations.py");
     // Получаем текущую директорию и ПРИСОЕДИНЯЕМ путь к файлу
     let script = dislocations_script_path()?;
@@ -108,6 +113,6 @@ pub fn fetch_dislocation_supply_nodes(period1_cars: &HashSet<u64>) -> Result<Dis
         return Ok(DislocationSupply::default());
     }
 
-    supply_nodes_from_dislocation_json(trimmed, period1_cars)
+    supply_nodes_from_dislocation_json(trimmed, period1_cars, rules)
         .map_err(|e| anyhow::anyhow!("JSON от dislocations.py: {e}"))
 }

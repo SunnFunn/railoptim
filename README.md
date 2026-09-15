@@ -110,8 +110,18 @@ railoptim/
 `SupplyNode` из API разделяются на три группы:
 
 1. **Assigned** — уже назначены по факту; не участвуют в оптимизации.
-2. **NeedsRepair** — требуют ремонта; идут в отдельный отчёт «В ремонт».
+2. **NeedsRepair** — требуют ремонта (правило 7); идут в отдельный отчёт «В ремонт».
 3. **opt_supply** — свободные вагоны; именно они попадают в оптимизацию.
+
+**Правило 7** (`RepairDaysThreshold` / `RepairDaysThresholdForeign` в
+`data/business_rules.json`) срабатывает при группировке предложения (`group_supply`),
+не в `classify_pair`. Вагон идёт в ремонт, если `IsCarRepair = true` либо
+`CarNextRepairDays` строго меньше порога: **15 суток** на российских дорогах,
+**45 суток** если дорога образования (`RailWayToShort` / `SupplyNode.railway_to`)
+в `ForeignRailways` (тот же список, что `ForeignRoads` в `references.json`) — с
+инотерритории вагон нужно успеть вывезти до ремонта. `0` — проверка по дням
+выключена, остаётся только флаг АПИ. Безномерные вагоны в ремонт по сроку не
+выводятся. В логе старта — «ремонт (правило 7): 15 сут. / инотерритория 45 сут.».
 
 Узлы спроса с `purpose = Wash` обрабатываются как «ёмкость промывки» — верхний
 предел без штрафа за недобор; `Load` — жёсткое равенство + штраф за неудовлетворённый спрос.
@@ -450,6 +460,8 @@ Adaptive Large Neighbourhood Search — метаэвристика вокруг 
 | `EmptyRunAfterWashCostRub` (правило 6, пробег после промывки) | 40 000 ₽  | `data/business_rules.json` |
 | `DirtySameCargoMaxCostRatioToWash` (потолок: ≤ k × промывочный маршрут) | 1.0 | `data/business_rules.json` |
 | `DirtySameCargoRewardShare` (поощрение: p × (тариф до промывки + промывка)) | 0.5 | `data/business_rules.json` |
+| `RepairDaysThreshold` (правило 7, вывод в ремонт, РФ) | 15 сут. | `data/business_rules.json` |
+| `RepairDaysThresholdForeign` (правило 7, инотерритория) | 45 сут. | `data/business_rules.json` |
 | `DEFAULT_MIP_TIME_LIMIT`                               | 120 с          | `solver/mip.rs`        |
 | `DEFAULT_MIP_REL_GAP`                                  | 0.005 (0.5%)   | `solver/mip.rs`        |
 | `ALNS_MIP_TIME_LIMIT`                                  | 3 с            | `solver/alns.rs`       |

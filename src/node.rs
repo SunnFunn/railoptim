@@ -28,7 +28,8 @@ pub enum CarKind {
 pub enum RepairStatus {
     /// Вагон не требует ремонта в горизонте планирования.
     Ok,
-    /// Вагон подлежит ремонту: IsCarRepair=true или days_to_repair < 15.
+    /// Вагон подлежит ремонту: `IsCarRepair` или `CarNextRepairDays` строго меньше
+    /// порога правила 7 (`RepairDaysThreshold` / `RepairDaysThresholdForeign` на инотерритории).
     NeedsRepair,
 }
 

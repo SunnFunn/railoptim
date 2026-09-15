@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::data::business_rules::{BusinessRules, RuleOutcome};
-use crate::data::convention_index::ConventionIndex;
+use crate::data::convention_index::{ArcTiming, ConventionIndex};
 use crate::data::references::normalize_etsng_code;
 use crate::data::station_backlog::StationBacklogIndex;
 use crate::data::wash::{effective_etsng_for_wash_tariff, supply_needs_wash};
@@ -630,9 +630,19 @@ pub fn classify_pair<'a>(
         return PairOutcome::BadType;
     }
 
-    // Правило 5: конвенция РЖД (Load и Wash). Дата — сутки прибытия на станцию спроса.
-    let arrival_day = supply_release_shift_days(s.supply_period) + tariff.period_of_delivery;
-    if let Some(rule) = conventions.ban_for_arrival(s, d, arrival_day) {
+    // Правило 5: конвенция РЖД (Load и Wash). Порожний проверяется на окне
+    // «отправление…прибытие», груз — на окне погрузки по периоду спроса
+    // (см. `ConventionIndex`: конвенция — запрет приёма к перевозке в период действия).
+    let dispatch_day = supply_release_shift_days(s.supply_period);
+    let timing = ArcTiming {
+        dispatch_day,
+        arrival_day: dispatch_day + tariff.period_of_delivery,
+        load_window: match d.purpose {
+            DemandPurpose::Load => demand_period_day_bounds(d.period),
+            DemandPurpose::Wash => None,
+        },
+    };
+    if let Some(rule) = conventions.ban_for_arc(s, d, timing) {
         return PairOutcome::ConventionBan {
             rzd_number: rule.rzd_number.clone(),
         };
@@ -788,7 +798,7 @@ pub struct ArcStats {
 /// - Период 2: сут. 5–7
 /// - Период 3: сут. 8–9
 /// - Период 4: сут. 10–14
-fn demand_period_day_bounds(period: u8) -> Option<(i32, i32)> {
+pub(crate) fn demand_period_day_bounds(period: u8) -> Option<(i32, i32)> {
     match period {
         1 => Some((0, 4)),
         2 => Some((5, 7)),
@@ -1854,5 +1864,65 @@ mod tests {
         );
         assert_eq!(arcs.len(), 1);
         assert_eq!(stats.convention_ban, 0);
+    }
+
+    #[test]
+    fn convention_empty_ban_on_dispatch_day_closes_arc_even_if_arrival_later() {
+        // Телеграмма действует только сегодня; порожний отправляется сегодня (period 1),
+        // прибывает через сутки — запрет приёма к отправлению всё равно действует.
+        let mut r = conv_rule_empty_esr("E2", "D1");
+        r.date_beg = "2026-09-15".into();
+        r.date_end = "2026-09-15".into();
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 9, 15).unwrap();
+        let idx = ConventionIndex::build_at(vec![r], today);
+        let d = dummy_demand(3, "D1", None);
+        let (arcs, stats) = build_task_arcs(
+            &[dummy_supply(3, "S1", 1, false)], &[d.clone()], &[dummy_tariff("S1", "D1")],
+            &HashSet::new(), &HashSet::new(), &HashSet::new(), &HashMap::new(),
+            &BusinessRules::default(),
+            &StationBacklogIndex::disabled(),
+            &idx,
+        );
+        assert_eq!(arcs.len(), 0);
+        assert_eq!(stats.convention_ban, 1);
+
+        // Дислокация (supply_period 10): отправление через 5 суток — телеграмма уже истекла.
+        let (arcs, stats) = build_task_arcs(
+            &[dummy_supply(3, "S1", 10, false)], &[with_period(d, 2)], &[dummy_tariff("S1", "D1")],
+            &HashSet::new(), &HashSet::new(), &HashSet::new(), &HashMap::new(),
+            &BusinessRules::default(),
+            &StationBacklogIndex::disabled(),
+            &idx,
+        );
+        assert_eq!(arcs.len(), 1);
+        assert_eq!(stats.convention_ban, 0);
+    }
+
+    #[test]
+    fn convention_grain_ban_checks_loading_window_of_demand_period() {
+        // Grain-запрет 25…29 сентября. Порожний отправляется и прибывает раньше, но узел
+        // периода 4 грузится на 10–14-е сутки (25…29.09) — дуга закрыта; узел периода 1 — открыт.
+        let mut r = conv_rule_empty_esr("G2", "514003");
+        r.cargo_class = crate::data::conventions::ConventionCargoClass::Grain;
+        r.date_beg = "2026-09-25".into();
+        r.date_end = "2026-09-29".into();
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 9, 15).unwrap();
+        let idx = ConventionIndex::build_at(vec![r], today);
+        let mut late = with_period(dummy_demand(3, "LOAD1", None), 4);
+        late.station_to_code = Some("514003".into());
+        let mut early = dummy_demand(3, "LOAD2", None);
+        early.station_to_code = Some("514003".into());
+        let (arcs, stats) = build_task_arcs(
+            &[dummy_supply(6, "S1", 1, false)], &[late, early],
+            &[dummy_tariff("S1", "LOAD1"), dummy_tariff("S1", "LOAD2")],
+            &HashSet::new(), &HashSet::new(), &HashSet::new(), &HashMap::new(),
+            &BusinessRules::default(),
+            &StationBacklogIndex::disabled(),
+            &idx,
+        );
+        let dests: Vec<&str> = arcs.iter().map(|a| a.demand_station_code.as_str()).collect();
+        assert!(!dests.contains(&"LOAD1"), "период 4 грузится в окно телеграммы");
+        assert!(dests.contains(&"LOAD2"), "период 1 грузится до начала телеграммы");
+        assert_eq!(stats.convention_ban, 1);
     }
 }

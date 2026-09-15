@@ -732,18 +732,26 @@ fn best_repair_tariff<'a>(
             let rs = station_by_code.get(t.station_to_code.as_str()).copied();
             let rec_okpo = rs.map(|r| r.recip_okpo.as_slice()).unwrap_or(&[]);
             let rec_names = rs.map(|r| r.recip_name.as_slice()).unwrap_or(&[]);
+            // Короткий код дороги — из `repairs.json` (`RepairRailWay`); в тарифе
+            // `RailWayToName` может быть полным именем и с дорожными правилами не совпадёт.
+            let railway = rs
+                .map(|r| r.railway.as_str())
+                .filter(|rw| !rw.trim().is_empty())
+                .unwrap_or(t.railway_to.as_str());
             let dest = EmptyDestRef {
                 supply_railway: &s.railway_to,
+                supply_station_code: &s.station_to_code,
                 station_code: &t.station_to_code,
                 station_name: &t.station_to,
-                railway: &t.railway_to,
+                railway,
                 sender_okpo: None,
                 sender_name: None,
                 recipient_okpos: rec_okpo,
                 recipient_names: rec_names,
             };
+            // Порожний в ремонт: окно «отправление…прибытие».
             conventions
-                .ban_for_empty_dest_arrival(dest, ConventionScope::Repair, shift + t.period_of_delivery)
+                .ban_for_empty_dest_timed(dest, ConventionScope::Repair, shift, shift + t.period_of_delivery)
                 .is_none()
         })
         .min_by(|a, b| a.cost.partial_cmp(&b.cost).unwrap_or(std::cmp::Ordering::Equal))

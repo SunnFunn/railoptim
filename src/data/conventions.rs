@@ -48,6 +48,8 @@ pub enum ConventionStatus {
     ReserveStation,
     RepairStation,
     Other,
+    /// Неизвестный `type` от `railconventions` — не валим разбор всей телеграммы.
+    #[serde(other)]
     Unknown,
 }
 
@@ -148,6 +150,8 @@ pub struct ConventionsLoadStats {
     pub empty_dates: usize,
     pub skipped_class: usize,
     pub skipped_kzh: usize,
+    /// Действует по датам, но матчить нечем: ни ЕСР, ни имён станций, ни распознанных дорог.
+    pub unresolved: usize,
     pub active: usize,
     pub active_empty: usize,
     pub active_all: usize,
@@ -155,10 +159,22 @@ pub struct ConventionsLoadStats {
     pub active_service: usize,
 }
 
+/// Действующая по датам телеграмма, которую нечем матчить (в индекс не попадает).
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct UnresolvedConvention {
+    pub rzd_number: String,
+    pub destination_st: String,
+    pub departure_st: String,
+    /// Фрагменты «все станции …», не найденные в справочнике дорог.
+    pub unknown_road_fragments: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ConventionsLoad {
     pub stats: ConventionsLoadStats,
     pub active: Vec<ParsedConvention>,
+    /// Для лога старта: что нужно добавить в справочник дорог.
+    pub unresolved: Vec<UnresolvedConvention>,
 }
 
 #[derive(Clone)]
@@ -246,8 +262,8 @@ pub fn load_conventions_at_startup(enabled: bool) -> ConventionIndex {
                 st.expired, st.not_yet, st.empty_dates, st.bad_json,
             );
             println!(
-                "  отброшено из действующих по дате: класс Others/ошибка {}, только КЗХ {}",
-                st.skipped_class, st.skipped_kzh,
+                "  отброшено из действующих по дате: класс Others/ошибка {}, только КЗХ {}, нечем матчить {}",
+                st.skipped_class, st.skipped_kzh, st.unresolved,
             );
             println!(
                 "  действующих: {} (Empty {}, All {}, Grain {}; из них промывка/ремонт/отстой {})",
@@ -259,6 +275,7 @@ pub fn load_conventions_at_startup(enabled: bool) -> ConventionIndex {
             if probe.load.active.len() > 15 {
                 println!("    · ...ещё {} действующих", probe.load.active.len() - 15);
             }
+            log_unresolved(&probe.load);
             let index = ConventionIndex::build(probe.load.active);
             println!("  {}", index.summary_line());
             index.log_geography();
@@ -268,6 +285,35 @@ pub fn load_conventions_at_startup(enabled: bool) -> ConventionIndex {
             eprintln!("  [!] конвенции conv-redis: {e} — правило 5 не применяется");
             ConventionIndex::disabled()
         }
+    }
+}
+
+/// `[!]`-строки лога: телеграммы, которые действуют по датам, но не применяются
+/// (не распознаны дороги/станции), и действующие с частично нераспознанными дорогами.
+pub fn log_unresolved(load: &ConventionsLoad) {
+    for u in &load.unresolved {
+        eprintln!(
+            "  [!] №{}: действует по датам, но не применяется — не распознано: {} (назн. «{}», отпр. «{}»)",
+            u.rzd_number,
+            if u.unknown_road_fragments.is_empty() {
+                "ни ЕСР, ни имён станций, ни дорог".to_string()
+            } else {
+                format!("«{}»", u.unknown_road_fragments.join("», «"))
+            },
+            u.destination_st,
+            u.departure_st,
+        );
+    }
+    for p in load
+        .active
+        .iter()
+        .filter(|p| !p.unknown_road_fragments.is_empty())
+    {
+        eprintln!(
+            "  [!] №{}: не распознаны дороги «{}» — остальная часть телеграммы применяется",
+            p.rzd_number,
+            p.unknown_road_fragments.join("», «"),
+        );
     }
 }
 
@@ -299,9 +345,9 @@ fn fetch_parse_and_dump(
 
     let catalog = RailwayCatalog::load_default().unwrap_or_else(|e| {
         eprintln!(
-            "  [!] справочник дорог ({RAILWAY_MAP_PATH}): {e} — дорожные «все станции» не разберутся"
+            "  [!] справочник дорог ({RAILWAY_MAP_PATH}): {e} — дороги РФ в «все станции …» не разберутся, только встроенные инотерритории"
         );
-        RailwayCatalog::default()
+        RailwayCatalog::builtin()
     });
     let today = Local::now().date_naive();
     let load = parse_hash(&raw, today, &catalog);
@@ -338,6 +384,7 @@ pub fn parse_hash(
         ..Default::default()
     };
     let mut active = Vec::new();
+    let mut unresolved = Vec::new();
 
     for (key, json) in raw {
         let tel: TelegramData = match serde_json::from_str(json) {
@@ -380,6 +427,16 @@ pub fn parse_hash(
             stats.skipped_kzh += 1;
             continue;
         }
+        if has_nothing_to_match(&parsed) {
+            stats.unresolved += 1;
+            unresolved.push(UnresolvedConvention {
+                rzd_number: parsed.rzd_number,
+                destination_st: tel.destination_st.clone(),
+                departure_st: tel.departure_st.clone(),
+                unknown_road_fragments: parsed.unknown_road_fragments,
+            });
+            continue;
+        }
         match parsed.cargo_class {
             ConventionCargoClass::Empty => stats.active_empty += 1,
             ConventionCargoClass::All => stats.active_all += 1,
@@ -393,7 +450,12 @@ pub fn parse_hash(
     }
 
     active.sort_by(|a, b| a.rzd_number.cmp(&b.rzd_number));
-    ConventionsLoad { stats, active }
+    unresolved.sort_by(|a, b| a.rzd_number.cmp(&b.rzd_number));
+    ConventionsLoad {
+        stats,
+        active,
+        unresolved,
+    }
 }
 
 fn resolve_cargo_class(tel: &TelegramData) -> Option<ConventionCargoClass> {
@@ -418,23 +480,87 @@ fn is_kzh_only_road_ban(p: &ParsedConvention) -> bool {
     dest_empty && dep_empty && p.dep_all_stations && p.kzh_stripped_dep
 }
 
+/// Действует по датам, но ни одного ключа для матчинга: ни ЕСР, ни имён станций,
+/// ни распознанных дорог (например, «Все станции Марсианской ЖД»).
+fn has_nothing_to_match(p: &ParsedConvention) -> bool {
+    p.dest_esr.is_empty()
+        && p.dest_names.is_empty()
+        && p.dest_railways.is_empty()
+        && p.dep_esr.is_empty()
+        && p.dep_railways.is_empty()
+}
+
+/// Одна сторона телеграммы (назначение или отправление).
+struct SideParse {
+    esr: Vec<String>,
+    names: Vec<String>,
+    railways: Vec<String>,
+    all_stations: bool,
+    unknown: Vec<String>,
+    kzh_stripped: bool,
+}
+
+/// «Все станции … железных дорог» — текст про дороги: имён станций из него не берём
+/// (иначе «Северной», «Московской» становились именами станций и правило уходило в
+/// станционную ветку индекса, а дорожная пара dep→dest терялась). Перечень станций —
+/// наоборот, дороги не разбираем: в индексе станционное правило главнее.
+fn parse_side(code_raw: &str, name_raw: &str, catalog: &RailwayCatalog) -> SideParse {
+    let esr = parse_esr_list(code_raw);
+    let mut all_stations = esr.is_empty() && looks_like_all_stations(code_raw, name_raw);
+    let mut names = Vec::new();
+    let mut railways = Vec::new();
+    let mut unknown = Vec::new();
+    if all_stations {
+        let (roads, unk) = catalog.parse_railways(name_raw);
+        railways = roads;
+        unknown = unk;
+        // Код «Все станции», но в имени — перечень станций без слова «все» (LLM разошёлся):
+        // это станционное правило по именам, а не дорожное.
+        if railways.is_empty()
+            && !unknown.is_empty()
+            && !looks_like_all_stations(name_raw, name_raw)
+        {
+            all_stations = false;
+            unknown.clear();
+            names = parse_station_names(name_raw);
+        }
+    } else {
+        names = parse_station_names(name_raw);
+    }
+    let kzh_stripped = strip_kzh(&mut railways);
+    SideParse {
+        esr,
+        names,
+        railways,
+        all_stations,
+        unknown,
+        kzh_stripped,
+    }
+}
+
 fn parse_telegram_fields(
     tel: &TelegramData,
     class: ConventionCargoClass,
     catalog: &RailwayCatalog,
 ) -> ParsedConvention {
-    let dest_esr = parse_esr_list(&tel.destination_st_code);
-    let dep_esr = parse_esr_list(&tel.departure_st_code);
-    let dest_names = parse_station_names(&tel.destination_st);
-    let dep_names = parse_station_names(&tel.departure_st);
-
-    let (mut dest_roads, mut dest_unknown) = catalog.parse_railways(&tel.destination_st);
-    let (mut dep_roads, mut dep_unknown) = catalog.parse_railways(&tel.departure_st);
-    let kzh_stripped_dest = strip_kzh(&mut dest_roads);
-    let kzh_stripped_dep = strip_kzh(&mut dep_roads);
-
-    let dest_all_stations = dest_esr.is_empty() && looks_like_all_stations(&tel.destination_st_code, &tel.destination_st);
-    let dep_all_stations = dep_esr.is_empty() && looks_like_all_stations(&tel.departure_st_code, &tel.departure_st);
+    let dest = parse_side(&tel.destination_st_code, &tel.destination_st, catalog);
+    let dep = parse_side(&tel.departure_st_code, &tel.departure_st, catalog);
+    let SideParse {
+        esr: dest_esr,
+        names: dest_names,
+        railways: dest_roads,
+        all_stations: dest_all_stations,
+        unknown: mut dest_unknown,
+        kzh_stripped: kzh_stripped_dest,
+    } = dest;
+    let SideParse {
+        esr: dep_esr,
+        names: dep_names,
+        railways: dep_roads,
+        all_stations: dep_all_stations,
+        unknown: mut dep_unknown,
+        kzh_stripped: kzh_stripped_dep,
+    } = dep;
 
     dest_unknown.append(&mut dep_unknown);
 
@@ -490,10 +616,17 @@ fn parse_iso_date(raw: &str) -> Option<NaiveDate> {
 }
 
 impl ParsedConvention {
-    /// Прибытие `day` попадает в `date_beg…date_end` (уже отфильтрованные на горизонт записи).
+    /// `day` попадает в `date_beg…date_end` (уже отфильтрованные на горизонт записи).
     pub fn covers_date(&self, day: NaiveDate) -> bool {
+        self.covers_range(day, day)
+    }
+
+    /// Окно `from…to` (включительно) пересекается с `date_beg…date_end`.
+    /// Непарсибельные даты — fail-closed (запрет действует): на горизонт записи уже отобраны.
+    pub fn covers_range(&self, from: NaiveDate, to: NaiveDate) -> bool {
+        let (from, to) = if from <= to { (from, to) } else { (to, from) };
         match (parse_iso_date(&self.date_beg), parse_iso_date(&self.date_end)) {
-            (Some(b), Some(e)) => day >= b && day <= e,
+            (Some(b), Some(e)) => b <= to && e >= from,
             _ => true,
         }
     }
@@ -650,9 +783,37 @@ fn percent_encode_password(raw: &str) -> String {
 
 // --- Справочник дорог --------------------------------------------------------
 
+/// Основы прилагательных дорог, которых нет в CSV карты: инотерритории там записаны
+/// существительными («Узбекистан», «Латвия»), а в телеграммах — «Узбекской», «Латвийской».
+/// Имеют приоритет над CSV (в нём «Туркменистан,ТДЖ» — ошибка: ТДЖ — Таджикская, ТРК — Туркменская).
+const BUILTIN_ROAD_STEMS: &[(&str, &str)] = &[
+    ("узбек", "УЗБ"),
+    ("узбекистан", "УЗБ"),
+    ("латвий", "ЛАТ"),
+    ("латвия", "ЛАТ"),
+    ("литов", "ЛИТ"),
+    ("литва", "ЛИТ"),
+    ("эстон", "ЭСТ"),
+    ("эстония", "ЭСТ"),
+    ("киргиз", "КРГ"),
+    ("кыргыз", "КРГ"),
+    ("кыргызстан", "КРГ"),
+    ("таджик", "ТДЖ"),
+    ("таджикистан", "ТДЖ"),
+    ("туркмен", "ТРК"),
+    ("туркменистан", "ТРК"),
+    ("грузин", "ГРЗ"),
+    ("грузия", "ГРЗ"),
+    ("южно-кавказ", "ЮКЖ"),
+    ("азербайджан", "АЗР"),
+    ("белорус", "БЕЛ"),
+    ("казахстан", "КЗХ"),
+    ("казах", "КЗХ"),
+];
+
 #[derive(Debug, Clone, Default)]
 pub struct RailwayCatalog {
-    /// Основа названия (после снятия падежа) → короткий код.
+    /// Основа названия (после снятия падежа) → короткий код. Отсортировано по длине основы (длинные первыми).
     stems: Vec<(String, String)>,
 }
 
@@ -662,10 +823,18 @@ impl RailwayCatalog {
         Self::load_csv(&path)
     }
 
+    /// Только встроенные основы (если CSV карты недоступен).
+    pub fn builtin() -> Self {
+        let mut map: HashMap<String, String> = HashMap::new();
+        Self::insert_builtin(&mut map);
+        Self::from_map(map)
+    }
+
     pub fn load_csv(path: &Path) -> Result<Self> {
         let text = fs::read_to_string(path)
             .with_context(|| format!("чтение {}", path.display()))?;
-        let mut stems = Vec::new();
+        let mut map: HashMap<String, String> = HashMap::new();
+        Self::insert_builtin(&mut map);
         for (i, line) in text.lines().enumerate() {
             let line = line.trim();
             if line.is_empty() || line.starts_with('#') || (i == 0 && line.starts_with("supermap")) {
@@ -680,13 +849,24 @@ impl RailwayCatalog {
             }
             let stem = adjective_stem(&strip_railway_boilerplate(name));
             if !stem.is_empty() {
-                stems.push((stem, code.clone()));
+                map.entry(stem).or_insert_with(|| code.clone());
             }
-            stems.push((norm_ru(&code), code));
+            map.entry(norm_ru(&code)).or_insert(code);
         }
-        stems.sort_by(|a, b| b.0.len().cmp(&a.0.len()).then_with(|| a.1.cmp(&b.1)));
-        stems.dedup();
-        Ok(Self { stems })
+        Ok(Self::from_map(map))
+    }
+
+    fn insert_builtin(map: &mut HashMap<String, String>) {
+        for (stem, code) in BUILTIN_ROAD_STEMS {
+            map.insert((*stem).to_string(), (*code).to_string());
+            map.entry(norm_ru(code)).or_insert_with(|| (*code).to_string());
+        }
+    }
+
+    fn from_map(map: HashMap<String, String>) -> Self {
+        let mut stems: Vec<(String, String)> = map.into_iter().collect();
+        stems.sort_by(|a, b| b.0.len().cmp(&a.0.len()).then_with(|| a.0.cmp(&b.0)));
+        Self { stems }
     }
 
     /// Короткие коды дорог, упомянутых в строке телеграммы (включая инотерритории кроме КЗХ на этапе фильтра).
@@ -752,6 +932,8 @@ fn strip_railway_boilerplate(raw: &str) -> String {
         "железных дорог",
         "железной дороги",
         "железная дорога",
+        // «со всех станций российских железных дорог» — вся сеть РЖД, дорог не перечисляет.
+        "российских",
         " жд",
     ];
     for pat in PATS {
@@ -882,6 +1064,171 @@ mod tests {
         assert!(parsed.dep_all_stations);
         assert!(parsed.all_parties);
         assert!(parsed.dest_esr.is_empty());
+        // «Северной», «Московской» — дороги, а не имена станций: иначе индекс уводит
+        // телеграмму в станционную ветку и пара дорог dep→dest теряется.
+        assert!(parsed.dest_names.is_empty(), "{:?}", parsed.dest_names);
+        assert!(parsed.dep_names.is_empty(), "{:?}", parsed.dep_names);
+        assert!(parsed.unknown_road_fragments.is_empty());
+    }
+
+    #[test]
+    fn foreign_roads_adjectives_resolve_to_short_codes() {
+        let cat = catalog();
+        let cases = [
+            ("Все станции Узбекской железной дороги", "УЗБ"),
+            ("Все станции Латвийской ЖД", "ЛАТ"),
+            ("Все станции Литовской ЖД", "ЛИТ"),
+            ("Все станции Эстонской ЖД", "ЭСТ"),
+            ("Все станции Киргизской ЖД", "КРГ"),
+            ("Все станции Таджикской ЖД", "ТДЖ"),
+            ("Все станции Туркменской ЖД", "ТРК"),
+            ("Все станции Грузинской ЖД", "ГРЗ"),
+            ("Все станции Азербайджанской ЖД", "АЗР"),
+            ("Все станции Белорусской ЖД", "БЕЛ"),
+            ("Все станции Южно-Кавказской ЖД", "ЮКЖ"),
+        ];
+        for (text, code) in cases {
+            let (codes, unknown) = cat.parse_railways(text);
+            assert_eq!(codes, vec![code], "{text}: unknown={unknown:?}");
+        }
+        // CSV говорит «Туркменистан,ТДЖ» — встроенный алиас должен победить.
+        let (codes, _) = cat.parse_railways("Туркменистан");
+        assert_eq!(codes, vec!["ТРК"]);
+        let (codes, _) = cat.parse_railways("Таджикистан");
+        assert_eq!(codes, vec!["ТДЖ"]);
+    }
+
+    #[test]
+    fn all_russian_stations_departure_is_not_unknown() {
+        let cat = catalog();
+        let (codes, unknown) = cat.parse_railways("Все станции российских железных дорог");
+        assert!(codes.is_empty());
+        assert!(unknown.is_empty(), "{unknown:?}");
+    }
+
+    #[test]
+    fn uzbek_all_stations_empty_is_active_dest_only_road_rule() {
+        let mut raw = HashMap::new();
+        raw.insert(
+            "27638".into(),
+            tel_json(
+                "Empty",
+                "2025-11-11",
+                "3000-01-01",
+                "Все станции Узбекской железной дороги",
+                "Все станции",
+                "All",
+            ),
+        );
+        let load = load_of(&raw);
+        assert_eq!(load.stats.active, 1);
+        assert_eq!(load.stats.unresolved, 0);
+        assert_eq!(load.active[0].dest_railways, vec!["УЗБ"]);
+        assert!(load.active[0].dest_all_stations);
+        assert!(load.active[0].dest_names.is_empty());
+    }
+
+    #[test]
+    fn unknown_road_only_is_unresolved_not_active() {
+        let mut raw = HashMap::new();
+        raw.insert(
+            "m".into(),
+            tel_json(
+                "Empty",
+                "2026-01-01",
+                "3000-01-01",
+                "Все станции Марсианской железной дороги",
+                "Все станции",
+                "All",
+            ),
+        );
+        let load = load_of(&raw);
+        assert_eq!(load.stats.active, 0);
+        assert_eq!(load.stats.unresolved, 1);
+        assert_eq!(load.unresolved[0].rzd_number, "1");
+        assert_eq!(load.unresolved[0].unknown_road_fragments, vec!["марсианской"]);
+    }
+
+    #[test]
+    fn station_list_with_esr_does_not_report_unknown_roads() {
+        let mut raw = HashMap::new();
+        raw.insert(
+            "19412".into(),
+            tel_json(
+                "All",
+                "2026-09-01",
+                "2026-12-31",
+                "Рыльск, Коренево, Глушково, Суджа, Псел (МСК)",
+                "207603, 207406, 207302, 206507, 206704",
+                "All",
+            ),
+        );
+        let load = load_of(&raw);
+        assert_eq!(load.stats.active, 1);
+        let p = &load.active[0];
+        assert_eq!(p.dest_esr.len(), 5);
+        assert_eq!(p.dest_names.len(), 5);
+        assert!(!p.dest_all_stations);
+        assert!(p.dest_railways.is_empty());
+        assert!(p.unknown_road_fragments.is_empty(), "{:?}", p.unknown_road_fragments);
+    }
+
+    #[test]
+    fn code_all_stations_but_name_lists_stations_falls_back_to_names() {
+        let mut raw = HashMap::new();
+        raw.insert(
+            "x".into(),
+            tel_json("Empty", "2026-01-01", "3000-01-01", "Шебекино, Нежеголь", "Все станции", "All"),
+        );
+        let load = load_of(&raw);
+        assert_eq!(load.stats.active, 1);
+        let p = &load.active[0];
+        assert!(!p.dest_all_stations);
+        assert_eq!(p.dest_names, vec!["Шебекино", "Нежеголь"]);
+        assert!(p.unknown_road_fragments.is_empty());
+    }
+
+    #[test]
+    fn unknown_status_type_does_not_break_telegram() {
+        let json = SAMPLE_4702.replace(r#""type": "Other""#, r#""type": "SomethingNew""#);
+        let t: TelegramData = serde_json::from_str(&json).unwrap();
+        assert_eq!(t.convention_info, ConventionStatus::Unknown);
+    }
+
+    #[test]
+    fn covers_range_is_interval_overlap() {
+        let mut r = ParsedConvention {
+            rzd_number: "1".into(),
+            cargo_class: ConventionCargoClass::Empty,
+            cargo_name: String::new(),
+            date_beg: "2026-09-10".into(),
+            date_end: "2026-09-12".into(),
+            dest_esr: vec![],
+            dest_names: vec![],
+            dest_railways: vec![],
+            dest_all_stations: false,
+            dep_esr: vec![],
+            dep_names: vec![],
+            dep_railways: vec![],
+            dep_all_stations: false,
+            junction: None,
+            all_parties: true,
+            recipient_okpo: vec![],
+            recipient_names: vec![],
+            unknown_road_fragments: vec![],
+            convention_info: ConventionStatus::Other,
+            kzh_stripped_dest: false,
+            kzh_stripped_dep: false,
+        };
+        let d = |day: u32| NaiveDate::from_ymd_opt(2026, 9, day).unwrap();
+        assert!(r.covers_range(d(12), d(15)), "касание по правому краю");
+        assert!(r.covers_range(d(5), d(10)), "касание по левому краю");
+        assert!(r.covers_range(d(1), d(30)), "окно шире телеграммы");
+        assert!(!r.covers_range(d(13), d(20)));
+        assert!(!r.covers_range(d(1), d(9)));
+        assert!(r.covers_range(d(15), d(12)), "перепутанные границы нормализуются");
+        r.date_end = "3000-01-01".into();
+        assert!(r.covers_range(d(13), d(20)));
     }
 
     #[test]

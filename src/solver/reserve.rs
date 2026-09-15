@@ -103,6 +103,7 @@ pub fn solve_reserve_assignment(
             };
             let dest = EmptyDestRef {
                 supply_railway: &s.railway_to,
+                supply_station_code: from_code,
                 station_code: &r.station_code,
                 station_name: &r.station_name,
                 railway: &r.railway_short,
@@ -111,8 +112,9 @@ pub fn solve_reserve_assignment(
                 recipient_okpos: rec_okpo,
                 recipient_names: rec_names,
             };
+            // Порожний в отстой: окно «отправление…прибытие».
             if conventions
-                .ban_for_empty_dest_arrival(dest, ConventionScope::Reserve, shift + t.period_of_delivery)
+                .ban_for_empty_dest_timed(dest, ConventionScope::Reserve, shift, shift + t.period_of_delivery)
                 .is_some()
             {
                 convention_skip += 1;

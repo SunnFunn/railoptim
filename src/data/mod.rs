@@ -1,5 +1,6 @@
 pub mod business_rules;
 pub mod client;
+pub mod convention_index;
 pub mod conventions;
 pub mod demand;
 pub mod demand_reserves;
@@ -19,6 +20,7 @@ pub mod wash;
 
 pub use business_rules::{BusinessRules, ForeignException, RuleOutcome};
 pub use client::ApiClient;
+pub use convention_index::{ConventionIndex, ConventionIndexStats, ConventionScope, EmptyDestRef};
 pub use conventions::{
     dump_conventions_stub, load_conventions_at_startup, TelegramData, DUMP_PATH,
 };

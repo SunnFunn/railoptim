@@ -69,9 +69,9 @@ async fn main() -> Result<()> {
         }
     };
 
-    // Правило 5, шаги 1–2: HASH telegrams_db → только действующие на горизонт.
-    // Солвер пока не использует список. Нет пароля/Redis — fail-open.
-    data::load_conventions_at_startup(business_rules.convention_check_enabled);
+    // Правило 5, шаги 1–4: HASH telegrams_db → индекс действующих. Солвер — шаг 5.
+    // Нет пароля/Redis — fail-open, пустой индекс.
+    let _convention_index = data::load_conventions_at_startup(business_rules.convention_check_enabled);
 
     // Правило 3: спрос погрузки на российских дорогах ограничивается согласованными
     // заявками ГУ-12 (MSSQL SLP через gu12.py). Выше — исходный спрос АПИ, ниже — с учётом ГУ-12.

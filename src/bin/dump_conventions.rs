@@ -6,7 +6,7 @@
 //!   cargo run --release --bin railoptim-dump-conventions
 
 use anyhow::Result;
-use railoptim::data::{dump_conventions_stub, DUMP_PATH};
+use railoptim::data::{dump_conventions_stub, ConventionIndex, DUMP_PATH};
 
 fn main() -> Result<()> {
     let probe = dump_conventions_stub(None)?;
@@ -23,5 +23,7 @@ fn main() -> Result<()> {
         "  действующих: Empty {}, All {}, Grain {}; из них промывка/ремонт/отстой {}",
         st.active_empty, st.active_all, st.active_grain, st.active_service,
     );
+    let index = ConventionIndex::build(probe.load.active);
+    println!("  {}", index.summary_line());
     Ok(())
 }

@@ -1,7 +1,8 @@
 //! Правило 5: конвенциональные телеграммы РЖД из HASH `telegrams_db` (`conv-redis`).
 //!
 //! Шаг 1 — подключение. Шаг 2 — разбор JSON, в память и снимок только действующие
-//! (даты пересекают горизонт планирования). В солвер (`classify_pair`) записи пока не идут.
+//! (даты пересекают горизонт планирования). Шаг 4 — [`super::convention_index::ConventionIndex`].
+//! В `classify_pair` индекс пока не подключён (шаг 5).
 //!
 //! Переменные окружения (не путать с `REDIS_SUPPLY_*` дислокации на порту 6380):
 //!   `REDIS_CONV_HOST` (по умолчанию `127.0.0.1`)
@@ -18,6 +19,7 @@ use chrono::{Duration, Local, NaiveDate};
 use redis::Commands;
 use serde::{Deserialize, Serialize};
 
+use super::convention_index::ConventionIndex;
 use super::demand::DEMAND_PERIODS;
 use super::esr::normalize_esr6;
 use super::gu12::{normalize_okpo, normalize_party_name};
@@ -49,7 +51,7 @@ pub enum ConventionStatus {
 }
 
 impl ConventionStatus {
-    fn is_service_station(&self) -> bool {
+    pub fn is_service_station(&self) -> bool {
         matches!(
             self,
             Self::WashingStation | Self::ReserveStation | Self::RepairStation
@@ -105,7 +107,7 @@ impl ConventionCargoClass {
     }
 }
 
-/// Разобранная действующая конвенция (ещё без индекса солвера).
+/// Разобранная действующая конвенция (элемент [`super::convention_index::ConventionIndex`]).
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct ParsedConvention {
     pub rzd_number: String,
@@ -129,10 +131,10 @@ pub struct ParsedConvention {
     pub convention_info: ConventionStatus,
     /// С назначения сняли КЗХ (для отброса «все станции только КЗХ»).
     #[serde(skip)]
-    kzh_stripped_dest: bool,
+    pub(crate) kzh_stripped_dest: bool,
     /// С отправления сняли КЗХ.
     #[serde(skip)]
-    kzh_stripped_dep: bool,
+    pub(crate) kzh_stripped_dep: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -220,10 +222,10 @@ pub fn planning_horizon_end(today: NaiveDate) -> NaiveDate {
 }
 
 /// Fail-open для `main`. `enabled == false` — даже к Redis не ходим.
-pub fn load_conventions_at_startup(enabled: bool) {
+pub fn load_conventions_at_startup(enabled: bool) -> ConventionIndex {
     if !enabled {
         println!("Конвенции (правило 5): выкл. (ConventionCheckEnabled=false)");
-        return;
+        return ConventionIndex::disabled();
     }
     match dump_conventions_stub(None) {
         Ok(probe) => {
@@ -256,9 +258,13 @@ pub fn load_conventions_at_startup(enabled: bool) {
             if probe.load.active.len() > 15 {
                 println!("    · ...ещё {} действующих", probe.load.active.len() - 15);
             }
+            let index = ConventionIndex::build(probe.load.active);
+            println!("  {}", index.summary_line());
+            index
         }
         Err(e) => {
             eprintln!("  [!] конвенции conv-redis: {e} — правило 5 не применяется");
+            ConventionIndex::disabled()
         }
     }
 }

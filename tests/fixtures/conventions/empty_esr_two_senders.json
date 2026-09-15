@@ -1,0 +1,20 @@
+[
+  {
+    "id": 101,
+    "rzd_number": "9001",
+    "date_create": "2026-09-01",
+    "date_beg": "2026-09-01",
+    "date_end": "3000-01-01",
+    "text": "запрет отправления порожних вагонов назначением на станцию Руденск в адрес ООО Пятьдесят",
+    "cargo_class": "Empty",
+    "cargo_name": "Порожние вагоны",
+    "departure_st": "Все станции российских железных дорог",
+    "departure_st_code": "Все станции",
+    "destination_st": "Руденск (ПРВ)",
+    "destination_st_code": "987303",
+    "railroad_junction": "None",
+    "recipient_name": "ООО «Пятьдесят»",
+    "recipient_okpo": "00000050",
+    "convention_info": { "type": "Approved", "expiration_date": "2026-12-31" }
+  }
+]

@@ -1,0 +1,20 @@
+[
+  {
+    "id": 102,
+    "rzd_number": "9002",
+    "date_create": "2026-09-01",
+    "date_beg": "2026-09-01",
+    "date_end": "3000-01-01",
+    "text": "запрет погрузки зерновых грузов назначением на станцию Новороссийск (эксп.) СКВ",
+    "cargo_class": "Grain",
+    "cargo_name": "пшеница, ячмень, кукуруза",
+    "departure_st": "Все станции российских железных дорог",
+    "departure_st_code": "Все станции",
+    "destination_st": "Новороссийск (эксп.)",
+    "destination_st_code": "514003",
+    "railroad_junction": "None",
+    "recipient_name": "все грузополучатели",
+    "recipient_okpo": "All",
+    "convention_info": { "type": "Approved", "expiration_date": "2026-12-31" }
+  }
+]

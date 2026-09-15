@@ -42,7 +42,7 @@ async fn main() -> Result<()> {
     let business_rules = match data::BusinessRules::load("data/business_rules.json") {
         Ok(r) => {
             println!(
-                "Бизнес-правила (business_rules.json): потолок подсыла {}; инотерриторий {} (исключений {}); дефицитных дорог {} (вывоз ≤ {} км, надбавка {:.0} руб.); проверка ГУ-12 {}; загруженность станций (правило 4) {}",
+                "Бизнес-правила (business_rules.json): потолок подсыла {}; инотерриторий {} (исключений {}); дефицитных дорог {} (вывоз ≤ {} км, надбавка {:.0} руб.); проверка ГУ-12 {}; загруженность станций (правило 4) {}; конвенции РЖД (правило 5) {}",
                 r.max_empty_run_distance_km
                     .map(|km| format!("{km} км"))
                     .unwrap_or_else(|| "выкл.".to_string()),
@@ -59,6 +59,7 @@ async fn main() -> Result<()> {
                     ),
                     None => "выкл.".to_string(),
                 },
+                if r.convention_check_enabled { "вкл." } else { "выкл." },
             );
             r
         }
@@ -67,6 +68,10 @@ async fn main() -> Result<()> {
             data::BusinessRules::default()
         }
     };
+
+    // Правило 5: HASH telegrams_db → индекс действующих. Применяется в classify_pair,
+    // отстое и ремонте. Нет пароля/Redis — fail-open, пустой индекс.
+    let convention_index = data::load_conventions_at_startup(business_rules.convention_check_enabled);
 
     // Правило 3: спрос погрузки на российских дорогах ограничивается согласованными
     // заявками ГУ-12 (MSSQL SLP через gu12.py). Выше — исходный спрос АПИ, ниже — с учётом ГУ-12.
@@ -591,6 +596,7 @@ async fn main() -> Result<()> {
         &wash_tariff_map,
         &business_rules,
         &station_backlog,
+        &convention_index,
     );
 
     let total = arc_stats.total_pairs;
@@ -644,6 +650,24 @@ async fn main() -> Result<()> {
         arc_stats.station_overloaded,
         100.0 * arc_stats.station_overloaded as f64 / total.max(1) as f64,
     );
+    println!(
+        "  конвенция РЖД (правило 5):           {} ({:.1}%)",
+        arc_stats.convention_ban,
+        100.0 * arc_stats.convention_ban as f64 / total.max(1) as f64,
+    );
+    if !arc_stats.convention_by_number.is_empty() {
+        let mut nums: Vec<(&String, &usize)> = arc_stats.convention_by_number.iter().collect();
+        nums.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
+        let top: Vec<String> = nums
+            .iter()
+            .take(10)
+            .map(|(n, c)| format!("№{n} ({c})"))
+            .collect();
+        println!("    · телеграммы: {}", top.join(", "));
+        if nums.len() > 10 {
+            println!("    · ...ещё {} номеров", nums.len() - 10);
+        }
+    }
     println!(
         "  допустимых дуг с надбавкой по правилам: {} ({:.1}%)",
         arc_stats.arcs_rule_surcharged,
@@ -937,6 +961,7 @@ async fn main() -> Result<()> {
             dmzi_limits.as_ref(),
             &business_rules,
             &station_backlog,
+            &convention_index,
         );
     }
 
@@ -1024,6 +1049,7 @@ async fn main() -> Result<()> {
                     &opt_supply,
                     &reserve_nodes,
                     &reserve_tariff_map,
+                    &convention_index,
                 );
             }
             Err(e) => eprintln!(
@@ -1190,7 +1216,7 @@ async fn main() -> Result<()> {
     // Вагоны «В ремонт» (NeedsRepair): выбираем ремонтную станцию с min тарифом,
     // грузополучатель берётся из словаря repairs.json.
     let repair_records = solver::build_repair_output_records(
-        &repair_nodes, &repair_tariffs, &repair_stations,
+        &repair_nodes, &repair_tariffs, &repair_stations, &convention_index,
     );
 
     let n_optim    = output_records.len();

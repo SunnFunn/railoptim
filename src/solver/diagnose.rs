@@ -11,6 +11,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use crate::data::business_rules::BusinessRules;
+use crate::data::convention_index::ConventionIndex;
 use crate::data::station_backlog::StationBacklogIndex;
 use crate::node::{DemandNode, DemandPurpose, SupplyNode, TariffNode};
 
@@ -468,6 +469,10 @@ enum UnmetCause {
         business_rules: usize,
         /// Станция погрузки закрыта правилом 4 (очередь не меньше `K_hard` суток работы).
         station_overloaded: usize,
+        /// Запрещено конвенцией РЖД (правило 5).
+        convention_ban: usize,
+        /// Номера телеграмм, закрывших пары в этот узел.
+        convention_numbers: Vec<String>,
         bad_period: usize,
     },
 
@@ -513,8 +518,8 @@ enum UnmetCause {
 /// «структурно недостижимо» (нет дуг) и «потенциально закрываемо» (партия / ДМЗИ /
 /// конкуренция), что показывает реальный потолок покрытия.
 ///
-/// `tariffs` / `wash_codes` / `no_cleaning_roads` / `wash_tariffs` / `rules` / `backlog`
-/// нужны для структурной разбивки узлов без дуг через [`classify_pair`].
+/// `tariffs` / `wash_codes` / `no_cleaning_roads` / `wash_tariffs` / `rules` / `backlog` /
+/// `conventions` нужны для структурной разбивки узлов без дуг через [`classify_pair`].
 #[allow(clippy::too_many_arguments)]
 pub fn diagnose_unmet_demand(
     arcs: &[TaskArc],
@@ -529,6 +534,7 @@ pub fn diagnose_unmet_demand(
     dmzi_limits: Option<&DmziLimits>,
     rules: &BusinessRules,
     backlog: &StationBacklogIndex,
+    conventions: &ConventionIndex,
 ) {
     if arcs.len() != arc_vals.len() {
         eprintln!(
@@ -689,13 +695,14 @@ pub fn diagnose_unmet_demand(
 
         let cause = if node_arcs.is_empty() {
             // Структурный разбор: почему пара с каждым узлом предложения отброшена.
-            let (mut no_tariff, mut bad_type, mut dirty_etsng, mut too_far, mut business_rules, mut station_overloaded, mut bad_period) =
-                (0, 0, 0, 0, 0, 0, 0);
+            let (mut no_tariff, mut bad_type, mut dirty_etsng, mut too_far, mut business_rules, mut station_overloaded, mut convention_ban, mut bad_period) =
+                (0, 0, 0, 0, 0, 0, 0, 0);
+            let mut convention_numbers = Vec::new();
             for s in supply.iter() {
                 let s_wash_min = wash_min_cost.get(s.station_to_code.as_str()).copied();
                 match classify_pair(
                     s, d, &tariff_index, wash_codes, no_cleaning_roads, washed_empty_codes,
-                    wash_tariffs, s_wash_min, rules, backlog,
+                    wash_tariffs, s_wash_min, rules, backlog, conventions,
                 ) {
                     // Feasible здесь невозможен: иначе дуга была бы построена.
                     PairOutcome::Feasible { .. } => {}
@@ -708,12 +715,19 @@ pub fn diagnose_unmet_demand(
                     PairOutcome::TooFar => too_far += 1,
                     PairOutcome::ForeignTerritory | PairOutcome::DeficitRoadExport => business_rules += 1,
                     PairOutcome::StationOverloaded => station_overloaded += 1,
+                    PairOutcome::ConventionBan { rzd_number } => {
+                        convention_ban += 1;
+                        if !convention_numbers.iter().any(|n| n == &rzd_number) {
+                            convention_numbers.push(rzd_number);
+                        }
+                    }
                     PairOutcome::BadPeriod => bad_period += 1,
                 }
             }
             UnmetCause::NoFeasibleArcs {
                 supply_nodes_total: supply.len(),
-                no_tariff, bad_type, dirty_etsng, too_far, business_rules, station_overloaded, bad_period,
+                no_tariff, bad_type, dirty_etsng, too_far, business_rules, station_overloaded,
+                convention_ban, convention_numbers, bad_period,
             }
         } else if feasible.is_empty() && !min_batch_blocked.is_empty() {
             // Класс по самому низкому достижимому порогу: его смягчение помогло бы.
@@ -779,15 +793,21 @@ pub fn diagnose_unmet_demand(
             d.car_count,
         );
         match &cause {
-            UnmetCause::NoFeasibleArcs { supply_nodes_total, no_tariff, bad_type, dirty_etsng, too_far, business_rules, station_overloaded, bad_period } => {
+            UnmetCause::NoFeasibleArcs { supply_nodes_total, no_tariff, bad_type, dirty_etsng, too_far, business_rules, station_overloaded, convention_ban, convention_numbers, bad_period } => {
                 println!(
                     "    ПРИЧИНА: нет ни одной допустимой дуги — закрыть невозможно текущими данными. Отбраковка пар со всеми {} узлами предложения:",
                     supply_nodes_total,
                 );
                 println!(
-                    "             нет тарифа {}, несовм. тип {}, грязный ЕТСНГ {}, дальше потолка расстояния {}, бизнес-правила дорог (инотерритория/дефицит) {}, станция закрыта очередью (правило 4) {}, нарушение срока {}.",
-                    no_tariff, bad_type, dirty_etsng, too_far, business_rules, station_overloaded, bad_period,
+                    "             нет тарифа {}, несовм. тип {}, грязный ЕТСНГ {}, дальше потолка расстояния {}, бизнес-правила дорог (инотерритория/дефицит) {}, станция закрыта очередью (правило 4) {}, конвенция РЖД {}, нарушение срока {}.",
+                    no_tariff, bad_type, dirty_etsng, too_far, business_rules, station_overloaded, convention_ban, bad_period,
                 );
+                if !convention_numbers.is_empty() {
+                    println!(
+                        "             конвенция РЖД №{}.",
+                        convention_numbers.join(", №"),
+                    );
+                }
                 if let Some(b) = backlog.get(&d.station_code).filter(|_| *station_overloaded > 0) {
                     println!(
                         "             на станции {} ваг. при мощности {} ваг./сут. ({:.1} суток работы) — подсыл закрыт во все периоды.",

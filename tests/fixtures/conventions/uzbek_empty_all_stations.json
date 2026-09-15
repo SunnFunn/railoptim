@@ -1,0 +1,20 @@
+[
+  {
+    "id": 106,
+    "rzd_number": "27638",
+    "date_create": "2025-11-11",
+    "date_beg": "2025-11-11",
+    "date_end": "3000-01-01",
+    "text": "запрет отправления порожних вагонов назначением на все станции Узбекской железной дороги до отмены",
+    "cargo_class": "Empty",
+    "cargo_name": "Порожние вагоны",
+    "departure_st": "Все станции",
+    "departure_st_code": "Все станции",
+    "destination_st": "Все станции Узбекской железной дороги",
+    "destination_st_code": "Все станции",
+    "railroad_junction": "None",
+    "recipient_name": "все грузополучатели",
+    "recipient_okpo": "All",
+    "convention_info": { "type": "Other" }
+  }
+]

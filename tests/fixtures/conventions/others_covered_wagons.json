@@ -1,0 +1,38 @@
+[
+  {
+    "id": 104,
+    "rzd_number": "9004",
+    "date_create": "2026-09-01",
+    "date_beg": "2026-09-01",
+    "date_end": "3000-01-01",
+    "text": "запрет погрузки грузов в крытых вагонах назначением на все станции Северо-Кавказской железной дороги",
+    "cargo_class": "Others",
+    "cargo_name": "грузы в крытых вагонах",
+    "departure_st": "Все станции",
+    "departure_st_code": "Все станции",
+    "destination_st": "Все станции Северо-Кавказской железной дороги",
+    "destination_st_code": "Все станции",
+    "railroad_junction": "None",
+    "recipient_name": "все грузополучатели",
+    "recipient_okpo": "All",
+    "convention_info": { "type": "Other" }
+  },
+  {
+    "id": 105,
+    "rzd_number": "9005",
+    "date_create": "2026-09-01",
+    "date_beg": "2026-09-01",
+    "date_end": "3000-01-01",
+    "text": "текст не разобран",
+    "cargo_class": "LLM_ERROR",
+    "cargo_name": "",
+    "departure_st": "",
+    "departure_st_code": "",
+    "destination_st": "Все станции Северо-Кавказской железной дороги",
+    "destination_st_code": "Все станции",
+    "railroad_junction": "None",
+    "recipient_name": "",
+    "recipient_okpo": "",
+    "convention_info": { "type": "Other" }
+  }
+]

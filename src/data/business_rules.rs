@@ -66,6 +66,12 @@ pub struct BusinessRules {
     #[serde(rename = "Gu12CheckEnabled")]
     pub gu12_check_enabled: bool,
 
+    /// Правило 5: конвенции РЖД из HASH `telegrams_db` (`conv-redis`).
+    /// Действующие запреты идут в `classify_pair` (погрузка/промывка), отстой и ремонт;
+    /// `false` — к Redis не ходим, индекс пустой.
+    #[serde(rename = "ConventionCheckEnabled")]
+    pub convention_check_enabled: bool,
+
     /// Правило 4 (жёсткая часть): станция погрузки **закрыта** для подсыла во все
     /// периоды, если вагонов на станции (сумма `CarsOnStation` из АПИ спроса по
     /// грузоотправителям) не меньше `K_hard × мощность погрузки в сутки`
@@ -103,6 +109,7 @@ impl Default for BusinessRules {
             deficit_export_max_distance_km: 0,
             deficit_export_surcharge_rub: 0.0,
             gu12_check_enabled: true,
+            convention_check_enabled: true,
             station_backlog_hard_days: None,
             station_backlog_soft_days: 1,
             station_backlog_wait_penalty_rub_per_day: 0.0,
@@ -337,6 +344,7 @@ mod tests {
         assert!(matches!(r.check_load_pair("ЮВС", "СКВ", 200), RuleOutcome::Allowed { surcharge_rub } if surcharge_rub > 0.0));
         // Правило 3 включено.
         assert!(r.gu12_check_enabled);
+        assert!(r.convention_check_enabled);
         // Правило 4: жёсткий порог задан, мягкий строго меньше.
         let hard = r.station_backlog_hard_days.expect("StationBacklogHardDays задан");
         assert!(hard >= 1);
@@ -371,6 +379,15 @@ mod tests {
         assert!(r.gu12_check_enabled);
         let r: BusinessRules = serde_json::from_str(r#"{"Gu12CheckEnabled": false}"#).unwrap();
         assert!(!r.gu12_check_enabled);
+    }
+
+    #[test]
+    fn convention_check_defaults_to_enabled_and_can_be_disabled() {
+        assert!(BusinessRules::default().convention_check_enabled);
+        let r: BusinessRules = serde_json::from_str("{}").unwrap();
+        assert!(r.convention_check_enabled);
+        let r: BusinessRules = serde_json::from_str(r#"{"ConventionCheckEnabled": false}"#).unwrap();
+        assert!(!r.convention_check_enabled);
     }
 
     #[test]

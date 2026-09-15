@@ -1,0 +1,20 @@
+[
+  {
+    "id": 107,
+    "rzd_number": "9007",
+    "date_create": "2026-09-01",
+    "date_beg": "2026-09-01",
+    "date_end": "3000-01-01",
+    "text": "запрет отправления порожних вагонов назначением на все станции Марсианской железной дороги",
+    "cargo_class": "Empty",
+    "cargo_name": "Порожние вагоны",
+    "departure_st": "Все станции",
+    "departure_st_code": "Все станции",
+    "destination_st": "Все станции Марсианской железной дороги",
+    "destination_st_code": "Все станции",
+    "railroad_junction": "None",
+    "recipient_name": "все грузополучатели",
+    "recipient_okpo": "All",
+    "convention_info": { "type": "Other" }
+  }
+]

@@ -1,0 +1,20 @@
+[
+  {
+    "id": 111,
+    "rzd_number": "19412",
+    "date_create": "2026-08-30",
+    "date_beg": "2026-09-01",
+    "date_end": "2026-12-31",
+    "text": "запрет погрузки всех грузов и порожних вагонов назначением на станции Рыльск, Коренево, Глушково, Суджа, Псел Московской железной дороги",
+    "cargo_class": "All",
+    "cargo_name": "все грузы",
+    "departure_st": "Все станции российских железных дорог",
+    "departure_st_code": "Все станции",
+    "destination_st": "Рыльск, Коренево, Глушково, Суджа, Псел (МСК)",
+    "destination_st_code": "207603, 207406, 207302, 206507, 206704",
+    "railroad_junction": "None",
+    "recipient_name": "все грузополучатели",
+    "recipient_okpo": "All",
+    "convention_info": { "type": "Historical", "expiration_date": "2025-06-30" }
+  }
+]

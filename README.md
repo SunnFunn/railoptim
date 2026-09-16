@@ -335,9 +335,10 @@ INCLUDE_PERIOD10=off cargo run --release --bin railoptim
   и при профиците строка «надбавка … на капризные дороги»; в статистике дуг —
   «иномойка → капризная дорога».
 
-Стоимость дуги = тариф + штраф за срок + надбавки промывки + надбавки бизнес-правил + штраф ожидания
+Стоимость дуги = тариф × k_p1(расстояние) [только период 1, погрузка] + штраф за срок + надбавки промывки + надбавки бизнес-правил + штраф ожидания
 в очереди станции (правило 4) + надбавка period 10 (`PERIOD10_COST_SURCHARGE_RUB`, символическая — 2 000 ₽) − поощрение
-правила 6. Для предложения периода 10
+правила 6. `k_p1` — линейная интерполяция `P1TariffCoeffNear` (0 км) → `P1TariffCoeffFar` (`P1TariffCoeffFarKm`);
+в отчёт (Excel/API) идёт исходный тариф без коэффициента и надбавок. Для предложения периода 10
 окно срока сдвинуто на −5 сут. (`[L−8, U−2]`), ставка штрафа за сутки та же, что и
 для периода 1 (15 000 ₽) — иначе ближний вагон дислокации проигрывал дальнему вагону
 периода 1.
@@ -493,6 +494,7 @@ Adaptive Large Neighbourhood Search — метаэвристика вокруг 
 | `PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_RUB`        | 15 000 ₽/день  | `solver/model.rs`      |
 | `PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_PERIOD10_RUB` | 15 000 ₽/день  | `solver/model.rs`      |
 | `PERIOD10_COST_SURCHARGE_RUB`                          | 2 000 ₽        | `solver/model.rs`      |
+| `P1TariffCoeffNear` / `Far` / `FarKm` (тариф периода 1 × расстояние) | 0.85 / 1.15 / 4 000 км | `data/business_rules.json` |
 | `MaxEmptyRunDistanceKm` (потолок дальности подсыла)    | 6 000 км       | `data/business_rules.json` |
 | `ForeignExceptions[КЗХ ← ОКТ,СКВ].surcharge_rub`       | 50 000 ₽       | `data/business_rules.json` |
 | `DeficitExportMaxDistanceKm` / `DeficitExportSurchargeRub` | 300 км / 30 000 ₽ | `data/business_rules.json` |

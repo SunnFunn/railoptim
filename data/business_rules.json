@@ -44,5 +44,10 @@
     "ForeignWashedRoads": ["КЗХ", "КРГ", "ТДЖ", "УЗБ", "ТРК", "АЗР", "ГРЗ", "ЮКЖ", "БЕЛ", "ЛАТ", "ЭСТ", "ЛИТ", "МЛД", "МНГ", "ЛЬВ", "ЮЗП", "ЮЖН", "ДОН", "ОДС", "ПДН", "FIN"],
     "ForeignWashedPickyRailways": ["МСК"],
     "ForeignWashedPickySurchargeRub": 30000,
-    "ForeignWashedPickySurplusRatio": 1.2
+    "ForeignWashedPickySurplusRatio": 1.2,
+
+    "_comment_P1TariffCoeff": "Коэффициент к чистому тарифу погрузки для вагонов периода 1 (готовы сегодня). Линейно от P1TariffCoeffNear на 0 км до P1TariffCoeffFar на P1TariffCoeffFarKm (дальше не растёт). Near < 1 — ближний подсыл периода 1 лучше конкурирует с периодом 10; Far > 1 — дальний подсыл периода 1 дороже, заявку закрывают вагоны дислокации. Умножается только тариф в модельной стоимости дуги; штрафы/надбавки и отчётный тариф (Excel/API) не меняются. Промывка и период 10 не масштабируются. P1TariffCoeffFarKm 0 — выключено.",
+    "P1TariffCoeffNear": 0.85,
+    "P1TariffCoeffFar": 1.15,
+    "P1TariffCoeffFarKm": 4000
 }

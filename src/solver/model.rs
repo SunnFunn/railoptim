@@ -74,8 +74,9 @@ pub const PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_PERIOD10_RUB: f64 = 15_000.0
 ///
 /// Намеренно **мала** (символический tie-breaker): исторически была 120 000,
 /// что заставляло модель посылать вагон периода 1 через всю страну вместо
-/// ближнего вагона дислокации. Ограничение дальнего подсыла теперь решается
-/// жёстким потолком расстояния (см. [`build_task_arcs`], `MaxEmptyRunDistanceKm`).
+/// ближнего вагона дислокации. Дальность подсыла периода 1 дополнительно
+/// регулируется коэффициентом к тарифу (`P1TariffCoeff*` в `business_rules.json`);
+/// жёсткий потолок — `MaxEmptyRunDistanceKm`.
 pub const PERIOD10_COST_SURCHARGE_RUB: f64 = 2_000.0;
 
 // Стоимость промывочного маршрута (промывка + порожний пробег после неё) и параметры
@@ -107,7 +108,8 @@ pub struct TaskArc {
     /// Код станции погрузки (куда подсылаем).
     pub demand_station_code: String,
 
-    /// Стоимость дуги для оптимизации, руб.: тариф + штраф за срок + надбавки
+    /// Стоимость дуги для оптимизации, руб.: тариф × коэффициент периода 1
+    /// (если задан) + штраф за срок + надбавки
     /// (промывка + порожний пробег после промывки для Wash-дуг, period 10, бизнес-правила).
     pub cost: f64,
     /// Чистый тариф передислокации порожнего вагона между станциями дуги, руб. —
@@ -726,7 +728,10 @@ pub fn classify_pair<'a>(
         return PairOutcome::BadPeriod;
     };
     let period_ok = violation_days == 0;
-    let mut cost = tariff.cost
+    // Коэффициент к тарифу периода 1 по расстоянию: только модельная стоимость,
+    // отчётный tariff_cost остаётся чистым тарифом АПИ.
+    let p1_coeff = rules.p1_load_tariff_coeff(s.supply_period, d.purpose, tariff.distance);
+    let mut cost = tariff.cost * p1_coeff
         + violation_days as f64 * penalty_rate
         + rule_surcharge_rub
         + wait_days as f64 * backlog.wait_penalty_rub_per_day();
@@ -1236,6 +1241,66 @@ mod tests {
         assert_eq!(arcs.len(), 1);
         assert!((arcs[0].cost - 51_000.0).abs() < 1e-9);
         assert!((arcs[0].tariff_cost - 1_000.0).abs() < 1e-9);
+    }
+
+    /// Коэффициент тарифа периода 1 меняет только `cost`; `tariff_cost` — исходный тариф.
+    /// Ближний p1 дешевле p10, дальний p1 дороже p10 с тем же тарифом.
+    #[test]
+    fn p1_distance_coeff_scales_solver_cost_not_report_tariff() {
+        let rules = BusinessRules {
+            p1_tariff_coeff_near: 0.8,
+            p1_tariff_coeff_far: 1.3,
+            p1_tariff_coeff_far_km: 2_000,
+            ..Default::default()
+        };
+        let mut t_near = dummy_tariff("S1", "D_NEAR");
+        t_near.distance = 0;
+        t_near.cost = 10_000.0;
+        let mut t_far = dummy_tariff("S1", "D_FAR");
+        t_far.distance = 2_000;
+        t_far.cost = 10_000.0;
+        let p1 = dummy_supply(2, "S1", 1, false);
+        let p10 = dummy_supply(2, "S1", 10, false);
+        let d_near = dummy_demand(2, "D_NEAR", None);
+        let d_far = dummy_demand(2, "D_FAR", None);
+
+        let (arcs_p1_near, _) = build_task_arcs(
+            &[p1.clone()], &[d_near.clone()], &[t_near.clone()],
+            &HashSet::new(), &HashSet::new(), &HashMap::new(),
+            &rules, &StationBacklogIndex::disabled(), &ConventionIndex::disabled(),
+        );
+        let (arcs_p10_near, _) = build_task_arcs(
+            &[p10.clone()], &[d_near], &[t_near],
+            &HashSet::new(), &HashSet::new(), &HashMap::new(),
+            &rules, &StationBacklogIndex::disabled(), &ConventionIndex::disabled(),
+        );
+        let (arcs_p1_far, _) = build_task_arcs(
+            &[p1], &[d_far.clone()], &[t_far.clone()],
+            &HashSet::new(), &HashSet::new(), &HashMap::new(),
+            &rules, &StationBacklogIndex::disabled(), &ConventionIndex::disabled(),
+        );
+        let (arcs_p10_far, _) = build_task_arcs(
+            &[p10], &[d_far], &[t_far],
+            &HashSet::new(), &HashSet::new(), &HashMap::new(),
+            &rules, &StationBacklogIndex::disabled(), &ConventionIndex::disabled(),
+        );
+
+        assert_eq!(arcs_p1_near.len(), 1);
+        assert_eq!(arcs_p10_near.len(), 1);
+        assert_eq!(arcs_p1_far.len(), 1);
+        assert_eq!(arcs_p10_far.len(), 1);
+        assert!((arcs_p1_near[0].cost - 8_000.0).abs() < 1e-9);
+        assert!((arcs_p10_near[0].cost - (10_000.0 + PERIOD10_COST_SURCHARGE_RUB)).abs() < 1e-9);
+        assert!(arcs_p1_near[0].cost < arcs_p10_near[0].cost);
+        assert!((arcs_p1_far[0].cost - 13_000.0).abs() < 1e-9);
+        assert!((arcs_p10_far[0].cost - (10_000.0 + PERIOD10_COST_SURCHARGE_RUB)).abs() < 1e-9);
+        assert!(arcs_p1_far[0].cost > arcs_p10_far[0].cost);
+        for arc in [&arcs_p1_near[0], &arcs_p10_near[0], &arcs_p1_far[0], &arcs_p10_far[0]] {
+            assert!(
+                (arc.tariff_cost - 10_000.0).abs() < 1e-9,
+                "в отчёт — исходный тариф, без коэффициента",
+            );
+        }
     }
 
     /// Правило 1: с российской дороги на инотерриторию дуги нет; ОКТ → КЗХ разрешено

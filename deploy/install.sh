@@ -3,7 +3,7 @@
 #
 # Использование:
 #   ./deploy/install.sh web     — frontend + бинарник railoptim-web + сервис (restart)
-#   ./deploy/install.sh optim   — бинарник railoptim + service/.timer (enable --now timer)
+#   ./deploy/install.sh optim   — бинарник railoptim + два timer (11:05 и 12:30)
 #   ./deploy/install.sh all     — web + optim
 #
 # Опции через env:
@@ -26,7 +26,7 @@ usage() {
 railoptim установщик — выберите режим:
 
   ./deploy/install.sh web     frontend + railoptim-web (long-running сервис)
-  ./deploy/install.sh optim   batch railoptim + суточный timer (oneshot)
+  ./deploy/install.sh optim   batch railoptim + два timer (11:05 полный пул, 12:30 --day1)
   ./deploy/install.sh all     всё сразу
 
 env: REBUILD_WEB_UI=1 — пересборка web-ui/dist через npm
@@ -134,6 +134,8 @@ fi
 if $do_optim; then
   link_unit "railoptim.service"
   link_unit "railoptim.timer"
+  link_unit "railoptim-day1.service"
+  link_unit "railoptim-day1.timer"
 fi
 
 echo ""
@@ -149,8 +151,9 @@ if $do_web; then
 fi
 if $do_optim; then
   echo ""
-  echo "==> enable --now railoptim.timer (service запускается таймером)"
+  echo "==> enable --now railoptim.timer + railoptim-day1.timer (11:05 полный пул, 12:30 --day1)"
   sudo systemctl enable --now railoptim.timer
+  sudo systemctl enable --now railoptim-day1.timer
 fi
 
 # --- Итог ---
@@ -165,10 +168,12 @@ if $do_web; then
   systemctl status "$WEB_SERVICE" --no-pager || true
 fi
 if $do_optim; then
-  echo "  app/bin/railoptim      — batch-оптимизация (run.sh prod), запуск раз в сутки"
-  echo "  Проверка таймера:"
-  echo "    systemctl list-timers railoptim*"
-  echo "    systemctl status railoptim.timer --no-pager"
-  echo "    journalctl -u railoptim.service -n 50 --no-pager"
+  echo "  app/bin/railoptim      — batch-оптимизация (run.sh prod), два запуска в рабочие дни:"
+  echo "    11:05 полный пул (периоды 1+10) → tmp/result_YYYYMMDD_HHMMSS.json"
+  echo "    12:30 только 1-е сутки (--day1) → tmp/result_day1_YYYYMMDD_HHMMSS.json"
+  echo "  Проверка таймеров:"
+  echo "    systemctl list-timers 'railoptim*'"
+  echo "    systemctl status railoptim.timer railoptim-day1.timer --no-pager"
+  echo "    journalctl -u railoptim.service -u railoptim-day1.service -n 50 --no-pager"
   systemctl list-timers 'railoptim*' --no-pager || true
 fi

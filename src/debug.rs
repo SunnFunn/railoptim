@@ -11,6 +11,9 @@ use crate::solver::result::OutputRecord;
 
 /// Сохраняет данные прогона в файл-чекпоинт `tmp/checkpoint_YYYY-MM-DD_HH-MM-SS.xlsx`.
 ///
+/// `tag` — необязательная пометка прогона (например `"day1"`): файл будет
+/// `tmp/checkpoint_day1_YYYY-MM-DD_HH-MM-SS.xlsx`.
+///
 /// Листы:
 /// - `DemandNodes` — узлы спроса
 /// - `SupplyNodes` — узлы предложения порожних
@@ -21,12 +24,17 @@ pub fn save_checkpoint(
     demand:  &[DemandNode],
     supply:  &[SupplyNode],
     output:  Option<&[OutputRecord]>,
+    tag:     Option<&str>,
 ) -> Result<PathBuf, XlsxError> {
     let tmp_dir = PathBuf::from("tmp");
     std::fs::create_dir_all(&tmp_dir)?;
 
     let timestamp = Local::now().format("%Y-%m-%d_%H-%M-%S");
-    let path = tmp_dir.join(format!("checkpoint_{timestamp}.xlsx"));
+    let filename = match tag.filter(|t| !t.is_empty()) {
+        Some(tag) => format!("checkpoint_{tag}_{timestamp}.xlsx"),
+        None => format!("checkpoint_{timestamp}.xlsx"),
+    };
+    let path = tmp_dir.join(filename);
 
     let mut workbook = Workbook::new();
 

@@ -136,15 +136,17 @@ pub fn build_report(
 
 /// Сохраняет отчёт в `tmp/result_YYYYMMDD_HHMMSS.json`.
 ///
-/// Директория `tmp/` создаётся автоматически при отсутствии.
-pub fn save_result(report: &OptimReport) -> anyhow::Result<PathBuf> {
+/// `tag` — необязательная пометка прогона (например `"day1"`): файл будет
+/// `tmp/result_day1_YYYYMMDD_HHMMSS.json`. Директория `tmp/` создаётся при отсутствии.
+pub fn save_result(report: &OptimReport, tag: Option<&str>) -> anyhow::Result<PathBuf> {
     let dir = PathBuf::from("tmp");
     fs::create_dir_all(&dir)?;
 
-    let filename = format!(
-        "result_{}.json",
-        Local::now().format("%Y%m%d_%H%M%S")
-    );
+    let stamp = Local::now().format("%Y%m%d_%H%M%S");
+    let filename = match tag.filter(|t| !t.is_empty()) {
+        Some(tag) => format!("result_{tag}_{stamp}.json"),
+        None => format!("result_{stamp}.json"),
+    };
     let path = dir.join(filename);
 
     let json = serde_json::to_string_pretty(report)?;

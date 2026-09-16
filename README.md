@@ -105,6 +105,22 @@ railoptim/
 вагоны АПИ (`opzNoNumberModelCollection`) сверить нельзя — они идут как есть.
 Строка «узлов дислокации» в логе показывает: взято / в выгрузке / дублей / пересечений.
 
+По умолчанию в оптимизацию идут оба периода. Чтобы прогнать только вагоны 1-х суток
+(дислокация периода 10 не загружается, Redis/MSSQL не дергаются):
+
+```bash
+./run.sh --day1              # dev
+./run.sh prod --day1         # prod
+INCLUDE_PERIOD10=off cargo run --release --bin railoptim
+```
+
+`run.sh` принимает `--day1` / `--no-period10` в любом месте аргументов и выставляет
+`INCLUDE_PERIOD10=off`. Без флага поведение прежнее (полный пул). Отчёты обоих прогонов
+пишутся в `tmp/`: полный пул — `result_YYYYMMDD_HHMMSS.json` / `checkpoint_*.xlsx`,
+только 1-е сутки — `result_day1_YYYYMMDD_HHMMSS.json` / `checkpoint_day1_*.xlsx`.
+На prod два таймера в рабочие дни: **11:05** полный пул, **12:30** `--day1`
+(см. [`deploy/README.md`](deploy/README.md)).
+
 ### Разделение предложения перед оптимизацией
 
 `SupplyNode` из API разделяются на три группы:
@@ -510,11 +526,20 @@ Adaptive Large Neighbourhood Search — метаэвристика вокруг 
 
 ```bash
 # разовый запуск с секретами из Infisical (пароли БД, API-токены)
-./run.sh
+./run.sh                     # dev, полный пул (периоды 1 и 10)
+./run.sh prod                # prod, полный пул
+./run.sh --day1              # только вагоны 1-х суток
+./run.sh prod --day1
+./run.sh prod off            # без MIP warm-start (второй позиционный — on|off)
 
 # или напрямую после экспорта переменных окружения
 cargo run --release --bin railoptim
+INCLUDE_PERIOD10=off cargo run --release --bin railoptim
 ```
+
+На prod два oneshot-таймера в рабочие дни (`./deploy/install.sh optim`):
+**11:05** полный пул (`railoptim.timer`) и **12:30** `--day1` (`railoptim-day1.timer`).
+Отчёты: `tmp/result_YYYYMMDD_HHMMSS.json` и `tmp/result_day1_YYYYMMDD_HHMMSS.json`.
 
 Секреты извлекаются только из self-hosted Infisical
 (см. `auth-infisical.sh`); в коде и репозитории их быть не должно.
@@ -589,16 +614,19 @@ S — ёмкость путей, U — погрузка в сутки; данн�
 ## Web-сервер (`railoptim-web`)
 
 Отдельный long-running HTTP-сервис на **Axum** для API карты назначений. Работает
-**независимо** от batch-оптимизации: `./run.sh` по-прежнему one-shot cron,
+**независимо** от batch-оптимизации: `./run.sh` — oneshot (два раза в рабочие дни),
 `railoptim-web` — systemd daemon на Ubuntu prod.
 
 ```text
 tmp/result_*.json  +  stations_geo.sqlite  →  railoptim-web  →  JSON API  →  deck.gl / MapLibre
 ```
 
-Batch сохраняет план в `tmp/result_YYYYMMDD_HHMMSS.json` ([`OptimReport`](src/solver/result.rs)).
-Web-сервер читает последний файл (или явный путь), обогащает назначения координатами
-из [`stations_geo.sqlite`](data/stations/stations_geo.sqlite) и отдаёт JSON для frontend.
+Batch сохраняет план в `tmp/result_YYYYMMDD_HHMMSS.json` (полный пул) или
+`tmp/result_day1_YYYYMMDD_HHMMSS.json` (прогон `--day1`; [`OptimReport`](src/solver/result.rs)).
+Web-сервер берёт последний по mtime файл (после 12:30 это обычно `result_day1_*`;
+явный путь — override), оба прогона остаются в `/api/v1/plans`, обогащает назначения
+координатами из [`stations_geo.sqlite`](data/stations/stations_geo.sqlite)
+и отдаёт JSON для frontend.
 
 ### Сборка и запуск
 

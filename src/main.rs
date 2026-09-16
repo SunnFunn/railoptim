@@ -156,49 +156,57 @@ async fn main() -> Result<()> {
     // Сверка периодов по номерам: вагон, уже присутствующий в предложении АПИ (период 1,
     // Free и Assigned), из дислокации (период 10) исключается — иначе он участвовал бы в
     // оптимизации дважды. Приоритет у периода 1: это сегодняшняя дислокация, а не прогноз.
-    let period1_cars: HashSet<u64> = supply_nodes
-        .iter()
-        .flat_map(|s| s.car_numbers.iter().copied())
-        .collect();
-    match data::dislocations::fetch_dislocation_supply_nodes(&period1_cars, &business_rules) {
-        Ok(disl) => {
-            if disl.duplicates_within > 0 {
-                eprintln!(
-                    "  [!] дислокация: {} повторов номеров внутри выгрузки dislocations.py — оставлено первое вхождение",
-                    disl.duplicates_within,
-                );
+    // INCLUDE_PERIOD10=off (флаг run.sh --day1) — только 1-е сутки, к Redis/MSSQL не ходим.
+    let include_period10 = include_period10_from_env();
+    if !include_period10 {
+        println!(
+            "Дислокация 2-10 сут. (период 10): пропущена (INCLUDE_PERIOD10=off) — оптимизация только по вагонам 1-х суток"
+        );
+    } else {
+        let period1_cars: HashSet<u64> = supply_nodes
+            .iter()
+            .flat_map(|s| s.car_numbers.iter().copied())
+            .collect();
+        match data::dislocations::fetch_dislocation_supply_nodes(&period1_cars, &business_rules) {
+            Ok(disl) => {
+                if disl.duplicates_within > 0 {
+                    eprintln!(
+                        "  [!] дислокация: {} повторов номеров внутри выгрузки dislocations.py — оставлено первое вхождение",
+                        disl.duplicates_within,
+                    );
+                }
+                if !disl.overlap_with_period1.is_empty() {
+                    let n = disl.overlap_with_period1.len();
+                    let sample: Vec<String> =
+                        disl.overlap_with_period1.iter().take(10).map(|c| c.to_string()).collect();
+                    eprintln!(
+                        "  [!] дислокация: {n} вагонов периода 10 уже есть в предложении АПИ (период 1) — из периода 10 исключены, оставлены в периоде 1: {}{}",
+                        sample.join(", "),
+                        if n > sample.len() { ", …" } else { "" },
+                    );
+                }
+                if !disl.nodes.is_empty() {
+                    println!(
+                        "  узлов дислокации (2-10 сут., период 10): {} или {} вагонов (в выгрузке {}, дублей {}, пересечений с периодом 1 {})",
+                        disl.nodes.len(),
+                        disl.cars_kept(),
+                        disl.cars_total,
+                        disl.duplicates_within,
+                        disl.overlap_with_period1.len(),
+                    );
+                    supply_nodes.extend(disl.nodes);
+                } else if disl.cars_total > 0 {
+                    println!(
+                        "  узлов дислокации (2-10 сут., период 10): 0 — все {} вагонов выгрузки уже в периоде 1 либо дубли",
+                        disl.cars_total,
+                    );
+                }
             }
-            if !disl.overlap_with_period1.is_empty() {
-                let n = disl.overlap_with_period1.len();
-                let sample: Vec<String> =
-                    disl.overlap_with_period1.iter().take(10).map(|c| c.to_string()).collect();
-                eprintln!(
-                    "  [!] дислокация: {n} вагонов периода 10 уже есть в предложении АПИ (период 1) — из периода 10 исключены, оставлены в периоде 1: {}{}",
-                    sample.join(", "),
-                    if n > sample.len() { ", …" } else { "" },
-                );
-            }
-            if !disl.nodes.is_empty() {
-                println!(
-                    "  узлов дислокации (2-10 сут., период 10): {} или {} вагонов (в выгрузке {}, дублей {}, пересечений с периодом 1 {})",
-                    disl.nodes.len(),
-                    disl.cars_kept(),
-                    disl.cars_total,
-                    disl.duplicates_within,
-                    disl.overlap_with_period1.len(),
-                );
-                supply_nodes.extend(disl.nodes);
-            } else if disl.cars_total > 0 {
-                println!(
-                    "  узлов дислокации (2-10 сут., период 10): 0 — все {} вагонов выгрузки уже в периоде 1 либо дубли",
-                    disl.cars_total,
-                );
-            }
+            Err(e) => eprintln!(
+                "  дислокация 2-10 сут.: не загружена ({}), продолжаем только АПИ",
+                e
+            ),
         }
-        Err(e) => eprintln!(
-            "  дислокация 2-10 сут.: не загружена ({}), продолжаем только АПИ",
-            e
-        ),
     }
     for (i, n) in supply_nodes.iter_mut().enumerate() {
         n.s_id = i + 1;
@@ -1331,8 +1339,13 @@ async fn main() -> Result<()> {
     }
 
     let demand_checkpoint = demand_lp.clone();
-    let checkpoint =
-        debug::save_checkpoint(&demand_checkpoint, &supply_nodes, Some(&output_records))?;
+    let report_tag = day1_file_tag();
+    let checkpoint = debug::save_checkpoint(
+        &demand_checkpoint,
+        &supply_nodes,
+        Some(&output_records),
+        report_tag,
+    )?;
     println!("Чекпоинт сохранён:           {}", checkpoint.display());
 
     // match client.send_assignments(&api_records).await {
@@ -1383,8 +1396,24 @@ async fn main() -> Result<()> {
         &demand_lp,
     );
 
-    let result_path = solver::save_result(&report)?;
+    let result_path = solver::save_result(&report, report_tag)?;
     println!("Результат сохранён:          {}", result_path.display());
 
     Ok(())
+}
+
+/// `INCLUDE_PERIOD10` по умолчанию on: в пул входят вагоны периода 1 и дислокация периода 10.
+/// `off` / `0` / `false` / `no` — только 1-е сутки (`run.sh --day1`).
+fn include_period10_from_env() -> bool {
+    std::env::var("INCLUDE_PERIOD10")
+        .map(|v| {
+            let v = v.trim().to_lowercase();
+            !matches!(v.as_str(), "off" | "0" | "false" | "no" | "none")
+        })
+        .unwrap_or(true)
+}
+
+/// Пометка в именах `tmp/result_*.json` и `tmp/checkpoint_*.xlsx` для прогона `--day1`.
+fn day1_file_tag() -> Option<&'static str> {
+    (!include_period10_from_env()).then_some("day1")
 }

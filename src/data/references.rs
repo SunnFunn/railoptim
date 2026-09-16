@@ -22,42 +22,6 @@ pub fn normalize_etsng_code(raw: &str) -> String {
     t.to_string()
 }
 
-/// Короткие коды дорог-инотерриторий (`ForeignRoads` в первом подходящем блоке JSON;
-/// историческое написание ключа `ForeighnRoads` тоже принимается).
-///
-/// Используется проверкой ГУ-12 ([`crate::data::gu12::apply_gu12_limits`]): узлы спроса
-/// погрузки на этих дорогах (`DemandNode::railway_name`) не корректируются — правило 3
-/// действует только на территории России.
-pub fn load_foreign_roads(path: impl AsRef<Path>) -> anyhow::Result<HashSet<String>> {
-    let path = path.as_ref();
-    let text = std::fs::read_to_string(path)
-        .with_context(|| format!("чтение {}", path.display()))?;
-    let blocks: Vec<Value> = serde_json::from_str(&text).context("разбор references.json")?;
-    let mut out = HashSet::new();
-    for b in blocks {
-        let Some(obj) = b.as_object() else { continue };
-        let Some(arr) = obj
-            .get("ForeignRoads")
-            .or_else(|| obj.get("ForeighnRoads"))
-            .and_then(|v| v.as_array())
-        else {
-            continue;
-        };
-        for v in arr {
-            if let Some(s) = v.as_str() {
-                let t = s.trim().to_string();
-                if !t.is_empty() {
-                    out.insert(t);
-                }
-            }
-        }
-        if !out.is_empty() {
-            break;
-        }
-    }
-    Ok(out)
-}
-
 /// Текущие коды ЕТСНГ порожнего вагона, означающие, что вагон уже в цикле промывки/ремонта
 /// и считается **чистым** (`WashedEmptyEtsngCodes` в первом подходящем блоке JSON).
 ///
@@ -192,33 +156,6 @@ mod tests {
         assert!(ban.contains(&("769500".to_string(), "00203944".to_string())));
         assert!(!ban.contains(&("769999".to_string(), String::new())));
 
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// Боевой `data/references.json`: список инотерриторий для ГУ-12 загружается и
-    /// совпадает с `ForeignRailways` правила 1 (`data/business_rules.json`).
-    #[test]
-    fn repo_references_foreign_roads() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let roads = load_foreign_roads(root.join("data/references.json")).unwrap();
-        for rw in ["КЗХ", "КРГ", "ТДЖ", "УЗБ", "ТРК", "АЗР", "ГРЗ", "ЮКЖ", "БЕЛ", "ЛАТ", "ЭСТ", "ЛИТ", "МЛД", "МНГ", "FIN"] {
-            assert!(roads.contains(rw), "нет инотерритории {rw}");
-        }
-        assert!(!roads.contains("МСК"));
-        let rules = crate::data::BusinessRules::load(root.join("data/business_rules.json")).unwrap();
-        assert_eq!(roads, rules.foreign_railways, "ForeignRoads (ГУ-12) разошёлся с ForeignRailways (правило 1)");
-    }
-
-    /// Историческое написание ключа `ForeighnRoads` принимается.
-    #[test]
-    fn foreign_roads_legacy_key() {
-        let dir = std::env::temp_dir().join(format!("railoptim_refs_{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("references.json");
-        std::fs::write(&path, r#"[{"ForeighnRoads": [" КЗХ ", "БЕЛ", ""]}]"#).unwrap();
-        let roads = load_foreign_roads(&path).unwrap();
-        assert_eq!(roads.len(), 2);
-        assert!(roads.contains("КЗХ") && roads.contains("БЕЛ"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

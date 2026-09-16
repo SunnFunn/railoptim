@@ -24,7 +24,7 @@ git pull && ./deploy/install_web_service.sh
 
 ```bash
 ./deploy/install.sh web      # frontend + railoptim-web (long-running сервис)
-./deploy/install.sh optim    # batch railoptim + суточный timer (oneshot)
+./deploy/install.sh optim    # batch railoptim + два timer (11:05 полный пул, 12:30 --day1)
 ./deploy/install.sh all      # всё сразу
 ```
 
@@ -35,8 +35,8 @@ git pull && ./deploy/install_web_service.sh
 3. копирует бинарники в [`app/bin/`](../app/bin/)
 4. `ln -sf` нужных unit'ов → `/etc/systemd/system/`:
    - `web`   → `railoptim-web.service`
-   - `optim` → `railoptim.service` + `railoptim.timer`
-5. `systemctl daemon-reload`; затем `enable`+`restart railoptim-web` (web) и/или `enable --now railoptim.timer` (optim)
+   - `optim` → `railoptim.service` + `railoptim.timer` (11:05, полный пул) и `railoptim-day1.service` + `railoptim-day1.timer` (12:30, `--day1`)
+5. `systemctl daemon-reload`; затем `enable`+`restart railoptim-web` (web) и/или `enable --now` обоих timer'ов (optim)
 
 > Старые `install_web_service.sh` и `install_optim_services.sh` оставлены как тонкие обёртки (`install.sh web` / `install.sh optim`) для обратной совместимости.
 
@@ -45,32 +45,42 @@ Prod batch (`./run.sh prod`) использует `app/bin/railoptim` — его
 Unit-файлы **не копируются** — симлинк на репозиторий, правки в IDE сразу на месте.
 После изменения unit: `sudo systemctl daemon-reload` и `restart`/`enable --now` соответствующего unit.
 
-## Суточный запуск batch-оптимизации (timer)
+## Два запуска batch-оптимизации в рабочие дни
 
-`railoptim.timer` запускает `railoptim.service` (`Type=oneshot` → `run.sh prod`) раз в сутки в **11:05**. В одном прогоне сначала собираются все данные и обновляется накопительная БД ёмкостей отстоя (`data/reserves/reserves.sqlite`, upsert по `etran_id`), затем запускается оптимизация, которая читает узлы отстоя уже из БД (с фильтром по истёкшим `date_end`).
+По будням (`Mon..Fri`) два oneshot-прогона:
+
+| Время | Unit | Команда | Пул вагонов | Отчёты в `tmp/` |
+|-------|------|---------|-------------|-----------------|
+| **11:05** | `railoptim.timer` → `railoptim.service` | `run.sh prod` | периоды 1 и 10 | `result_YYYYMMDD_HHMMSS.json`, `checkpoint_YYYY-MM-DD_HH-MM-SS.xlsx` |
+| **12:30** | `railoptim-day1.timer` → `railoptim-day1.service` | `run.sh prod --day1` | только 1-е сутки | `result_day1_YYYYMMDD_HHMMSS.json`, `checkpoint_day1_YYYY-MM-DD_HH-MM-SS.xlsx` |
+
+В одном прогоне сначала собираются все данные и обновляется накопительная БД ёмкостей отстоя (`data/reserves/reserves.sqlite`, upsert по `etran_id`), затем запускается оптимизация, которая читает узлы отстоя уже из БД (с фильтром по истёкшим `date_end`). Прогон `--day1` не ходит в Redis/MSSQL за дислокацией периода 10.
 
 Установка и запуск:
 
 ```bash
-./deploy/install.sh optim     # соберёт app/bin/railoptim + поставит и включит timer
+./deploy/install.sh optim     # соберёт app/bin/railoptim + поставит и включит оба timer
 ```
 
-Проверка, что таймер активен и сервис отрабатывает:
+Проверка, что таймеры активны и сервисы отрабатывают:
 
 ```bash
 systemctl list-timers 'railoptim*'         # NEXT/LAST — ближайший и прошлый запуск
-systemctl status railoptim.timer           # active (waiting) — таймер взведён
-systemctl status railoptim.service         # состояние последнего прогона (oneshot)
-journalctl -u railoptim.service -n 100     # лог последнего прогона
+systemctl status railoptim.timer railoptim-day1.timer
+systemctl status railoptim.service railoptim-day1.service
+journalctl -u railoptim.service -n 100
+journalctl -u railoptim-day1.service -n 100
 ```
 
 Ручной прогон без ожидания таймера:
 
 ```bash
-sudo systemctl start railoptim.service     # как по таймеру (run.sh prod, app/bin)
+sudo systemctl start railoptim.service          # как в 11:05 (полный пул)
+sudo systemctl start railoptim-day1.service     # как в 12:30 (--day1)
 # или напрямую:
-./run.sh prod                              # бинарник из app/bin
-./run.sh dev                               # бинарник из target/release
+./run.sh prod                                   # полный пул, app/bin
+./run.sh prod --day1                            # только 1-е сутки
+./run.sh dev                                    # бинарник из target/release
 ```
 
 Unit по умолчанию: `User=atretyakov`, `WorkingDirectory=/home/atretyakov/railoptim` — поправить при другом пути.
@@ -141,7 +151,7 @@ cargo run --bin railoptim-web
 
 ## Связка с batch
 
-После успешного cron `run.sh` появляется `tmp/result_YYYYMMDD_HHMMSS.json`.
+После успешного прогона `run.sh` появляется `tmp/result_YYYYMMDD_HHMMSS.json` (11:05) и/или `tmp/result_day1_YYYYMMDD_HHMMSS.json` (12:30). Карта по умолчанию берёт последний по mtime файл (после 12:30 это `result_day1_*`); оба отчёта видны в `/api/v1/plans`.
 
 Перезагрузить план в web без рестарта:
 

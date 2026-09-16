@@ -45,6 +45,8 @@ pub struct BusinessRules {
 
     /// Правило 1: дороги-инотерритории. Заявка на такой дороге закрывается только
     /// вагонами с той же дороги либо по исключению из [`Self::foreign_exceptions`].
+    /// Тот же список — территория вне России для ГУ-12 (правило 3) и горизонт
+    /// ремонта на инотерритории (правило 7).
     #[serde(rename = "ForeignRailways")]
     pub foreign_railways: HashSet<String>,
 
@@ -68,7 +70,9 @@ pub struct BusinessRules {
 
     /// Правило 3: спрос погрузки на российских дорогах ограничивается согласованными
     /// заявками ГУ-12 ([`crate::data::gu12::apply_gu12_limits`]). `false` — проверка
-    /// отключена (спрос АПИ берётся как есть).
+    /// отключена (спрос АПИ берётся как есть). Территория России — дороги **не** из
+    /// [`Self::foreign_railways`]: пустой список → ГУ-12 не выполняется
+    /// ([`Self::gu12_ready`]), иначе нельзя ограничить проверку Россией.
     #[serde(rename = "Gu12CheckEnabled")]
     pub gu12_check_enabled: bool,
 
@@ -326,6 +330,16 @@ impl BusinessRules {
     /// Правило 4 включено (задан жёсткий порог `StationBacklogHardDays`).
     pub fn station_backlog_enabled(&self) -> bool {
         self.station_backlog_hard_days.is_some()
+    }
+
+    /// Правило 3 можно применить: флаг включён **и** список инотерриторий не пуст.
+    ///
+    /// Пустой [`Self::foreign_railways`] означает, что проверку нельзя ограничить
+    /// территорией России (в том числе при непрочитанном `business_rules.json`:
+    /// `gu12_check_enabled` по умолчанию `true`, список пуст) — тогда ГУ-12
+    /// не выполняется, иначе срежет спрос на инотерриториях.
+    pub fn gu12_ready(&self) -> bool {
+        self.gu12_check_enabled && !self.foreign_railways.is_empty()
     }
 
     /// Правило 6: надбавка к тарифу до станции промывки (руб./ваг.) — промывка +
@@ -635,8 +649,9 @@ mod tests {
         // Вывоз с дефицитной дороги — только короткое плечо.
         assert_eq!(r.check_load_pair("ЮВС", "СКВ", 1000), RuleOutcome::DeficitExport);
         assert!(matches!(r.check_load_pair("ЮВС", "СКВ", 200), RuleOutcome::Allowed { surcharge_rub } if surcharge_rub > 0.0));
-        // Правило 3 включено.
+        // Правило 3 включено; список инотерриторий не пуст — ГУ-12 можно ограничить Россией.
         assert!(r.gu12_check_enabled);
+        assert!(r.gu12_ready());
         assert!(r.convention_check_enabled);
         // Правило 4: жёсткий порог задан, мягкий строго меньше.
         let hard = r.station_backlog_hard_days.expect("StationBacklogHardDays задан");
@@ -779,10 +794,20 @@ mod tests {
     #[test]
     fn gu12_check_defaults_to_enabled_and_can_be_disabled() {
         assert!(BusinessRules::default().gu12_check_enabled);
+        // Список инотерриторий по умолчанию пуст — ГУ-12 не выполняется (защита от
+        // непрочитанного business_rules.json: иначе срежет спрос на инотерриториях).
+        assert!(!BusinessRules::default().gu12_ready());
         let r: BusinessRules = serde_json::from_str("{}").unwrap();
         assert!(r.gu12_check_enabled);
+        assert!(!r.gu12_ready());
         let r: BusinessRules = serde_json::from_str(r#"{"Gu12CheckEnabled": false}"#).unwrap();
         assert!(!r.gu12_check_enabled);
+        assert!(!r.gu12_ready());
+        let mut r = BusinessRules::default();
+        r.foreign_railways = ["КЗХ".into()].into_iter().collect();
+        assert!(r.gu12_ready());
+        r.gu12_check_enabled = false;
+        assert!(!r.gu12_ready());
     }
 
     #[test]

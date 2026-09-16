@@ -87,7 +87,7 @@ async fn main() -> Result<()> {
             r
         }
         Err(e) => {
-            eprintln!("  business_rules.json: не загружен ({e}) — бизнес-правила 1–2 не применяются, правило 6 без поощрения, правило 7 без инотерриторий, правило 8 выключено");
+            eprintln!("  business_rules.json: не загружен ({e}) — бизнес-правила 1–2 не применяются, правило 3 (ГУ-12) не выполняется без списка инотерриторий, правило 6 без поощрения, правило 7 без инотерриторий, правило 8 выключено");
             data::BusinessRules::default()
         }
     };
@@ -99,28 +99,21 @@ async fn main() -> Result<()> {
     // Правило 3: спрос погрузки на российских дорогах ограничивается согласованными
     // заявками ГУ-12 (MSSQL SLP через gu12.py). Выше — исходный спрос АПИ, ниже — с учётом ГУ-12.
     // Заявки не загрузились => спрос остаётся исходным (громкое предупреждение).
-    // Инотерритории — по дороге узла из списка ForeignRoads в data/references.json
-    // (классификация по коду станции ЕСР не используется как ненадёжная). Списка нет =>
-    // проверку нельзя ограничить территорией России => она не выполняется.
-    if business_rules.gu12_check_enabled {
-        let gu12_foreign_roads = match data::load_foreign_roads("data/references.json") {
-            Ok(r) if !r.is_empty() => {
-                println!("Дороги-инотерритории для ГУ-12 (ForeignRoads): {}", r.len());
-                Some(r)
-            }
-            Ok(_) => {
-                eprintln!("  [!] ForeignRoads в references.json пуст — проверка ГУ-12 (правило 3) не выполняется");
-                None
-            }
-            Err(e) => {
-                eprintln!("  [!] ForeignRoads из references.json: не загружены ({e}) — проверка ГУ-12 (правило 3) не выполняется");
-                None
-            }
-        };
-        let claims = gu12_foreign_roads.as_ref().map(|_| data::fetch_gu12_claims());
-        match (gu12_foreign_roads, claims) {
-            (Some(foreign_roads), Some(Ok(claims))) => {
-                let st = data::apply_gu12_limits(&mut demand_nodes, &claims, &foreign_roads);
+    // Инотерритории — по дороге узла из ForeignRailways (правило 1); классификация по коду
+    // станции ЕСР не используется как ненадёжная. Список пуст => проверку нельзя ограничить
+    // территорией России => она не выполняется (в т.ч. если business_rules.json не загрузился).
+    if business_rules.gu12_ready() {
+        println!(
+            "Дороги-инотерритории для ГУ-12 (ForeignRailways): {}",
+            business_rules.foreign_railways.len()
+        );
+        match data::fetch_gu12_claims() {
+            Ok(claims) => {
+                let st = data::apply_gu12_limits(
+                    &mut demand_nodes,
+                    &claims,
+                    &business_rules.foreign_railways,
+                );
                 println!(
                     "Спрос с учётом ГУ-12 (правило 3): {} узлов или {} вагонов (было {} / {})",
                     st.nodes_after, st.cars_after, st.nodes_before, st.cars_before,
@@ -144,12 +137,14 @@ async fn main() -> Result<()> {
                     st.nodes_foreign, st.cars_foreign,
                 );
             }
-            (_, Some(Err(e))) => eprintln!(
+            Err(e) => eprintln!(
                 "  [!] ГУ-12 (gu12.py json): не загружены ({e}) — спрос НЕ ограничен заявками ГУ-12, правило 3 не применено"
             ),
-            // Списка инотерриторий нет — предупреждение выведено выше, заявки не запрашивались.
-            _ => {}
         }
+    } else if business_rules.gu12_check_enabled {
+        eprintln!(
+            "  [!] ForeignRailways пуст — проверку ГУ-12 (правило 3) нельзя ограничить территорией России, она не выполняется"
+        );
     }
 
     let mut supply_nodes = client.fetch_supply_nodes(&business_rules).await?;
@@ -161,49 +156,57 @@ async fn main() -> Result<()> {
     // Сверка периодов по номерам: вагон, уже присутствующий в предложении АПИ (период 1,
     // Free и Assigned), из дислокации (период 10) исключается — иначе он участвовал бы в
     // оптимизации дважды. Приоритет у периода 1: это сегодняшняя дислокация, а не прогноз.
-    let period1_cars: HashSet<u64> = supply_nodes
-        .iter()
-        .flat_map(|s| s.car_numbers.iter().copied())
-        .collect();
-    match data::dislocations::fetch_dislocation_supply_nodes(&period1_cars, &business_rules) {
-        Ok(disl) => {
-            if disl.duplicates_within > 0 {
-                eprintln!(
-                    "  [!] дислокация: {} повторов номеров внутри выгрузки dislocations.py — оставлено первое вхождение",
-                    disl.duplicates_within,
-                );
+    // INCLUDE_PERIOD10=off (флаг run.sh --day1) — только 1-е сутки, к Redis/MSSQL не ходим.
+    let include_period10 = include_period10_from_env();
+    if !include_period10 {
+        println!(
+            "Дислокация 2-10 сут. (период 10): пропущена (INCLUDE_PERIOD10=off) — оптимизация только по вагонам 1-х суток"
+        );
+    } else {
+        let period1_cars: HashSet<u64> = supply_nodes
+            .iter()
+            .flat_map(|s| s.car_numbers.iter().copied())
+            .collect();
+        match data::dislocations::fetch_dislocation_supply_nodes(&period1_cars, &business_rules) {
+            Ok(disl) => {
+                if disl.duplicates_within > 0 {
+                    eprintln!(
+                        "  [!] дислокация: {} повторов номеров внутри выгрузки dislocations.py — оставлено первое вхождение",
+                        disl.duplicates_within,
+                    );
+                }
+                if !disl.overlap_with_period1.is_empty() {
+                    let n = disl.overlap_with_period1.len();
+                    let sample: Vec<String> =
+                        disl.overlap_with_period1.iter().take(10).map(|c| c.to_string()).collect();
+                    eprintln!(
+                        "  [!] дислокация: {n} вагонов периода 10 уже есть в предложении АПИ (период 1) — из периода 10 исключены, оставлены в периоде 1: {}{}",
+                        sample.join(", "),
+                        if n > sample.len() { ", …" } else { "" },
+                    );
+                }
+                if !disl.nodes.is_empty() {
+                    println!(
+                        "  узлов дислокации (2-10 сут., период 10): {} или {} вагонов (в выгрузке {}, дублей {}, пересечений с периодом 1 {})",
+                        disl.nodes.len(),
+                        disl.cars_kept(),
+                        disl.cars_total,
+                        disl.duplicates_within,
+                        disl.overlap_with_period1.len(),
+                    );
+                    supply_nodes.extend(disl.nodes);
+                } else if disl.cars_total > 0 {
+                    println!(
+                        "  узлов дислокации (2-10 сут., период 10): 0 — все {} вагонов выгрузки уже в периоде 1 либо дубли",
+                        disl.cars_total,
+                    );
+                }
             }
-            if !disl.overlap_with_period1.is_empty() {
-                let n = disl.overlap_with_period1.len();
-                let sample: Vec<String> =
-                    disl.overlap_with_period1.iter().take(10).map(|c| c.to_string()).collect();
-                eprintln!(
-                    "  [!] дислокация: {n} вагонов периода 10 уже есть в предложении АПИ (период 1) — из периода 10 исключены, оставлены в периоде 1: {}{}",
-                    sample.join(", "),
-                    if n > sample.len() { ", …" } else { "" },
-                );
-            }
-            if !disl.nodes.is_empty() {
-                println!(
-                    "  узлов дислокации (2-10 сут., период 10): {} или {} вагонов (в выгрузке {}, дублей {}, пересечений с периодом 1 {})",
-                    disl.nodes.len(),
-                    disl.cars_kept(),
-                    disl.cars_total,
-                    disl.duplicates_within,
-                    disl.overlap_with_period1.len(),
-                );
-                supply_nodes.extend(disl.nodes);
-            } else if disl.cars_total > 0 {
-                println!(
-                    "  узлов дислокации (2-10 сут., период 10): 0 — все {} вагонов выгрузки уже в периоде 1 либо дубли",
-                    disl.cars_total,
-                );
-            }
+            Err(e) => eprintln!(
+                "  дислокация 2-10 сут.: не загружена ({}), продолжаем только АПИ",
+                e
+            ),
         }
-        Err(e) => eprintln!(
-            "  дислокация 2-10 сут.: не загружена ({}), продолжаем только АПИ",
-            e
-        ),
     }
     for (i, n) in supply_nodes.iter_mut().enumerate() {
         n.s_id = i + 1;
@@ -1336,8 +1339,13 @@ async fn main() -> Result<()> {
     }
 
     let demand_checkpoint = demand_lp.clone();
-    let checkpoint =
-        debug::save_checkpoint(&demand_checkpoint, &supply_nodes, Some(&output_records))?;
+    let report_tag = day1_file_tag();
+    let checkpoint = debug::save_checkpoint(
+        &demand_checkpoint,
+        &supply_nodes,
+        Some(&output_records),
+        report_tag,
+    )?;
     println!("Чекпоинт сохранён:           {}", checkpoint.display());
 
     // match client.send_assignments(&api_records).await {
@@ -1388,8 +1396,24 @@ async fn main() -> Result<()> {
         &demand_lp,
     );
 
-    let result_path = solver::save_result(&report)?;
+    let result_path = solver::save_result(&report, report_tag)?;
     println!("Результат сохранён:          {}", result_path.display());
 
     Ok(())
+}
+
+/// `INCLUDE_PERIOD10` по умолчанию on: в пул входят вагоны периода 1 и дислокация периода 10.
+/// `off` / `0` / `false` / `no` — только 1-е сутки (`run.sh --day1`).
+fn include_period10_from_env() -> bool {
+    std::env::var("INCLUDE_PERIOD10")
+        .map(|v| {
+            let v = v.trim().to_lowercase();
+            !matches!(v.as_str(), "off" | "0" | "false" | "no" | "none")
+        })
+        .unwrap_or(true)
+}
+
+/// Пометка в именах `tmp/result_*.json` и `tmp/checkpoint_*.xlsx` для прогона `--day1`.
+fn day1_file_tag() -> Option<&'static str> {
+    (!include_period10_from_env()).then_some("day1")
 }

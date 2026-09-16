@@ -33,14 +33,50 @@ fi
 
 
 # --- ПАРАМЕТРЫ ЗАПУСКА ---
-ENV=${1:-"dev"} # По умолчанию dev (для ручного запуска)
-# Второй аргумент: warm-start для MIP (on|off). По умолчанию on (greedy как incumbent).
-# Пример: ./run.sh prod off — запустить без warm-start, чтобы сравнить время.
-MIP_WS_ARG=${2:-"on"}
+#   ./run.sh [dev|prod] [on|off] [--day1]
+#   ENV — Infisical-окружение (по умолчанию dev).
+#   on|off — MIP warm-start (по умолчанию on).
+#   --day1 / --no-period10 — только вагоны 1-х суток, дислокация периода 10 не загружается.
+# Примеры:
+#   ./run.sh prod
+#   ./run.sh prod off          — без MIP warm-start
+#   ./run.sh --day1            — dev, только 1-е сутки
+#   ./run.sh prod --day1
+#   INCLUDE_PERIOD10=off ./run.sh prod
+ENV="dev"
+MIP_WS_ARG="on"
+INCLUDE_PERIOD10="${INCLUDE_PERIOD10:-on}"
+POSITIONAL=()
+for arg in "$@"; do
+    case "$arg" in
+        -h|--help)
+            echo "Usage: $0 [dev|prod] [on|off] [--day1]"
+            echo "  --day1, --no-period10  оптимизация только по вагонам 1-х суток (без периода 10)"
+            exit 0
+            ;;
+        --day1|--no-period10)
+            INCLUDE_PERIOD10="off"
+            ;;
+        --*)
+            echo "Неизвестный флаг: $arg (ожидается --day1 / --no-period10)" >&2
+            exit 1
+            ;;
+        *)
+            POSITIONAL+=("$arg")
+            ;;
+    esac
+done
+if [ ${#POSITIONAL[@]} -ge 1 ]; then
+    ENV="${POSITIONAL[0]}"
+fi
+if [ ${#POSITIONAL[@]} -ge 2 ]; then
+    MIP_WS_ARG="${POSITIONAL[1]}"
+fi
 PROJECT_ID="a28f09d6-1840-4ac3-ad90-f8c9464facef"
 
 export APP_ENV="$ENV"
 export MIP_WARM_START="$MIP_WS_ARG"
+export INCLUDE_PERIOD10
 
 # --- ВЫБОР БИНАРНИКА ---
 if [ "$ENV" == "prod" ]; then
@@ -73,7 +109,7 @@ mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/railoptim_$(date +%F).log"
 
 # --- ЗАПУСК СЕРВИСА (RUST) ---
-echo "[$(date)] Запуск: ${BINARY[*]} (env=$ENV, MIP_WARM_START=$MIP_WARM_START)" | tee -a "$LOG_FILE"
+echo "[$(date)] Запуск: ${BINARY[*]} (env=$ENV, MIP_WARM_START=$MIP_WARM_START, INCLUDE_PERIOD10=$INCLUDE_PERIOD10)" | tee -a "$LOG_FILE"
 
 if "${BINARY[@]}" &>> "$LOG_FILE"; then
     echo "[SUCCESS] railoptim завершил работу успешно." | tee -a "$LOG_FILE"

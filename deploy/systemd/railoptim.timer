@@ -1,12 +1,11 @@
 [Unit]
-Description=Run Railoptim daily batch optimization at 11:05
+Description=Railoptim batch: полный пул (периоды 1 и 10) в 11:05 по рабочим дням
 After=network-online.target
 
 [Timer]
 Unit=railoptim.service
-# Mon..Fri означает: Понедельник, Вторник, Среда, Четверг, Пятница
+# Mon..Fri: понедельник–пятница
 OnCalendar=Mon..Fri *-*-* 11:05:00
-#OnCalendar=Mon..Fri *-*-* 21:10:00
 # Если сервер был выключен в момент срабатывания — запустить сразу после включения
 Persistent=true
 AccuracySec=1m

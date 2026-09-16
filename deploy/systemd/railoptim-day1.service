@@ -1,0 +1,19 @@
+[Unit]
+Description=Railoptim batch optimization: только вагоны 1-х суток (--day1)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=atretyakov
+Group=atretyakov
+WorkingDirectory=/home/atretyakov/railoptim
+# Второй суточный прогон: без дислокации периода 10.
+# Отчёт: tmp/result_day1_YYYYMMDD_HHMMSS.json, чекпоинт tmp/checkpoint_day1_*.xlsx.
+ExecStart=/bin/bash /home/atretyakov/railoptim/run.sh prod --day1
+TimeoutSec=3600
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

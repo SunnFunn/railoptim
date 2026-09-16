@@ -1,5 +1,5 @@
 [Unit]
-Description=Railoptim daily batch optimization (сбор данных + БД отстоя + оптимизация)
+Description=Railoptim batch optimization: полный пул вагонов (периоды 1 и 10)
 After=network-online.target
 Wants=network-online.target
 
@@ -8,8 +8,8 @@ Type=oneshot
 User=atretyakov
 Group=atretyakov
 WorkingDirectory=/home/atretyakov/railoptim
-# run.sh prod: сначала сбор всех данных и обновление БД отстоя, затем оптимизация.
-# Бинарник берётся из app/bin/railoptim (см. run.sh).
+# run.sh prod: сбор данных, обновление БД отстоя, оптимизация по периодам 1 и 10.
+# Отчёт: tmp/result_YYYYMMDD_HHMMSS.json, чекпоинт tmp/checkpoint_*.xlsx.
 ExecStart=/bin/bash /home/atretyakov/railoptim/run.sh prod
 TimeoutSec=3600
 StandardOutput=journal

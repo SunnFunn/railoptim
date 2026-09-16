@@ -54,7 +54,7 @@ railoptim/
     │   ├── tariffs.rs      — тарифы и сроки доставки
     │   ├── repairs.rs      — станции ремонта (для исключения NeedsRepair)
     │   ├── wash.rs         — станции промывки и логика надбавок
-    │   ├── references.rs   — справочники (WashProductCodes, ForeignRoads, …)
+    │   ├── references.rs   — справочники ЕТСНГ (WashProductCodes, WashedEmptyEtsngCodes)
     │   ├── esr.rs          — normalize_esr6, классификация по сетевому району
     │   ├── stations_geo.rs — загрузка stations_geo.sqlite (STATIONS_GEO_DB)
     │   ├── output.rs       — отправка назначений в API
@@ -105,6 +105,22 @@ railoptim/
 вагоны АПИ (`opzNoNumberModelCollection`) сверить нельзя — они идут как есть.
 Строка «узлов дислокации» в логе показывает: взято / в выгрузке / дублей / пересечений.
 
+По умолчанию в оптимизацию идут оба периода. Чтобы прогнать только вагоны 1-х суток
+(дислокация периода 10 не загружается, Redis/MSSQL не дергаются):
+
+```bash
+./run.sh --day1              # dev
+./run.sh prod --day1         # prod
+INCLUDE_PERIOD10=off cargo run --release --bin railoptim
+```
+
+`run.sh` принимает `--day1` / `--no-period10` в любом месте аргументов и выставляет
+`INCLUDE_PERIOD10=off`. Без флага поведение прежнее (полный пул). Отчёты обоих прогонов
+пишутся в `tmp/`: полный пул — `result_YYYYMMDD_HHMMSS.json` / `checkpoint_*.xlsx`,
+только 1-е сутки — `result_day1_YYYYMMDD_HHMMSS.json` / `checkpoint_day1_*.xlsx`.
+На prod два таймера в рабочие дни: **11:05** полный пул, **12:30** `--day1`
+(см. [`deploy/README.md`](deploy/README.md)).
+
 ### Разделение предложения перед оптимизацией
 
 `SupplyNode` из API разделяются на три группы:
@@ -118,8 +134,7 @@ railoptim/
 не в `classify_pair`. Вагон идёт в ремонт, если `IsCarRepair = true` либо
 `CarNextRepairDays` строго меньше порога: **15 суток** на российских дорогах,
 **45 суток** если дорога образования (`RailWayToShort` / `SupplyNode.railway_to`)
-в `ForeignRailways` (тот же список, что `ForeignRoads` в `references.json`) — с
-инотерритории вагон нужно успеть вывезти до ремонта. `0` — проверка по дням
+в `ForeignRailways` — с инотерритории вагон нужно успеть вывезти до ремонта. `0` — проверка по дням
 выключена, остаётся только флаг АПИ. Безномерные вагоны в ремонт по сроку не
 выводятся. В логе старта — «ремонт (правило 7): 15 сут. / инотерритория 45 сут.».
 
@@ -161,11 +176,13 @@ railoptim/
   направления/грузы) делится между ними пропорционально спросу;
 - **применение**: `car_count = min(car_count, разрешено ГУ-12)`; узлы без разрешённой
   погрузки исключаются, `d_id` перенумеровываются (узлы промывки создаются позже);
-- **только Россия**: узлы, у которых дорога погрузки (`railway_name`) входит в список
-  `ForeignRoads` из `data/references.json` (`load_foreign_roads`), не корректируются.
-  Классификация по коду станции ЕСР (`esr_country_prefixes.csv`) намеренно не
-  используется — ненадёжна. Если список не загрузился или пуст, проверка ГУ-12 не
-  выполняется (её нельзя ограничить территорией России), в лог идёт `[!]`.
+- **только Россия**: узлы, у которых дорога погрузки (`railway_name`) входит в
+  `ForeignRailways` (`data/business_rules.json`, тот же список, что правило 1),
+  не корректируются. Классификация по коду станции ЕСР (`esr_country_prefixes.csv`)
+  намеренно не используется — ненадёжна. Если список пуст (или `business_rules.json`
+  не загрузился: флаг ГУ-12 по умолчанию включён, инотерриторий нет), проверка ГУ-12
+  не выполняется — её нельзя ограничить территорией России (`BusinessRules::gu12_ready`),
+  в лог идёт `[!]`.
 
 В логе сначала печатается исходный спрос («Получено узлов спроса (погрузка)»), затем
 «Спрос с учётом ГУ-12 (правило 3)» с разбивкой по периодам, способам сопоставления,
@@ -509,11 +526,20 @@ Adaptive Large Neighbourhood Search — метаэвристика вокруг 
 
 ```bash
 # разовый запуск с секретами из Infisical (пароли БД, API-токены)
-./run.sh
+./run.sh                     # dev, полный пул (периоды 1 и 10)
+./run.sh prod                # prod, полный пул
+./run.sh --day1              # только вагоны 1-х суток
+./run.sh prod --day1
+./run.sh prod off            # без MIP warm-start (второй позиционный — on|off)
 
 # или напрямую после экспорта переменных окружения
 cargo run --release --bin railoptim
+INCLUDE_PERIOD10=off cargo run --release --bin railoptim
 ```
+
+На prod два oneshot-таймера в рабочие дни (`./deploy/install.sh optim`):
+**11:05** полный пул (`railoptim.timer`) и **12:30** `--day1` (`railoptim-day1.timer`).
+Отчёты: `tmp/result_YYYYMMDD_HHMMSS.json` и `tmp/result_day1_YYYYMMDD_HHMMSS.json`.
 
 Секреты извлекаются только из self-hosted Infisical
 (см. `auth-infisical.sh`); в коде и репозитории их быть не должно.
@@ -588,16 +614,19 @@ S — ёмкость путей, U — погрузка в сутки; данн�
 ## Web-сервер (`railoptim-web`)
 
 Отдельный long-running HTTP-сервис на **Axum** для API карты назначений. Работает
-**независимо** от batch-оптимизации: `./run.sh` по-прежнему one-shot cron,
+**независимо** от batch-оптимизации: `./run.sh` — oneshot (два раза в рабочие дни),
 `railoptim-web` — systemd daemon на Ubuntu prod.
 
 ```text
 tmp/result_*.json  +  stations_geo.sqlite  →  railoptim-web  →  JSON API  →  deck.gl / MapLibre
 ```
 
-Batch сохраняет план в `tmp/result_YYYYMMDD_HHMMSS.json` ([`OptimReport`](src/solver/result.rs)).
-Web-сервер читает последний файл (или явный путь), обогащает назначения координатами
-из [`stations_geo.sqlite`](data/stations/stations_geo.sqlite) и отдаёт JSON для frontend.
+Batch сохраняет план в `tmp/result_YYYYMMDD_HHMMSS.json` (полный пул) или
+`tmp/result_day1_YYYYMMDD_HHMMSS.json` (прогон `--day1`; [`OptimReport`](src/solver/result.rs)).
+Web-сервер берёт последний по mtime файл (после 12:30 это обычно `result_day1_*`;
+явный путь — override), оба прогона остаются в `/api/v1/plans`, обогащает назначения
+координатами из [`stations_geo.sqlite`](data/stations/stations_geo.sqlite)
+и отдаёт JSON для frontend.
 
 ### Сборка и запуск
 

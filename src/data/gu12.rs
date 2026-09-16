@@ -16,8 +16,9 @@
 //! этой станции. Узлы без разрешённой погрузки (0) исключаются.
 //!
 //! Проверка относится только к территории России: узлы на дорогах-инотерриториях
-//! (список `ForeignRoads` из `data/references.json`, см.
-//! [`super::references::load_foreign_roads`]) не корректируются. Дорога узла —
+//! ([`crate::data::BusinessRules::foreign_railways`] — тот же список, что правило 1)
+//! не корректируются. Пустой список → вызывающий код не должен вызывать
+//! [`apply_gu12_limits`] ([`crate::data::BusinessRules::gu12_ready`]). Дорога узла —
 //! `DemandNode::railway_name` (RailWayShortFrom); классификация по коду станции ЕСР
 //! намеренно не используется (ненадёжна).
 
@@ -219,8 +220,11 @@ pub fn split_proportional(total: i32, weights: &[i32]) -> Vec<i32> {
 ///
 /// - `demand` — узлы спроса (обрабатываются только `purpose == Load`);
 /// - `claims` — согласованные заявки ГУ-12 ([`fetch_gu12_claims`]);
-/// - `foreign_railways` — короткие коды дорог-инотерриторий (`ForeignRoads` из
-///   `data/references.json`): узлы с такой `railway_name` не корректируются.
+/// - `foreign_railways` — короткие коды дорог-инотерриторий
+///   ([`crate::data::BusinessRules::foreign_railways`]): узлы с такой
+///   `railway_name` не корректируются. Пустое множество трактует все узлы как
+///   российские — вызывающий код должен передавать непустой список
+///   ([`crate::data::BusinessRules::gu12_ready`]).
 ///
 /// Узлы с итоговым `car_count == 0` удаляются, `d_id` перенумеровываются с 1
 /// в исходном порядке (узлы промывки к этому моменту ещё не созданы).
@@ -560,6 +564,18 @@ mod tests {
         let mut demand = vec![node(1, 1, "657004", "КБШ", Some("Раевский"), Some("77697508"), 3)];
         apply_gu12_limits(&mut demand, &claims, &foreign());
         assert_eq!(demand[0].car_count, 3);
+    }
+
+    /// Пустой список инотерриторий трактует все узлы как российские: казахстанский
+    /// спрос без заявки ГУ-12 исключается. Поэтому `main` не вызывает эту функцию,
+    /// пока [`crate::data::BusinessRules::gu12_ready`] ложно.
+    #[test]
+    fn empty_foreign_list_treats_all_nodes_as_russia() {
+        let mut demand = vec![node(1, 1, "687103", "КЗХ", Some("ТОО"), None, 40)];
+        let st = apply_gu12_limits(&mut demand, &[], &HashSet::new());
+        assert!(demand.is_empty(), "инотерритория срезана без списка-исключения");
+        assert_eq!(st.nodes_foreign, 0);
+        assert_eq!(st.nodes_removed, 1);
     }
 
     #[test]

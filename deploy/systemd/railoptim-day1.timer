@@ -1,0 +1,14 @@
+[Unit]
+Description=Railoptim batch: только 1-е сутки (--day1) в 12:30 по рабочим дням
+After=network-online.target
+
+[Timer]
+Unit=railoptim-day1.service
+# Mon..Fri: понедельник–пятница; после утреннего прогона в 11:05
+OnCalendar=Mon..Fri *-*-* 12:30:00
+# Если сервер был выключен в момент срабатывания — запустить сразу после включения
+Persistent=true
+AccuracySec=1m
+
+[Install]
+WantedBy=timers.target

@@ -322,7 +322,6 @@ pub fn build_task_arcs(
     demand: &[DemandNode],
     tariffs: &[TariffNode],
     wash_codes: &HashSet<String>,
-    no_cleaning_roads: &HashSet<String>,
     washed_empty_codes: &HashSet<String>,
     wash_tariffs: &HashMap<(String, String), TariffNode>,
     rules: &BusinessRules,
@@ -400,10 +399,14 @@ pub fn build_task_arcs(
     let mut arcs_backlog_wait = 0usize;
     let mut arcs_dirty_rewarded = 0usize;
     let mut dirty_reward_total_rub = 0.0_f64;
+    let mut arcs_foreign_washed_picky = 0usize;
 
     // Порог правила 6 для грязных вагонов: минимальная стоимость промывочного маршрута
     // по станции образования (см. classify_pair). Считается один раз.
     let wash_min_cost = wash_route_min_cost_by_station(wash_tariffs);
+
+    // Правило 8: капризная надбавка иномойки — только при профиците порожних к погрузке.
+    let market_surplus = rules.market_surplus(supply, demand);
 
     for (s_idx, s) in supply.iter().enumerate() {
         let s_wash_min = wash_min_cost.get(s.station_to_code.as_str()).copied();
@@ -415,13 +418,13 @@ pub fn build_task_arcs(
                 d,
                 &tariff_index,
                 wash_codes,
-                no_cleaning_roads,
                 washed_empty_codes,
                 wash_tariffs,
                 s_wash_min,
                 rules,
                 backlog,
                 conventions,
+                market_surplus,
             ) {
                 PairOutcome::Feasible { tariff, cost, period_ok, rule_surcharge_rub, wait_days, dirty_reward_rub } => {
                     (tariff, cost, period_ok, rule_surcharge_rub > 0.0, wait_days, dirty_reward_rub)
@@ -453,6 +456,9 @@ pub fn build_task_arcs(
             if dirty_reward_rub > 0.0 {
                 arcs_dirty_rewarded += 1;
                 dirty_reward_total_rub += dirty_reward_rub;
+            }
+            if rules.foreign_washed_picky_surcharge(&s.railway_to, &d.railway_name, market_surplus) > 0.0 {
+                arcs_foreign_washed_picky += 1;
             }
 
             // Ограничения минимальной партии действуют только для погрузки, не для промывки.
@@ -523,6 +529,7 @@ pub fn build_task_arcs(
         arcs_backlog_wait,
         arcs_dirty_rewarded,
         dirty_reward_total_rub,
+        arcs_foreign_washed_picky,
     };
 
     (arcs, stats)
@@ -577,8 +584,9 @@ pub enum PairOutcome<'a> {
 }
 
 /// Классифицирует пару `(supply, demand)` теми же жёсткими фильтрами, что и
-/// [`build_task_arcs`]: тариф → грязный ЕТСНГ (правило 6) → тип вагона → потолок
-/// расстояния → бизнес-правила дорог (инотерритории, дефицитные дороги) → конвенции РЖД
+/// [`build_task_arcs`]: тариф → грязный ЕТСНГ (правило 6; иномойка правила 8 не грязная)
+/// → тип вагона → потолок расстояния → бизнес-правила дорог (инотерритории, дефицитные
+/// дороги, капризная надбавка иномойки при профиците — правило 8) → конвенции РЖД
 /// (правило 5) → загруженность станции (правило 4) → окно срока → потолок и поощрение
 /// грязного вагона под свой груз (правило 6). Фильтры расстояния, дорог и
 /// загруженности действуют только на дуги погрузки; конвенции — на Load и Wash.
@@ -589,32 +597,34 @@ pub enum PairOutcome<'a> {
 /// `wash_route_min_cost` — минимальная стоимость промывочного маршрута со станции
 /// образования вагона ([`wash_route_min_cost_by_station`]), `None` — промывка недоступна.
 /// `rules` — бизнес-правила ([`BusinessRules::default()`] — без ограничений дорог,
-/// правило 6 с прежними константами и без поощрения).
+/// правило 6 с прежними константами и без поощрения, правило 8 выключено).
 /// `backlog` — загруженность станций погрузки ([`StationBacklogIndex::disabled`] — без правила 4).
 /// `conventions` — конвенции РЖД ([`ConventionIndex::disabled`] — без правила 5).
+/// `market_surplus` — профицит порожних к погрузке ([`BusinessRules::foreign_washed_picky_active`]);
+/// без него капризная надбавка правила 8 не применяется.
 #[allow(clippy::too_many_arguments)]
 pub fn classify_pair<'a>(
     s: &SupplyNode,
     d: &DemandNode,
     tariff_index: &HashMap<(&str, &str), &'a TariffNode>,
     wash_codes: &HashSet<String>,
-    no_cleaning_roads: &HashSet<String>,
     washed_empty_codes: &HashSet<String>,
     wash_tariffs: &'a HashMap<(String, String), TariffNode>,
     wash_route_min_cost: Option<f64>,
     rules: &BusinessRules,
     backlog: &StationBacklogIndex,
     conventions: &ConventionIndex,
+    market_surplus: bool,
 ) -> PairOutcome<'a> {
     // Грязный вагон, едущий под погрузку аналогичного груза (Load + same ЕТСНГ).
     // Для такой пары правило 6 применяет потолок и поощрение: см. ниже после расчёта стоимости.
     let mut dirty_load = false;
     let tariff: &TariffNode = match d.purpose {
         DemandPurpose::Wash => {
-            // Вагоны с дорогой образования из NoCleaningRoads — не грязные
-            // (промывка уже оплачена клиентом на иностранной территории).
+            // Вагоны с дорогой образования из ForeignWashedRoads — не грязные
+            // (правило 8: клиент обязан вернуть вагон чистым с инотерритории).
             // Вагоны с текущим кодом из WashedEmptyEtsngCodes уже прошли промывку.
-            if !supply_needs_wash(s, wash_codes, no_cleaning_roads, washed_empty_codes) {
+            if !supply_needs_wash(s, wash_codes, &rules.foreign_washed_roads, washed_empty_codes) {
                 return PairOutcome::NoTariff;
             }
             let key = (s.station_to_code.clone(), d.station_code.clone());
@@ -625,9 +635,9 @@ pub fn classify_pair<'a>(
         }
         DemandPurpose::Load => {
             // Правило 6, жёсткая часть: вагон из-под груза, требующего промывки
-            // (и не освобождённый по NoCleaningRoads), может идти под погрузку
+            // (и не освобождённый правилом 8 / ForeignWashedRoads), может идти под погрузку
             // ТОЛЬКО под тот же ЕТСНГ. Альтернатива — маршрут через узел промывки.
-            if supply_needs_wash(s, wash_codes, no_cleaning_roads, washed_empty_codes) {
+            if supply_needs_wash(s, wash_codes, &rules.foreign_washed_roads, washed_empty_codes) {
                 let supply_etsng = effective_etsng_for_wash_tariff(s);
                 let demand_etsng = d.etsng.as_deref().map(normalize_etsng_code);
                 match (supply_etsng, demand_etsng) {
@@ -684,6 +694,9 @@ pub fn classify_pair<'a>(
             RuleOutcome::ForeignTerritory => return PairOutcome::ForeignTerritory,
             RuleOutcome::DeficitExport => return PairOutcome::DeficitRoadExport,
         }
+        // Правило 8: при профиците капризная дорога не любит иномойку — надбавка к тарифу.
+        rule_surcharge_rub +=
+            rules.foreign_washed_picky_surcharge(&s.railway_to, &d.railway_name, market_surplus);
     }
 
     // --- Правило 4: загруженность станции погрузки (только погрузка) ---
@@ -803,7 +816,7 @@ pub struct ArcStats {
     /// Дуг с ненулевым штрафом за срок подсыла (вне окна `[L−3, U+3]` с учётом сдвига периода 10).
     pub arcs_period_penalized: usize,
     /// Допустимых дуг с надбавкой по бизнес-правилам (исключение для инотерритории,
-    /// короткий вывоз с дефицитной дороги).
+    /// короткий вывоз с дефицитной дороги, капризная иномойка правила 8).
     pub arcs_rule_surcharged: usize,
     /// Допустимых дуг с ожиданием в очереди станции (правило 4, мягкая часть).
     pub arcs_backlog_wait: usize,
@@ -811,6 +824,8 @@ pub struct ArcStats {
     pub arcs_dirty_rewarded: usize,
     /// Суммарное поощрение по этим дугам (руб.) — для оценки масштаба скидки в логе.
     pub dirty_reward_total_rub: f64,
+    /// Допустимых дуг погрузки с надбавкой правила 8 (иномойка → капризная дорога при профиците).
+    pub arcs_foreign_washed_picky: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -1058,7 +1073,6 @@ mod tests {
             tariffs,
             &HashSet::new(),
             &HashSet::new(),
-            &HashSet::new(),
             &HashMap::new(),
             &BusinessRules::default(),
             &StationBacklogIndex::disabled(),
@@ -1119,7 +1133,7 @@ mod tests {
 
         let (arcs, stats) = build_task_arcs(
             &supply, &demand, &[near, far],
-            &HashSet::new(), &HashSet::new(), &HashSet::new(), &HashMap::new(),
+            &HashSet::new(), &HashSet::new(), &HashMap::new(),
             &rules_max_km(5_000),
             &StationBacklogIndex::disabled(),
             &ConventionIndex::disabled(),
@@ -1139,7 +1153,7 @@ mod tests {
         far.distance = 9_000;
         let (arcs, stats) = build_task_arcs(
             &supply, &demand, &[far],
-            &HashSet::new(), &HashSet::new(), &HashSet::new(), &HashMap::new(),
+            &HashSet::new(), &HashSet::new(), &HashMap::new(),
             &BusinessRules::default(),
             &StationBacklogIndex::disabled(),
             &ConventionIndex::disabled(),
@@ -1167,7 +1181,7 @@ mod tests {
         rules.max_empty_run_distance_km = Some(1_000);
         let (arcs, stats) = build_task_arcs(
             &[s], &[wash_node], &[],
-            &wash_codes, &HashSet::new(), &HashSet::new(), &wash_tariffs,
+            &wash_codes, &HashSet::new(), &wash_tariffs,
             &rules,
             &StationBacklogIndex::disabled(),
             &ConventionIndex::disabled(),
@@ -1200,7 +1214,7 @@ mod tests {
 
         let (arcs, _) = build_task_arcs(
             &[s], &[wash_node], &[],
-            &wash_codes, &HashSet::new(), &HashSet::new(), &wash_tariffs,
+            &wash_codes, &HashSet::new(), &wash_tariffs,
             &rules,
             &StationBacklogIndex::disabled(),
             &ConventionIndex::disabled(),
@@ -1214,7 +1228,7 @@ mod tests {
         let demand = vec![with_railway_d(dummy_demand(8, "D_KZH", None), "КЗХ")];
         let (arcs, _) = build_task_arcs(
             &supply, &demand, &[dummy_tariff("S_OKT", "D_KZH")],
-            &HashSet::new(), &HashSet::new(), &HashSet::new(), &HashMap::new(),
+            &HashSet::new(), &HashSet::new(), &HashMap::new(),
             &rules_roads(),
             &StationBacklogIndex::disabled(),
             &ConventionIndex::disabled(),
@@ -1242,7 +1256,7 @@ mod tests {
 
         let (arcs, stats) = build_task_arcs(
             &supply, &demand, &tariffs,
-            &HashSet::new(), &HashSet::new(), &HashSet::new(), &HashMap::new(),
+            &HashSet::new(), &HashSet::new(), &HashMap::new(),
             &rules_roads(),
             &StationBacklogIndex::disabled(),
             &ConventionIndex::disabled(),
@@ -1277,7 +1291,7 @@ mod tests {
 
         let (arcs, stats) = build_task_arcs(
             &supply, &demand, &[t_msk, t_near, t_far],
-            &HashSet::new(), &HashSet::new(), &HashSet::new(), &HashMap::new(),
+            &HashSet::new(), &HashSet::new(), &HashMap::new(),
             &rules_roads(),
             &StationBacklogIndex::disabled(),
             &ConventionIndex::disabled(),
@@ -1482,7 +1496,7 @@ mod tests {
 
         let (arcs, stats) = build_task_arcs(
             &[s], &[d], &[dummy_tariff("S1", "D1")],
-            &wash_codes, &HashSet::new(), &HashSet::new(), &wash_tariffs,
+            &wash_codes, &HashSet::new(), &wash_tariffs,
             &BusinessRules::default(),
             &StationBacklogIndex::disabled(),
             &ConventionIndex::disabled(),
@@ -1509,7 +1523,7 @@ mod tests {
 
         let (arcs, stats) = build_task_arcs(
             &[s], &[d], &[dummy_tariff("S1", "D1")],
-            &wash_codes, &HashSet::new(), &HashSet::new(), &wash_tariffs,
+            &wash_codes, &HashSet::new(), &wash_tariffs,
             &BusinessRules::default(),
             &StationBacklogIndex::disabled(),
             &ConventionIndex::disabled(),
@@ -1532,7 +1546,7 @@ mod tests {
 
         let (arcs, stats) = build_task_arcs(
             &[s], &[d], &[dummy_tariff("S1", "D1")],
-            &wash_codes, &HashSet::new(), &HashSet::new(), &wash_tariffs,
+            &wash_codes, &HashSet::new(), &wash_tariffs,
             &BusinessRules::default(),
             &StationBacklogIndex::disabled(),
             &ConventionIndex::disabled(),
@@ -1559,7 +1573,7 @@ mod tests {
             let rules = BusinessRules { dirty_same_cargo_max_cost_ratio_to_wash: ratio, ..Default::default() };
             build_task_arcs(
                 &[s.clone()], &[d.clone()], &[dummy_tariff("S1", "D1")],
-                &wash_codes, &HashSet::new(), &HashSet::new(), &wash_tariffs,
+                &wash_codes, &HashSet::new(), &wash_tariffs,
                 &rules,
                 &StationBacklogIndex::disabled(),
                 &ConventionIndex::disabled(),
@@ -1610,7 +1624,7 @@ mod tests {
 
         let (arcs, stats) = build_task_arcs(
             &[dirty, clean], &[d, wash_node], &[t_dirty, t_clean],
-            &wash_codes, &HashSet::new(), &HashSet::new(), &wash_tariffs,
+            &wash_codes, &HashSet::new(), &wash_tariffs,
             &rules,
             &StationBacklogIndex::disabled(),
             &ConventionIndex::disabled(),
@@ -1641,7 +1655,7 @@ mod tests {
         // Тариф 1 000 < поощрение 1 × 50 000 → стоимость 0, поощрение учтено в размере тарифа.
         let (arcs, stats) = build_task_arcs(
             &[s], &[d], &[dummy_tariff("S1", "D1")],
-            &wash_codes, &HashSet::new(), &HashSet::new(), &HashMap::new(),
+            &wash_codes, &HashSet::new(), &HashMap::new(),
             &rules,
             &StationBacklogIndex::disabled(),
             &ConventionIndex::disabled(),
@@ -1651,6 +1665,124 @@ mod tests {
         assert!((arcs[0].tariff_cost - 1_000.0).abs() < 1e-9);
         assert_eq!(stats.arcs_dirty_rewarded, 1);
         assert!((stats.dirty_reward_total_rub - 1_000.0).abs() < 1e-9);
+    }
+
+    // -----------------------------------------------------------------------
+    // Правило 8: иномойка и капризные дороги
+    // -----------------------------------------------------------------------
+
+    fn rules_foreign_washed() -> BusinessRules {
+        BusinessRules {
+            foreign_washed_roads: ["КЗХ".into()].into_iter().collect(),
+            foreign_washed_picky_railways: ["МСК".into()].into_iter().collect(),
+            foreign_washed_picky_surcharge_rub: 30_000.0,
+            ..Default::default()
+        }
+    }
+
+    /// Вагон с иномойки и «грязным» ЕТСНГ идёт под любой груз и не едет в промывку.
+    #[test]
+    fn foreign_washed_wagon_is_not_dirty() {
+        let mut s = with_railway_s(dummy_supply(5, "S1", 1, false), "КЗХ");
+        s.prev_etsngs = vec!["421034".to_string()];
+        let mut load = with_railway_d(dummy_demand(5, "D1", None), "ЮВС");
+        load.etsng = Some("999999".to_string()); // другой ЕТСНГ — для грязного был бы запрет
+        let mut wash_node = dummy_demand(5, "WASH", None);
+        wash_node.purpose = DemandPurpose::Wash;
+
+        let wash_codes: HashSet<String> = ["421034".to_string()].into_iter().collect();
+        let mut wash_tariffs: HashMap<(String, String), TariffNode> = HashMap::new();
+        wash_tariffs.insert(("S1".to_string(), "WASH".to_string()), dummy_tariff("S1", "WASH"));
+
+        let (arcs, stats) = build_task_arcs(
+            &[s], &[load, wash_node], &[dummy_tariff("S1", "D1")],
+            &wash_codes, &HashSet::new(), &wash_tariffs,
+            &rules_foreign_washed(),
+            &StationBacklogIndex::disabled(),
+            &ConventionIndex::disabled(),
+        );
+        assert_eq!(stats.dirty_etsng_mismatch, 0);
+        assert_eq!(arcs.len(), 1, "только погрузка, без промывки");
+        assert_eq!(arcs[0].demand_station_code, "D1");
+    }
+
+    /// При профиците подсыл иномойки на МСК дороже, чем на другую дорогу, на величину надбавки.
+    #[test]
+    fn foreign_washed_picky_surcharge_on_surplus() {
+        // 10 ваг. предложения > 1.2 × (3+3) спроса → профицит, надбавка на МСК.
+        let s = with_railway_s(dummy_supply(10, "S1", 1, false), "КЗХ");
+        let d_msk = with_railway_d(dummy_demand(3, "D_MSK", None), "МСК");
+        let d_yvs = with_railway_d(dummy_demand(3, "D_YVS", None), "ЮВС");
+        let (arcs, stats) = build_task_arcs(
+            &[s], &[d_msk, d_yvs],
+            &[dummy_tariff("S1", "D_MSK"), dummy_tariff("S1", "D_YVS")],
+            &HashSet::new(), &HashSet::new(), &HashMap::new(),
+            &rules_foreign_washed(),
+            &StationBacklogIndex::disabled(),
+            &ConventionIndex::disabled(),
+        );
+        assert_eq!(arcs.len(), 2);
+        assert_eq!(stats.arcs_foreign_washed_picky, 1);
+        let cost = |code: &str| arcs.iter().find(|a| a.demand_station_code == code).map(|a| a.cost);
+        assert_eq!(cost("D_MSK"), Some(31_000.0));
+        assert_eq!(cost("D_YVS"), Some(1_000.0));
+    }
+
+    /// При дефиците капризная надбавка не применяется — вагоны нужны.
+    #[test]
+    fn foreign_washed_picky_off_when_deficit() {
+        let s = with_railway_s(dummy_supply(2, "S1", 1, false), "КЗХ");
+        let d_msk = with_railway_d(dummy_demand(10, "D_MSK", None), "МСК");
+        let (arcs, stats) = build_task_arcs(
+            &[s], &[d_msk], &[dummy_tariff("S1", "D_MSK")],
+            &HashSet::new(), &HashSet::new(), &HashMap::new(),
+            &rules_foreign_washed(),
+            &StationBacklogIndex::disabled(),
+            &ConventionIndex::disabled(),
+        );
+        assert_eq!(arcs.len(), 1);
+        assert_eq!(stats.arcs_foreign_washed_picky, 0);
+        assert!((arcs[0].cost - 1_000.0).abs() < 1e-9);
+    }
+
+    /// Небольшой перевес предложения (в пределах запаса 1.2) — ещё не профицит:
+    /// 7 ваг. против 6 заявок надбавку не включает, 8 — включает.
+    #[test]
+    fn foreign_washed_picky_needs_surplus_margin() {
+        let d_msk = with_railway_d(dummy_demand(6, "D_MSK", None), "МСК");
+        let build = |cars: i32| {
+            let s = with_railway_s(dummy_supply(cars, "S1", 1, false), "КЗХ");
+            build_task_arcs(
+                &[s], &[d_msk.clone()], &[dummy_tariff("S1", "D_MSK")],
+                &HashSet::new(), &HashSet::new(), &HashMap::new(),
+                &rules_foreign_washed(),
+                &StationBacklogIndex::disabled(),
+                &ConventionIndex::disabled(),
+            )
+        };
+        let (arcs, stats) = build(7); // 7 > 7.2 — нет
+        assert_eq!(stats.arcs_foreign_washed_picky, 0);
+        assert!((arcs[0].cost - 1_000.0).abs() < 1e-9);
+        let (arcs, stats) = build(8); // 8 > 7.2 — профицит
+        assert_eq!(stats.arcs_foreign_washed_picky, 1);
+        assert!((arcs[0].cost - 31_000.0).abs() < 1e-9);
+    }
+
+    /// Российский вагон на МСК при профиците надбавки иномойки не получает.
+    #[test]
+    fn picky_surcharge_skips_russian_supply() {
+        let s = with_railway_s(dummy_supply(10, "S1", 1, false), "СКВ");
+        let d_msk = with_railway_d(dummy_demand(3, "D_MSK", None), "МСК");
+        let (arcs, stats) = build_task_arcs(
+            &[s], &[d_msk], &[dummy_tariff("S1", "D_MSK")],
+            &HashSet::new(), &HashSet::new(), &HashMap::new(),
+            &rules_foreign_washed(),
+            &StationBacklogIndex::disabled(),
+            &ConventionIndex::disabled(),
+        );
+        assert_eq!(arcs.len(), 1);
+        assert_eq!(stats.arcs_foreign_washed_picky, 0);
+        assert!((arcs[0].cost - 1_000.0).abs() < 1e-9);
     }
 
     // -----------------------------------------------------------------------
@@ -1699,7 +1831,7 @@ mod tests {
         far.period_of_delivery = 6;
         let (arcs, stats) = build_task_arcs(
             &supply, &demand, &[dummy_tariff("S1", "D1"), far],
-            &HashSet::new(), &HashSet::new(), &HashSet::new(), &HashMap::new(),
+            &HashSet::new(), &HashSet::new(), &HashMap::new(),
             &rules, &idx,
             &ConventionIndex::disabled(),
         );
@@ -1712,7 +1844,7 @@ mod tests {
         let idx_ok = backlog_index("D1", 10, &demand_ok, &rules);
         let (arcs, stats) = build_task_arcs(
             &supply[..1], &demand_ok, &[dummy_tariff("S1", "D1")],
-            &HashSet::new(), &HashSet::new(), &HashSet::new(), &HashMap::new(),
+            &HashSet::new(), &HashSet::new(), &HashMap::new(),
             &rules, &idx_ok,
             &ConventionIndex::disabled(),
         );
@@ -1734,7 +1866,7 @@ mod tests {
 
         let (arcs, stats) = build_task_arcs(
             &[s], &demand, &[dummy_tariff("S1", "D1")],
-            &HashSet::new(), &HashSet::new(), &HashSet::new(), &HashMap::new(),
+            &HashSet::new(), &HashSet::new(), &HashMap::new(),
             &rules, &idx,
             &ConventionIndex::disabled(),
         );
@@ -1764,7 +1896,7 @@ mod tests {
 
         let (arcs, stats) = build_task_arcs(
             &[s], &demand, &[dummy_tariff("S1", "D1")],
-            &HashSet::new(), &HashSet::new(), &HashSet::new(), &HashMap::new(),
+            &HashSet::new(), &HashSet::new(), &HashMap::new(),
             &rules, &idx,
             &ConventionIndex::disabled(),
         );
@@ -1791,7 +1923,7 @@ mod tests {
 
         let (arcs, stats) = build_task_arcs(
             &[s], &demand, &[dummy_tariff("S1", "D1")],
-            &HashSet::new(), &HashSet::new(), &HashSet::new(), &HashMap::new(),
+            &HashSet::new(), &HashSet::new(), &HashMap::new(),
             &rules, &idx,
             &ConventionIndex::disabled(),
         );
@@ -1811,7 +1943,7 @@ mod tests {
         let idx = backlog_index("OTHER", 10, &demand, &rules);
         let (arcs, stats) = build_task_arcs(
             &[s], &demand, &[dummy_tariff("S1", "D1")],
-            &HashSet::new(), &HashSet::new(), &HashSet::new(), &HashMap::new(),
+            &HashSet::new(), &HashSet::new(), &HashMap::new(),
             &rules, &idx,
             &ConventionIndex::disabled(),
         );
@@ -1831,7 +1963,7 @@ mod tests {
         assert!(idx_wash.get("WASH").is_none(), "Wash-узлы в индекс не входят");
         let (arcs, stats) = build_task_arcs(
             &[dirty], &[wash_node], &[],
-            &wash_codes, &HashSet::new(), &HashSet::new(), &wash_tariffs,
+            &wash_codes, &HashSet::new(), &wash_tariffs,
             &rules, &idx_wash,
             &ConventionIndex::disabled(),
         );
@@ -1872,7 +2004,7 @@ mod tests {
         let demand = vec![dummy_demand(3, "D1", None), dummy_demand(3, "D2", None)];
         let (arcs, stats) = build_task_arcs(
             &supply, &demand, &[dummy_tariff("S1", "D1"), dummy_tariff("S1", "D2")],
-            &HashSet::new(), &HashSet::new(), &HashSet::new(), &HashMap::new(),
+            &HashSet::new(), &HashSet::new(), &HashMap::new(),
             &BusinessRules::default(),
             &StationBacklogIndex::disabled(),
             &idx,
@@ -1904,7 +2036,7 @@ mod tests {
             &[s],
             &[zsb_okt, zsb_skv, msk_okt],
             &[dummy_tariff("S1", "D1"), dummy_tariff("S1", "D2"), dummy_tariff("S1", "D3")],
-            &HashSet::new(), &HashSet::new(), &HashSet::new(), &HashMap::new(),
+            &HashSet::new(), &HashSet::new(), &HashMap::new(),
             &BusinessRules::default(),
             &StationBacklogIndex::disabled(),
             &idx,
@@ -1932,7 +2064,7 @@ mod tests {
         wash_tariffs.insert(("S1".into(), "WASH".into()), dummy_tariff("S1", "WASH"));
         let (arcs, stats) = build_task_arcs(
             &[s.clone()], &[wash, load], &[dummy_tariff("S1", "WASH")],
-            &wash_codes, &HashSet::new(), &HashSet::new(), &wash_tariffs,
+            &wash_codes, &HashSet::new(), &wash_tariffs,
             &BusinessRules::default(),
             &StationBacklogIndex::disabled(),
             &idx,
@@ -1955,7 +2087,7 @@ mod tests {
         miss.sender_okpo = Some("00222".into());
         let (arcs, stats) = build_task_arcs(
             &[s], &[hit, miss], &[dummy_tariff("S1", "D1")],
-            &HashSet::new(), &HashSet::new(), &HashSet::new(), &HashMap::new(),
+            &HashSet::new(), &HashSet::new(), &HashMap::new(),
             &BusinessRules::default(),
             &StationBacklogIndex::disabled(),
             &idx,
@@ -1978,7 +2110,7 @@ mod tests {
         let (arcs, stats) = build_task_arcs(
             &[s], &[closed, open],
             &[dummy_tariff("S1", "LOAD1"), dummy_tariff("S1", "LOAD2")],
-            &HashSet::new(), &HashSet::new(), &HashSet::new(), &HashMap::new(),
+            &HashSet::new(), &HashSet::new(), &HashMap::new(),
             &BusinessRules::default(),
             &StationBacklogIndex::disabled(),
             &idx,
@@ -2000,7 +2132,7 @@ mod tests {
         let d = dummy_demand(3, "D1", None);
         let (arcs, stats) = build_task_arcs(
             &[s], &[d], &[dummy_tariff("S1", "D1")],
-            &HashSet::new(), &HashSet::new(), &HashSet::new(), &HashMap::new(),
+            &HashSet::new(), &HashSet::new(), &HashMap::new(),
             &BusinessRules::default(),
             &StationBacklogIndex::disabled(),
             &idx,
@@ -2021,7 +2153,7 @@ mod tests {
         let d = dummy_demand(3, "D1", None);
         let (arcs, stats) = build_task_arcs(
             &[dummy_supply(3, "S1", 1, false)], &[d.clone()], &[dummy_tariff("S1", "D1")],
-            &HashSet::new(), &HashSet::new(), &HashSet::new(), &HashMap::new(),
+            &HashSet::new(), &HashSet::new(), &HashMap::new(),
             &BusinessRules::default(),
             &StationBacklogIndex::disabled(),
             &idx,
@@ -2032,7 +2164,7 @@ mod tests {
         // Дислокация (supply_period 10): отправление через 5 суток — телеграмма уже истекла.
         let (arcs, stats) = build_task_arcs(
             &[dummy_supply(3, "S1", 10, false)], &[with_period(d, 2)], &[dummy_tariff("S1", "D1")],
-            &HashSet::new(), &HashSet::new(), &HashSet::new(), &HashMap::new(),
+            &HashSet::new(), &HashSet::new(), &HashMap::new(),
             &BusinessRules::default(),
             &StationBacklogIndex::disabled(),
             &idx,
@@ -2058,7 +2190,7 @@ mod tests {
         let (arcs, stats) = build_task_arcs(
             &[dummy_supply(6, "S1", 1, false)], &[late, early],
             &[dummy_tariff("S1", "LOAD1"), dummy_tariff("S1", "LOAD2")],
-            &HashSet::new(), &HashSet::new(), &HashSet::new(), &HashMap::new(),
+            &HashSet::new(), &HashSet::new(), &HashMap::new(),
             &BusinessRules::default(),
             &StationBacklogIndex::disabled(),
             &idx,

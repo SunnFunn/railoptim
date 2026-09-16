@@ -310,8 +310,8 @@ pub fn is_washed_empty(s: &SupplyNode, washed_empty_codes: &HashSet<String>) -> 
 /// Вагон с текущим кодом из `washed_empty_codes` ([`is_washed_empty`]) считается чистым —
 /// вернётся `false` независимо от предыдущего груза.
 ///
-/// Не учитывает исключения по дороге образования — для полной проверки используй
-/// [`supply_needs_wash`].
+/// Не учитывает исключения по дороге образования (правило 8) — для полной проверки
+/// используй [`supply_needs_wash`].
 pub fn supply_matches_wash_product_list(
     s: &SupplyNode,
     wash_codes: &HashSet<String>,
@@ -331,15 +331,15 @@ pub fn supply_matches_wash_product_list(
 /// - текущий код ЕТСНГ вагона входит в `WashedEmptyEtsngCodes` ([`is_washed_empty`])
 ///   (вагон уже прошёл промывку/ремонт и считается чистым), или
 /// - груз вагона не входит в список `WashProductCodes`, или
-/// - дорога образования вагона (`railway_to`) входит в `NoCleaningRoads`
-///   (промывка на иностранной территории уже оплачена клиентом).
+/// - дорога образования вагона (`railway_to`) входит в `foreign_washed_roads`
+///   (правило 8: клиент обязан вернуть вагон чистым с инотерритории).
 pub fn supply_needs_wash(
     s: &SupplyNode,
     wash_codes: &HashSet<String>,
-    no_cleaning_roads: &HashSet<String>,
+    foreign_washed_roads: &HashSet<String>,
     washed_empty_codes: &HashSet<String>,
 ) -> bool {
-    if no_cleaning_roads.contains(s.railway_to.trim()) {
+    if foreign_washed_roads.contains(s.railway_to.trim()) {
         return false;
     }
     supply_matches_wash_product_list(s, wash_codes, washed_empty_codes)
@@ -349,17 +349,18 @@ pub fn supply_needs_wash(
 /// вагон по правилу [`effective_etsng_for_wash_tariff`] — теоретическая альтернатива промывке
 /// (на любой станции спроса).
 ///
-/// Для дорог образования из `NoCleaningRoads` всегда возвращает `false`: такие вагоны промывку не
-/// требуют и допускаются под любой груз — искать «ту же погрузку по ЕТСНГ» не имеет смысла.
+/// Для дорог образования из `foreign_washed_roads` всегда возвращает `false`: такие вагоны
+/// промывку не требуют и допускаются под любой груз — искать «ту же погрузку по ЕТСНГ»
+/// не имеет смысла.
 ///
 /// Наличие тарифа и прочих ограничений дуги не проверяется: допустимость конкурирующих назначений
 /// определяется в [`crate::solver::model::build_task_arcs`].
 pub fn load_demand_has_matching_dirty_etsng(
     s: &SupplyNode,
     load_demands: &[DemandNode],
-    no_cleaning_roads: &HashSet<String>,
+    foreign_washed_roads: &HashSet<String>,
 ) -> bool {
-    if no_cleaning_roads.contains(s.railway_to.trim()) {
+    if foreign_washed_roads.contains(s.railway_to.trim()) {
         return false;
     }
     let Some(eff) = effective_etsng_for_wash_tariff(s) else {

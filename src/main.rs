@@ -39,14 +39,15 @@ async fn main() -> Result<()> {
     // Бизнес-правила логистов (data/business_rules.json): потолок дальности подсыла,
     // инотерритории, дефицитные дороги (дуги погрузки), проверка ГУ-12 (спрос),
     // грязный вагон под аналогичный груз (правило 6: стоимость промывочного маршрута,
-    // потолок и поощрение), вывод в ремонт (правило 7: 15 сут. / 45 сут. на инотерритории).
+    // потолок и поощрение), вывод в ремонт (правило 7: 15 сут. / 45 сут. на инотерритории),
+    // иномойка (правило 8: не грязные; капризные дороги при профиците).
     // Не загрузились => правил 1–2 нет, ограничения на дуги не применяются, правило 6 — с
     // прежними константами (10 000 + 40 000) без поощрения, правило 7 — 15/45 сут. без списка
-    // инотерриторий (все дороги как российские).
+    // инотерриторий (все дороги как российские), правило 8 выключено.
     let business_rules = match data::BusinessRules::load("data/business_rules.json") {
         Ok(r) => {
             println!(
-                "Бизнес-правила (business_rules.json): потолок подсыла {}; инотерриторий {} (исключений {}); дефицитных дорог {} (вывоз ≤ {} км, надбавка {:.0} руб.); проверка ГУ-12 {}; загруженность станций (правило 4) {}; конвенции РЖД (правило 5) {}; грязный под свой груз (правило 6): промывочный маршрут +{:.0}+{:.0} руб., потолок {}, поощрение {}; ремонт (правило 7): {} сут. / инотерритория {} сут.",
+                "Бизнес-правила (business_rules.json): потолок подсыла {}; инотерриторий {} (исключений {}); дефицитных дорог {} (вывоз ≤ {} км, надбавка {:.0} руб.); проверка ГУ-12 {}; загруженность станций (правило 4) {}; конвенции РЖД (правило 5) {}; грязный под свой груз (правило 6): промывочный маршрут +{:.0}+{:.0} руб., потолок {}, поощрение {}; ремонт (правило 7): {} сут. / инотерритория {} сут.; иномойка (правило 8): {} дорог образования, капризных {} (надбавка {:.0} руб. при предложении > {:.2} × спроса)",
                 r.max_empty_run_distance_km
                     .map(|km| format!("{km} км"))
                     .unwrap_or_else(|| "выкл.".to_string()),
@@ -78,11 +79,15 @@ async fn main() -> Result<()> {
                 },
                 r.repair_days_threshold,
                 r.repair_days_threshold_foreign,
+                r.foreign_washed_roads.len(),
+                r.foreign_washed_picky_railways.len(),
+                r.foreign_washed_picky_surcharge_rub,
+                r.foreign_washed_picky_surplus_ratio,
             );
             r
         }
         Err(e) => {
-            eprintln!("  business_rules.json: не загружен ({e}) — бизнес-правила 1–2 не применяются, правило 6 без поощрения, правило 7 без инотерриторий");
+            eprintln!("  business_rules.json: не загружен ({e}) — бизнес-правила 1–2 не применяются, правило 6 без поощрения, правило 7 без инотерриторий, правило 8 выключено");
             data::BusinessRules::default()
         }
     };
@@ -236,16 +241,11 @@ async fn main() -> Result<()> {
             HashSet::new()
         }
     };
-    let no_cleaning_roads = match data::load_no_cleaning_roads("data/references.json") {
-        Ok(r) => {
-            println!("Дороги без промывки (NoCleaningRoads): {}", r.len());
-            r
-        }
-        Err(e) => {
-            eprintln!("  NoCleaningRoads из references.json: не загружены ({e})");
-            HashSet::new()
-        }
-    };
+    // Правило 8: дороги иномойки — из business_rules.json (раньше NoCleaningRoads в references.json).
+    let foreign_washed_roads = &business_rules.foreign_washed_roads;
+    if !foreign_washed_roads.is_empty() {
+        println!("Дороги иномойки (правило 8, ForeignWashedRoads): {}", foreign_washed_roads.len());
+    }
     // Текущие коды ЕТСНГ «уже промыт/из ремонта» (WashedEmptyEtsngCodes): такие вагоны
     // считаются чистыми независимо от предыдущего груза (напр. 421208 — из промывки, 421195 — из ремонта).
     let washed_empty_codes = match data::load_washed_empty_codes("data/references.json") {
@@ -293,34 +293,34 @@ async fn main() -> Result<()> {
     let mut demand_lp: Vec<DemandNode> = demand_nodes.clone();
     demand_lp.extend(wash_demand_nodes.clone());
 
-    // Все вагоны с «грязным» ETSNG (без учёта NoCleaningRoads).
+    // Все вагоны с «грязным» ETSNG (без учёта правила 8 / ForeignWashedRoads).
     let n_supply_wash_raw = opt_supply
         .iter()
         .filter(|s| data::wash::supply_matches_wash_product_list(s, &wash_codes, &washed_empty_codes))
         .map(|s| s.car_count)
         .sum::<i32>();
-    // Из них освобождены от промывки по дороге образования (NoCleaningRoads).
+    // Из них освобождены от промывки по дороге образования (правило 8).
     let n_supply_wash_exempt = opt_supply
         .iter()
         .filter(|s| {
             data::wash::supply_matches_wash_product_list(s, &wash_codes, &washed_empty_codes)
-                && no_cleaning_roads.contains(s.railway_to.trim())
+                && business_rules.is_foreign_washed(&s.railway_to)
         })
         .map(|s| s.car_count)
         .sum::<i32>();
     // Итого «грязных», требующих промывки.
     let n_supply_wash_list = n_supply_wash_raw - n_supply_wash_exempt;
-    // По данным спроса Load (любая станция с тем же ЕТСНГ); без тарифа; NoCleaningRoads — не считаем (см. wash.rs).
+    // По данным спроса Load (любая станция с тем же ЕТСНГ); без тарифа; иномойка — не считаем.
     let n_supply_wash_skip = opt_supply
         .iter()
         .filter(|s| {
-            data::wash::supply_needs_wash(s, &wash_codes, &no_cleaning_roads, &washed_empty_codes)
-                && data::wash::load_demand_has_matching_dirty_etsng(s, &demand_nodes, &no_cleaning_roads)
+            data::wash::supply_needs_wash(s, &wash_codes, foreign_washed_roads, &washed_empty_codes)
+                && data::wash::load_demand_has_matching_dirty_etsng(s, &demand_nodes, foreign_washed_roads)
         })
         .map(|s| s.car_count)
         .sum::<i32>();
     println!(
-        "  предложений с ЕТСНГ из списка промывки: {} вагонов (освобождены по NoCleaningRoads: {}; из них есть узел погрузки с тем же ЕТСНГ на любой станции — альтернатива промывке по спросу: {} вагонов)",
+        "  предложений с ЕТСНГ из списка промывки: {} вагонов (освобождены по правилу 8 / иномойка: {}; из них есть узел погрузки с тем же ЕТСНГ на любой станции — альтернатива промывке по спросу: {} вагонов)",
         n_supply_wash_list, n_supply_wash_exempt, n_supply_wash_skip
     );
 
@@ -428,7 +428,7 @@ async fn main() -> Result<()> {
     if !wash_station_refs.is_empty() {
         let wash_from: Vec<StationRef> = opt_supply
             .iter()
-            .filter(|s| data::wash::supply_needs_wash(s, &wash_codes, &no_cleaning_roads, &washed_empty_codes))
+            .filter(|s| data::wash::supply_needs_wash(s, &wash_codes, foreign_washed_roads, &washed_empty_codes))
             .map(|s| (s.station_to_code.clone(), s.railway_to.clone()))
             .collect::<HashSet<_>>()
             .into_iter()
@@ -639,7 +639,6 @@ async fn main() -> Result<()> {
         &demand_lp,
         &tariff_nodes,
         &wash_codes,
-        &no_cleaning_roads,
         &washed_empty_codes,
         &wash_tariff_map,
         &business_rules,
@@ -721,6 +720,13 @@ async fn main() -> Result<()> {
         arc_stats.arcs_rule_surcharged,
         100.0 * arc_stats.arcs_rule_surcharged as f64 / total.max(1) as f64,
     );
+    if arc_stats.arcs_foreign_washed_picky > 0 {
+        println!(
+            "    · из них иномойка → капризная дорога (правило 8, профицит): {} ({:.1}%)",
+            arc_stats.arcs_foreign_washed_picky,
+            100.0 * arc_stats.arcs_foreign_washed_picky as f64 / total.max(1) as f64,
+        );
+    }
     println!(
         "  допустимых дуг с ожиданием в очереди станции (правило 4): {} ({:.1}%)",
         arc_stats.arcs_backlog_wait,
@@ -801,6 +807,20 @@ async fn main() -> Result<()> {
     // 5. Анализ баланса и начальное жадное решение
     // -----------------------------------------------------------------------
     solver::print_balance(&opt_supply, &demand_lp);
+    if business_rules.market_surplus(&opt_supply, &demand_lp) {
+        let mut picky: Vec<&str> = business_rules
+            .foreign_washed_picky_railways
+            .iter()
+            .map(String::as_str)
+            .collect();
+        picky.sort_unstable();
+        println!(
+            "Правило 8: профицит порожних (предложение > {:.2} × спрос погрузки) — надбавка {:.0} руб. на подсыл иномойки на капризные дороги ({})",
+            business_rules.foreign_washed_picky_surplus_ratio,
+            business_rules.foreign_washed_picky_surcharge_rub,
+            picky.join(", "),
+        );
+    }
 
     // Штрафы за остаток предложения по узлам (общие для MIP, ALNS и выбора seed).
     // При дефиците грязные узлы (есть Wash-дуги) штрафуются PENALTY_EXCESS_DIRTY —
@@ -1011,7 +1031,6 @@ async fn main() -> Result<()> {
             &demand_lp,
             &tariff_nodes,
             &wash_codes,
-            &no_cleaning_roads,
             &washed_empty_codes,
             &wash_tariff_map,
             dmzi_limits.as_ref(),
@@ -1226,7 +1245,7 @@ async fn main() -> Result<()> {
     // -----------------------------------------------------------------------
     // Записи: оптимизация (Free / NoNumber) + отстой (этап 2) + пути погрузки (этап 3).
     let mut output_records = solver::build_output_records(
-        &solution, &arcs, &opt_supply, &demand_lp, &wash_codes, &no_cleaning_roads,
+        &solution, &arcs, &opt_supply, &demand_lp, &wash_codes, foreign_washed_roads,
         &washed_empty_codes, &reserve_assignments, &reserve_nodes,
         &loadroad_assignments, &free_loadroads,
     );

@@ -18,7 +18,7 @@
 СКВ
 СЕВ
 КЛГ
-# СНГ и соседи (data/references.json → NoCleaningRoads); БЖД → БЕЛ см. railway_rw_aliases.csv
+# СНГ и соседи (подмножество ForeignRailways из data/business_rules.json); БЖД → БЕЛ см. railway_rw_aliases.csv
 БЕЛ
 КЗХ
 УЗБ
@@ -29,4 +29,5 @@
 ЛАТ
 КРГ
 ТДЖ
+ТРК
 ЭСТ

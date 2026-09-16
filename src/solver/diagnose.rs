@@ -518,7 +518,7 @@ enum UnmetCause {
 /// «структурно недостижимо» (нет дуг) и «потенциально закрываемо» (партия / ДМЗИ /
 /// конкуренция), что показывает реальный потолок покрытия.
 ///
-/// `tariffs` / `wash_codes` / `no_cleaning_roads` / `wash_tariffs` / `rules` / `backlog` /
+/// `tariffs` / `wash_codes` / `wash_tariffs` / `rules` / `backlog` /
 /// `conventions` нужны для структурной разбивки узлов без дуг через [`classify_pair`].
 #[allow(clippy::too_many_arguments)]
 pub fn diagnose_unmet_demand(
@@ -528,7 +528,6 @@ pub fn diagnose_unmet_demand(
     demand: &[DemandNode],
     tariffs: &[TariffNode],
     wash_codes: &HashSet<String>,
-    no_cleaning_roads: &HashSet<String>,
     washed_empty_codes: &HashSet<String>,
     wash_tariffs: &HashMap<(String, String), TariffNode>,
     dmzi_limits: Option<&DmziLimits>,
@@ -611,6 +610,8 @@ pub fn diagnose_unmet_demand(
 
     // Порог «cap» промывочного маршрута по станции образования (как в build_task_arcs).
     let wash_min_cost = wash_route_min_cost_by_station(wash_tariffs);
+    // Правило 8: тот же критерий профицита, что в build_task_arcs.
+    let market_surplus = rules.market_surplus(supply, demand);
 
     let mut cause_stats: BTreeMap<&'static str, (usize, i32)> = BTreeMap::new();
     let add_stat = |key: &'static str, rem: i32, stats: &mut BTreeMap<&'static str, (usize, i32)>| {
@@ -701,8 +702,8 @@ pub fn diagnose_unmet_demand(
             for s in supply.iter() {
                 let s_wash_min = wash_min_cost.get(s.station_to_code.as_str()).copied();
                 match classify_pair(
-                    s, d, &tariff_index, wash_codes, no_cleaning_roads, washed_empty_codes,
-                    wash_tariffs, s_wash_min, rules, backlog, conventions,
+                    s, d, &tariff_index, wash_codes, washed_empty_codes,
+                    wash_tariffs, s_wash_min, rules, backlog, conventions, market_surplus,
                 ) {
                     // Feasible здесь невозможен: иначе дуга была бы построена.
                     PairOutcome::Feasible { .. } => {}

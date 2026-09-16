@@ -414,7 +414,7 @@ pub fn build_output_records(
     supply:   &[SupplyNode],
     demand:   &[DemandNode],
     wash_codes: &HashSet<String>,
-    no_cleaning_roads: &HashSet<String>,
+    foreign_washed_roads: &HashSet<String>,
     washed_empty_codes: &HashSet<String>,
     reserve_assignments: &[ReserveAssignment],
     reserves: &[ReserveNode],
@@ -500,7 +500,7 @@ pub fn build_output_records(
             // - Load-дуга, чистый вагон → «Под погрузку в N сутки»
             let assignment_type = if d.purpose == DemandPurpose::Wash {
                 "в промывку".to_string()
-            } else if wash::supply_needs_wash(s, wash_codes, no_cleaning_roads, washed_empty_codes) {
+            } else if wash::supply_needs_wash(s, wash_codes, foreign_washed_roads, washed_empty_codes) {
                 "под погрузку аналогичного груза".to_string()
             } else {
                 format!("Под погрузку в {period_label} сутки")

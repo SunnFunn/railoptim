@@ -2,10 +2,12 @@
 //! (`data/business_rules.json`, машиночитаемое зеркало `business_rules.txt`).
 //!
 //! Правила применяются в [`crate::solver::model::classify_pair`] к дугам **погрузки**
-//! как жёсткие фильтры и/или надбавки (правило 6 — поощрение) к тарифу и при
-//! группировке предложения (правило 7 — горизонт вывода в ремонт). Промывка,
-//! отстой и пути клиента правилами не ограничиваются; правило 6 задаёт лишь
-//! стоимость промывочного маршрута, с которой сравнивается прямая погрузка.
+//! как жёсткие фильтры и/или надбавки (правило 6 — поощрение, правило 8 — капризная
+//! дорога при профиците) к тарифу и при группировке предложения (правило 7 —
+//! горизонт вывода в ремонт). Правило 8 также снимает «грязность» с вагонов
+//! иномойки: они не едут в промывку. Отстой и пути клиента правилами не
+//! ограничиваются; правило 6 задаёт стоимость промывочного маршрута, с которой
+//! сравнивается прямая погрузка.
 //!
 //! Дороги сравниваются по коротким кодам: `SupplyNode::railway_to` (RailWayToShort)
 //! и `DemandNode::railway_name` (RailWayShortFrom).
@@ -15,6 +17,8 @@ use std::path::Path;
 
 use anyhow::Context;
 use serde::Deserialize;
+
+use crate::node::{DemandNode, DemandPurpose, SupplyNode};
 
 /// Исключение к правилу инотерриторий: откуда разрешён подсыл на дорогу
 /// `demand_railway` и с какой надбавкой к тарифу.
@@ -149,7 +153,32 @@ pub struct BusinessRules {
     /// нужно успеть вывезти с инотерритории до ремонта. `0` — как российский порог.
     #[serde(rename = "RepairDaysThresholdForeign")]
     pub repair_days_threshold_foreign: i32,
+
+    /// Правило 8: дороги образования, на которых клиент моет вагон сам (иномойка).
+    /// Такие вагоны не считаются грязными для правила 6 и не едут в российскую промывку.
+    #[serde(rename = "ForeignWashedRoads")]
+    pub foreign_washed_roads: HashSet<String>,
+
+    /// Правило 8: капризные дороги погрузки. При профиците порожних подсыл
+    /// иномойки сюда дороже на [`Self::foreign_washed_picky_surcharge_rub`].
+    #[serde(rename = "ForeignWashedPickyRailways")]
+    pub foreign_washed_picky_railways: HashSet<String>,
+
+    /// Правило 8: надбавка (руб./ваг.) к тарифу «иномойка → капризная дорога»
+    /// при профиците предложения над спросом погрузки. `0` — капризная часть выключена.
+    #[serde(rename = "ForeignWashedPickySurchargeRub")]
+    pub foreign_washed_picky_surcharge_rub: f64,
+
+    /// Правило 8: порог профицита — предложение должно превышать спрос погрузки
+    /// в это число раз (`> ratio × спрос`), чтобы капризная надбавка включилась.
+    /// Запас над 1.0 защищает от переключения надбавки из-за разницы в несколько
+    /// вагонов. Меньше 1.0 поднимается до 1.0 (иначе «профицит» при дефиците).
+    #[serde(rename = "ForeignWashedPickySurplusRatio")]
+    pub foreign_washed_picky_surplus_ratio: f64,
 }
+
+/// Значение [`BusinessRules::foreign_washed_picky_surplus_ratio`] по умолчанию.
+pub const DEFAULT_FOREIGN_WASHED_PICKY_SURPLUS_RATIO: f64 = 1.2;
 
 impl Default for BusinessRules {
     fn default() -> Self {
@@ -171,6 +200,10 @@ impl Default for BusinessRules {
             dirty_same_cargo_reward_share: 0.0,
             repair_days_threshold: 15,
             repair_days_threshold_foreign: 45,
+            foreign_washed_roads: HashSet::new(),
+            foreign_washed_picky_railways: HashSet::new(),
+            foreign_washed_picky_surcharge_rub: 0.0,
+            foreign_washed_picky_surplus_ratio: DEFAULT_FOREIGN_WASHED_PICKY_SURPLUS_RATIO,
         }
     }
 }
@@ -236,6 +269,8 @@ impl BusinessRules {
         }
         self.foreign_railways = trim_set(&self.foreign_railways);
         self.deficit_railways = trim_set(&self.deficit_railways);
+        self.foreign_washed_roads = trim_set(&self.foreign_washed_roads);
+        self.foreign_washed_picky_railways = trim_set(&self.foreign_washed_picky_railways);
         for e in &mut self.foreign_exceptions {
             e.demand_railway = e.demand_railway.trim().to_string();
             e.from_railways = trim_set(&e.from_railways);
@@ -273,6 +308,18 @@ impl BusinessRules {
                 self.repair_days_threshold_foreign, self.repair_days_threshold,
             );
             self.repair_days_threshold_foreign = self.repair_days_threshold;
+        }
+        self.foreign_washed_picky_surcharge_rub = self.foreign_washed_picky_surcharge_rub.max(0.0);
+        // Правило 8: порог профицита не ниже 1 — иначе надбавка включалась бы при дефиците.
+        if !self.foreign_washed_picky_surplus_ratio.is_finite() {
+            self.foreign_washed_picky_surplus_ratio = DEFAULT_FOREIGN_WASHED_PICKY_SURPLUS_RATIO;
+        }
+        if self.foreign_washed_picky_surplus_ratio < 1.0 {
+            eprintln!(
+                "  [!] business_rules.json: ForeignWashedPickySurplusRatio ({}) < 1 — профицит не может наступать при дефиците, берётся 1",
+                self.foreign_washed_picky_surplus_ratio,
+            );
+            self.foreign_washed_picky_surplus_ratio = 1.0;
         }
     }
 
@@ -329,6 +376,63 @@ impl BusinessRules {
             return false;
         }
         days_to_repair.map(|d| d < threshold as f64).unwrap_or(false)
+    }
+
+    /// Правило 8: вагон образовался на дороге иномойки — клиент уже обязан вернуть его чистым.
+    pub fn is_foreign_washed(&self, supply_railway: &str) -> bool {
+        let rw = supply_railway.trim();
+        !rw.is_empty() && self.foreign_washed_roads.contains(rw)
+    }
+
+    /// Правило 8: на рынке профицит порожних — суммарное предложение больше
+    /// `ForeignWashedPickySurplusRatio × спрос погрузки` — и капризная надбавка включена.
+    pub fn foreign_washed_picky_active(&self, total_supply: i32, total_load_demand: i32) -> bool {
+        (total_supply as f64) > self.foreign_washed_picky_surplus_ratio * (total_load_demand as f64)
+            && self.foreign_washed_picky_surcharge_rub > 0.0
+            && !self.foreign_washed_roads.is_empty()
+            && !self.foreign_washed_picky_railways.is_empty()
+    }
+
+    /// Правило 8: профицит по узлам текущего прогона — свободное предложение
+    /// (`opt_supply`, периоды 1 и 10 вместе) против спроса **погрузки** (`Load`,
+    /// узлы промывки не считаются). Единая точка расчёта для построения дуг,
+    /// диагностики незакрытого спроса и лога.
+    pub fn market_surplus(&self, supply: &[SupplyNode], demand: &[DemandNode]) -> bool {
+        let total_supply: i32 = supply.iter().map(|s| s.car_count).sum();
+        let total_load: i32 = demand
+            .iter()
+            .filter(|d| d.purpose == DemandPurpose::Load)
+            .map(|d| d.car_count)
+            .sum();
+        self.foreign_washed_picky_active(total_supply, total_load)
+    }
+
+    /// Правило 8: надбавка к дуге погрузки «иномойка → капризная дорога».
+    ///
+    /// `market_surplus` — [`Self::foreign_washed_picky_active`] для текущего прогона.
+    /// Без профицита, пустых списков или нулевой надбавки возвращает 0: капризная
+    /// дорога при дефиците берёт любые вагоны.
+    pub fn foreign_washed_picky_surcharge(
+        &self,
+        supply_railway: &str,
+        demand_railway: &str,
+        market_surplus: bool,
+    ) -> f64 {
+        if !market_surplus || self.foreign_washed_picky_surcharge_rub <= 0.0 {
+            return 0.0;
+        }
+        let s_rw = supply_railway.trim();
+        let d_rw = demand_railway.trim();
+        if s_rw.is_empty() || d_rw.is_empty() {
+            return 0.0;
+        }
+        if self.foreign_washed_roads.contains(s_rw)
+            && self.foreign_washed_picky_railways.contains(d_rw)
+        {
+            self.foreign_washed_picky_surcharge_rub
+        } else {
+            0.0
+        }
     }
 
     /// Правило 6: проверка дуги «грязный вагон → погрузка того же ЕТСНГ».
@@ -430,6 +534,12 @@ impl BusinessRules {
 mod tests {
     use super::*;
 
+    /// Все дороги колеи 1520 вне РФ по кодам NSI — ожидаемое содержимое `ForeignRailways`.
+    pub(crate) const FOREIGN_1520: &[&str] = &[
+        "КЗХ", "КРГ", "ТДЖ", "УЗБ", "ТРК", "АЗР", "ГРЗ", "ЮКЖ", "БЕЛ", "ЛАТ", "ЭСТ", "ЛИТ",
+        "МЛД", "МНГ", "ЛЬВ", "ЮЗП", "ЮЖН", "ДОН", "ОДС", "ПДН", "FIN",
+    ];
+
     fn rules() -> BusinessRules {
         let mut r = BusinessRules {
             max_empty_run_distance_km: Some(5000),
@@ -509,9 +619,10 @@ mod tests {
         let r = BusinessRules::load(&path).unwrap();
         // Конкретное значение потолка — настройка логистов, тест проверяет только наличие.
         assert!(r.max_empty_run_distance_km.is_some_and(|km| km >= 1000), "потолок подсыла задан и разумен");
-        for rw in ["КЗХ", "КРГ", "ТДЖ", "УЗБ", "ТРК", "АЗР", "ГРЗ", "ЮКЖ", "БЕЛ", "ЛАТ", "ЭСТ", "ЛИТ"] {
-            assert!(r.foreign_railways.contains(rw), "нет инотерритории {rw}");
+        for rw in FOREIGN_1520 {
+            assert!(r.foreign_railways.contains(*rw), "нет инотерритории {rw}");
         }
+        assert!(!r.foreign_railways.contains("МСК"));
         for rw in ["ЮВС", "МСК", "КБШ", "ПРВ", "ЮУР", "ЗСБ"] {
             assert!(r.deficit_railways.contains(rw), "нет дефицитной дороги {rw}");
         }
@@ -544,6 +655,26 @@ mod tests {
         assert!(r.wagon_needs_repair(false, Some(14.0), "МСК"));
         assert!(r.wagon_needs_repair(false, Some(20.0), "КЗХ"));
         assert!(!r.wagon_needs_repair(false, Some(45.0), "КЗХ"));
+        // Правило 8: иномойка — те же инотерритории, что правило 1; капризная МСК при профиците.
+        assert_eq!(
+            r.foreign_washed_roads, r.foreign_railways,
+            "ForeignWashedRoads должен совпадать с ForeignRailways"
+        );
+        assert!(r.is_foreign_washed("КЗХ"));
+        assert!(!r.is_foreign_washed("МСК"));
+        assert!(r.foreign_washed_picky_railways.contains("МСК"));
+        assert!(r.foreign_washed_picky_surcharge_rub > 0.0);
+        assert!(r.foreign_washed_picky_surplus_ratio >= 1.0);
+        // Профицит с запасом: 121 > 1.2 × 100, 120 — нет.
+        assert!(r.foreign_washed_picky_active(121, 100));
+        assert!(!r.foreign_washed_picky_active(120, 100));
+        assert_eq!(
+            r.foreign_washed_picky_surcharge("КЗХ", "МСК", true),
+            r.foreign_washed_picky_surcharge_rub,
+        );
+        assert_eq!(r.foreign_washed_picky_surcharge("КЗХ", "МСК", false), 0.0);
+        assert_eq!(r.foreign_washed_picky_surcharge("КЗХ", "ЮВС", true), 0.0);
+        assert_eq!(r.foreign_washed_picky_surcharge("СКВ", "МСК", true), 0.0);
     }
 
     // -----------------------------------------------------------------------
@@ -744,5 +875,62 @@ mod tests {
         assert_eq!(r.repair_days_threshold, 0);
         assert!(!r.wagon_needs_repair(false, Some(1.0), "МСК"), "0 — проверка по дням выключена");
         assert!(r.wagon_needs_repair(true, Some(1.0), "МСК"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Правило 8: иномойка и капризные дороги
+    // -----------------------------------------------------------------------
+
+    /// По умолчанию иномойки нет: вагоны с любой дороги остаются кандидатами в грязные.
+    #[test]
+    fn foreign_washed_defaults_off() {
+        let r = BusinessRules::default();
+        assert!(r.foreign_washed_roads.is_empty());
+        assert!(!r.is_foreign_washed("КЗХ"));
+        assert_eq!(r.foreign_washed_picky_surcharge("КЗХ", "МСК", true), 0.0);
+        assert!(!r.foreign_washed_picky_active(100, 10));
+    }
+
+    /// Надбавка только при профиците, только иномойка → капризная дорога.
+    #[test]
+    fn foreign_washed_picky_surcharge_only_on_surplus() {
+        let mut r = BusinessRules::default();
+        r.foreign_washed_roads = ["КЗХ".into()].into_iter().collect();
+        r.foreign_washed_picky_railways = ["МСК".into()].into_iter().collect();
+        r.foreign_washed_picky_surcharge_rub = 30_000.0;
+        assert_eq!(r.foreign_washed_picky_surplus_ratio, 1.2, "порог по умолчанию 1.2");
+        assert!(r.foreign_washed_picky_active(20, 10));
+        assert!(!r.foreign_washed_picky_active(10, 20));
+        assert!(!r.foreign_washed_picky_active(10, 10));
+        // Запас 1.2: 12 > 12 — нет, 13 > 12 — профицит.
+        assert!(!r.foreign_washed_picky_active(12, 10));
+        assert!(r.foreign_washed_picky_active(13, 10));
+        // Спроса нет — любое предложение профицит.
+        assert!(r.foreign_washed_picky_active(1, 0));
+        assert_eq!(r.foreign_washed_picky_surcharge("КЗХ", "МСК", true), 30_000.0);
+        assert_eq!(r.foreign_washed_picky_surcharge("КЗХ", "МСК", false), 0.0);
+        assert_eq!(r.foreign_washed_picky_surcharge("КЗХ", "ЮВС", true), 0.0);
+        assert_eq!(r.foreign_washed_picky_surcharge("СКВ", "МСК", true), 0.0);
+    }
+
+    /// Порог профицита разбирается из JSON; меньше 1 поднимается до 1, мусор — к умолчанию.
+    #[test]
+    fn foreign_washed_surplus_ratio_parse_and_normalize() {
+        let mut r: BusinessRules =
+            serde_json::from_str(r#"{"ForeignWashedPickySurplusRatio": 1.5}"#).unwrap();
+        r.normalize();
+        assert_eq!(r.foreign_washed_picky_surplus_ratio, 1.5);
+
+        let mut r: BusinessRules =
+            serde_json::from_str(r#"{"ForeignWashedPickySurplusRatio": 0.5}"#).unwrap();
+        r.normalize();
+        assert_eq!(r.foreign_washed_picky_surplus_ratio, 1.0);
+
+        let mut r = BusinessRules { foreign_washed_picky_surplus_ratio: f64::NAN, ..Default::default() };
+        r.normalize();
+        assert_eq!(r.foreign_washed_picky_surplus_ratio, DEFAULT_FOREIGN_WASHED_PICKY_SURPLUS_RATIO);
+
+        let r: BusinessRules = serde_json::from_str("{}").unwrap();
+        assert_eq!(r.foreign_washed_picky_surplus_ratio, DEFAULT_FOREIGN_WASHED_PICKY_SURPLUS_RATIO);
     }
 }

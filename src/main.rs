@@ -41,14 +41,20 @@ async fn main() -> Result<()> {
     // грязный вагон под аналогичный груз (правило 6: стоимость промывочного маршрута,
     // потолок и поощрение), вывод в ремонт (правило 7: 15 сут. / 45 сут. на инотерритории),
     // иномойка (правило 8: не грязные; капризные дороги при профиците),
-    // коэффициент тарифа периода 1 по расстоянию (только модель, не отчёт).
+    // поправка периода 1 по расстоянию (только модель, не отчёт; в режиме --day1 выключена —
+    // без периода 10 ей нечего балансировать).
     // Не загрузились => правил 1–2 нет, ограничения на дуги не применяются, правило 6 — с
     // прежними константами (10 000 + 40 000) без поощрения, правило 7 — 15/45 сут. без списка
     // инотерриторий (все дороги как российские), правило 8 выключено.
+    let include_period10 = include_period10_from_env();
     let business_rules = match data::BusinessRules::load("data/business_rules.json") {
-        Ok(r) => {
+        Ok(mut r) => {
+            let p1_adjust_off_by_day1 = !include_period10 && r.p1_distance_adjust_enabled();
+            if p1_adjust_off_by_day1 {
+                r.disable_p1_distance_adjust();
+            }
             println!(
-                "Бизнес-правила (business_rules.json): потолок подсыла {}; инотерриторий {} (исключений {}); дефицитных дорог {} (вывоз ≤ {} км, надбавка {:.0} руб.); проверка ГУ-12 {}; загруженность станций (правило 4) {}; конвенции РЖД (правило 5) {}; грязный под свой груз (правило 6): промывочный маршрут +{:.0}+{:.0} руб., потолок {}, поощрение {}; ремонт (правило 7): {} сут. / инотерритория {} сут.; иномойка (правило 8): {} дорог образования, капризных {} (надбавка {:.0} руб. при предложении > {:.2} × спроса); тариф периода 1 × расстояние: {}",
+                "Бизнес-правила (business_rules.json): потолок подсыла {}; инотерриторий {} (исключений {}); дефицитных дорог {} (вывоз ≤ {} км, надбавка {:.0} руб.); проверка ГУ-12 {}; загруженность станций (правило 4) {}; конвенции РЖД (правило 5) {}; грязный под свой груз (правило 6): промывочный маршрут +{:.0}+{:.0} руб., потолок {}, поощрение {}; ремонт (правило 7): {} сут. / инотерритория {} сут.; иномойка (правило 8): {} дорог образования, капризных {} (надбавка {:.0} руб. при предложении > {:.2} × спроса); поправка периода 1 по расстоянию: {}",
                 r.max_empty_run_distance_km
                     .map(|km| format!("{km} км"))
                     .unwrap_or_else(|| "выкл.".to_string()),
@@ -84,11 +90,19 @@ async fn main() -> Result<()> {
                 r.foreign_washed_picky_railways.len(),
                 r.foreign_washed_picky_surcharge_rub,
                 r.foreign_washed_picky_surplus_ratio,
-                if r.p1_tariff_distance_coeff_enabled() {
+                if r.p1_distance_adjust_enabled() {
                     format!(
-                        "{:.2} (0 км) … {:.2} ({} км), в отчёт не идёт",
-                        r.p1_tariff_coeff_near, r.p1_tariff_coeff_far, r.p1_tariff_coeff_far_km,
+                        "{:.1} руб./км × (км − {}), потолок {}, в отчёт не идёт",
+                        r.p1_distance_rub_per_km,
+                        r.p1_distance_neutral_km,
+                        if r.p1_distance_cap_rub > 0.0 {
+                            format!("±{:.0} руб.", r.p1_distance_cap_rub)
+                        } else {
+                            "нет".to_string()
+                        },
                     )
+                } else if p1_adjust_off_by_day1 {
+                    "выкл. (режим --day1: без периода 10 не применяется)".to_string()
                 } else {
                     "выкл.".to_string()
                 },
@@ -166,7 +180,6 @@ async fn main() -> Result<()> {
     // Free и Assigned), из дислокации (период 10) исключается — иначе он участвовал бы в
     // оптимизации дважды. Приоритет у периода 1: это сегодняшняя дислокация, а не прогноз.
     // INCLUDE_PERIOD10=off (флаг run.sh --day1) — только 1-е сутки, к Redis/MSSQL не ходим.
-    let include_period10 = include_period10_from_env();
     if !include_period10 {
         println!(
             "Дислокация 2-10 сут. (период 10): пропущена (INCLUDE_PERIOD10=off) — оптимизация только по вагонам 1-х суток"
@@ -750,6 +763,27 @@ async fn main() -> Result<()> {
             arc_stats.arcs_dirty_rewarded,
             100.0 * arc_stats.arcs_dirty_rewarded as f64 / total.max(1) as f64,
             arc_stats.dirty_reward_total_rub / arc_stats.arcs_dirty_rewarded as f64,
+        );
+    }
+    if business_rules.p1_distance_adjust_enabled() {
+        let bonus_avg = if arc_stats.arcs_p1_distance_bonus > 0 {
+            arc_stats.p1_distance_bonus_total_rub / arc_stats.arcs_p1_distance_bonus as f64
+        } else {
+            0.0
+        };
+        let surcharge_avg = if arc_stats.arcs_p1_distance_surcharge > 0 {
+            arc_stats.p1_distance_surcharge_total_rub / arc_stats.arcs_p1_distance_surcharge as f64
+        } else {
+            0.0
+        };
+        println!(
+            "  поправка периода 1 по расстоянию: бонус на {} дугах ({:.1}%, в среднем −{:.0} руб.), надбавка на {} дугах ({:.1}%, в среднем +{:.0} руб.)",
+            arc_stats.arcs_p1_distance_bonus,
+            100.0 * arc_stats.arcs_p1_distance_bonus as f64 / total.max(1) as f64,
+            bonus_avg,
+            arc_stats.arcs_p1_distance_surcharge,
+            100.0 * arc_stats.arcs_p1_distance_surcharge as f64 / total.max(1) as f64,
+            surcharge_avg,
         );
     }
     println!(

@@ -180,22 +180,22 @@ pub struct BusinessRules {
     #[serde(rename = "ForeignWashedPickySurplusRatio")]
     pub foreign_washed_picky_surplus_ratio: f64,
 
-    /// Коэффициент к чистому тарифу **погрузки** для вагонов периода 1 на 0 км.
-    /// `< 1` — ближний подсыл периода 1 дешевле в модели, чем тот же тариф периода 10.
-    /// В отчёт не попадает: Excel/API пишут исходный тариф (`TaskArc::tariff_cost`).
-    #[serde(rename = "P1TariffCoeffNear")]
-    pub p1_tariff_coeff_near: f64,
+    /// Аддитивная поправка к модельной стоимости дуги **погрузки** для вагонов
+    /// периода 1: нейтральная дальность `d₀` (км). Ближе — поправка отрицательна
+    /// (бонус сегодняшнему вагону на короткое плечо), дальше — положительна (дальний
+    /// подсыл уходит вагонам периода 10). В отчёт не попадает: Excel/API пишут
+    /// исходный тариф (`TaskArc::tariff_cost`).
+    #[serde(rename = "P1DistanceNeutralKm")]
+    pub p1_distance_neutral_km: i32,
 
-    /// Коэффициент к чистому тарифу погрузки для вагонов периода 1 на расстоянии
-    /// [`Self::p1_tariff_coeff_far_km`]. `> 1` — дальний подсыл периода 1 дороже,
-    /// заявка уходит вагонам периода 10. Дальше этого км коэффициент не растёт.
-    #[serde(rename = "P1TariffCoeffFar")]
-    pub p1_tariff_coeff_far: f64,
+    /// Ставка поправки, руб./ваг. за каждый км разницы `d − d₀`.
+    /// `0` — поправка выключена.
+    #[serde(rename = "P1DistanceRubPerKm")]
+    pub p1_distance_rub_per_km: f64,
 
-    /// Расстояние (км), на котором коэффициент периода 1 равен
-    /// [`Self::p1_tariff_coeff_far`]. `0` — правило выключено (коэффициент 1.0).
-    #[serde(rename = "P1TariffCoeffFarKm")]
-    pub p1_tariff_coeff_far_km: i32,
+    /// Потолок модуля поправки, руб./ваг. `0` — без потолка.
+    #[serde(rename = "P1DistanceCapRub")]
+    pub p1_distance_cap_rub: f64,
 }
 
 /// Значение [`BusinessRules::foreign_washed_picky_surplus_ratio`] по умолчанию.
@@ -225,9 +225,9 @@ impl Default for BusinessRules {
             foreign_washed_picky_railways: HashSet::new(),
             foreign_washed_picky_surcharge_rub: 0.0,
             foreign_washed_picky_surplus_ratio: DEFAULT_FOREIGN_WASHED_PICKY_SURPLUS_RATIO,
-            p1_tariff_coeff_near: 1.0,
-            p1_tariff_coeff_far: 1.0,
-            p1_tariff_coeff_far_km: 0,
+            p1_distance_neutral_km: 0,
+            p1_distance_rub_per_km: 0.0,
+            p1_distance_cap_rub: 0.0,
         }
     }
 }
@@ -345,32 +345,19 @@ impl BusinessRules {
             );
             self.foreign_washed_picky_surplus_ratio = 1.0;
         }
-        // Коэффициент тарифа периода 1: не отрицательный; FarKm ≤ 0 выключает правило.
-        if !self.p1_tariff_coeff_near.is_finite() {
-            self.p1_tariff_coeff_near = 1.0;
+        // Поправка периода 1 по расстоянию: мусор → выкл., отрицательная ставка —
+        // предупреждение (дальние подсылы периода 1 станут дешевле ближних).
+        if !self.p1_distance_rub_per_km.is_finite() {
+            self.p1_distance_rub_per_km = 0.0;
         }
-        if !self.p1_tariff_coeff_far.is_finite() {
-            self.p1_tariff_coeff_far = 1.0;
+        if !self.p1_distance_cap_rub.is_finite() || self.p1_distance_cap_rub < 0.0 {
+            self.p1_distance_cap_rub = 0.0;
         }
-        if self.p1_tariff_coeff_near < 0.0 {
+        self.p1_distance_neutral_km = self.p1_distance_neutral_km.max(0);
+        if self.p1_distance_rub_per_km < 0.0 {
             eprintln!(
-                "  [!] business_rules.json: P1TariffCoeffNear ({}) < 0 — берётся 0",
-                self.p1_tariff_coeff_near,
-            );
-            self.p1_tariff_coeff_near = 0.0;
-        }
-        if self.p1_tariff_coeff_far < 0.0 {
-            eprintln!(
-                "  [!] business_rules.json: P1TariffCoeffFar ({}) < 0 — берётся 0",
-                self.p1_tariff_coeff_far,
-            );
-            self.p1_tariff_coeff_far = 0.0;
-        }
-        self.p1_tariff_coeff_far_km = self.p1_tariff_coeff_far_km.max(0);
-        if self.p1_tariff_coeff_far_km > 0 && self.p1_tariff_coeff_near > self.p1_tariff_coeff_far {
-            eprintln!(
-                "  [!] business_rules.json: P1TariffCoeffNear ({}) > P1TariffCoeffFar ({}) — дальние подсылы периода 1 станут дешевле ближних",
-                self.p1_tariff_coeff_near, self.p1_tariff_coeff_far,
+                "  [!] business_rules.json: P1DistanceRubPerKm ({}) < 0 — дальние подсылы периода 1 станут дешевле ближних",
+                self.p1_distance_rub_per_km,
             );
         }
     }
@@ -446,37 +433,46 @@ impl BusinessRules {
         !rw.is_empty() && self.foreign_washed_roads.contains(rw)
     }
 
-    /// Коэффициент к тарифу периода 1 включён (задана дальность и хотя бы один конец ≠ 1).
-    pub fn p1_tariff_distance_coeff_enabled(&self) -> bool {
-        self.p1_tariff_coeff_far_km > 0
-            && ((self.p1_tariff_coeff_near - 1.0).abs() > 1e-12
-                || (self.p1_tariff_coeff_far - 1.0).abs() > 1e-12)
+    /// Поправка периода 1 по расстоянию включена (ставка ненулевая).
+    pub fn p1_distance_adjust_enabled(&self) -> bool {
+        self.p1_distance_rub_per_km != 0.0
     }
 
-    /// Линейная интерполяция коэффициента тарифа периода 1 по расстоянию (км).
-    ///
-    /// На 0 км — [`Self::p1_tariff_coeff_near`], на [`Self::p1_tariff_coeff_far_km`]
-    /// и дальше — [`Self::p1_tariff_coeff_far`]. Выключено (`FarKm` ≤ 0) → `1.0`.
-    pub fn p1_tariff_distance_coeff(&self, distance_km: i32) -> f64 {
-        if self.p1_tariff_coeff_far_km <= 0 {
-            return 1.0;
+    /// Выключить поправку периода 1 по расстоянию (ставка → 0). Используется в режиме
+    /// `--day1` (`INCLUDE_PERIOD10=off`): без вагонов периода 10 конкурировать не с кем,
+    /// поправка только искажала бы выбор между заявками для одного и того же вагона.
+    pub fn disable_p1_distance_adjust(&mut self) {
+        self.p1_distance_rub_per_km = 0.0;
+    }
+
+    /// Аддитивная поправка (руб./ваг.) к модельной стоимости по расстоянию:
+    /// `R × (d − d₀)`, по модулю не больше [`Self::p1_distance_cap_rub`] (если > 0).
+    /// Отрицательна ближе `d₀`, положительна дальше. Выключено → `0`.
+    pub fn p1_distance_adjust_rub(&self, distance_km: i32) -> f64 {
+        if !self.p1_distance_adjust_enabled() {
+            return 0.0;
         }
-        let t = (distance_km.max(0) as f64 / f64::from(self.p1_tariff_coeff_far_km)).clamp(0.0, 1.0);
-        self.p1_tariff_coeff_near + (self.p1_tariff_coeff_far - self.p1_tariff_coeff_near) * t
+        let delta_km = f64::from(distance_km.max(0) - self.p1_distance_neutral_km);
+        let raw = self.p1_distance_rub_per_km * delta_km;
+        if self.p1_distance_cap_rub > 0.0 {
+            raw.clamp(-self.p1_distance_cap_rub, self.p1_distance_cap_rub)
+        } else {
+            raw
+        }
     }
 
-    /// Коэффициент, на который в модели умножается чистый тариф дуги погрузки.
-    /// Только период 1 и `DemandPurpose::Load`; промывка и период 10 — `1.0`.
-    pub fn p1_load_tariff_coeff(
+    /// Поправка к модельной стоимости дуги: только период 1 и `DemandPurpose::Load`;
+    /// промывка и период 10 — `0`. К отчётному тарифу не относится.
+    pub fn p1_load_distance_adjust_rub(
         &self,
         supply_period: u8,
         purpose: DemandPurpose,
         distance_km: i32,
     ) -> f64 {
         if supply_period != 1 || purpose != DemandPurpose::Load {
-            1.0
+            0.0
         } else {
-            self.p1_tariff_distance_coeff(distance_km)
+            self.p1_distance_adjust_rub(distance_km)
         }
     }
 
@@ -772,13 +768,16 @@ mod tests {
         assert_eq!(r.foreign_washed_picky_surcharge("КЗХ", "МСК", false), 0.0);
         assert_eq!(r.foreign_washed_picky_surcharge("КЗХ", "ЮВС", true), 0.0);
         assert_eq!(r.foreign_washed_picky_surcharge("СКВ", "МСК", true), 0.0);
-        // Коэффициент тарифа периода 1: ближний < 1, дальний > 1, FarKm задан.
-        assert!(r.p1_tariff_distance_coeff_enabled());
-        assert!(r.p1_tariff_coeff_near > 0.0 && r.p1_tariff_coeff_near < 1.0);
-        assert!(r.p1_tariff_coeff_far > 1.0);
-        assert!(r.p1_tariff_coeff_far_km >= 1000);
-        assert!((r.p1_tariff_distance_coeff(0) - r.p1_tariff_coeff_near).abs() < 1e-12);
-        assert!((r.p1_tariff_distance_coeff(r.p1_tariff_coeff_far_km) - r.p1_tariff_coeff_far).abs() < 1e-12);
+        // Поправка периода 1 по расстоянию — настройка теста гипотезы; проверяем только
+        // корректность (конечные значения, неотрицательные d₀ и потолок), не включённость.
+        assert!(r.p1_distance_rub_per_km.is_finite());
+        assert!(r.p1_distance_neutral_km >= 0);
+        assert!(r.p1_distance_cap_rub >= 0.0);
+        if r.p1_distance_adjust_enabled() {
+            assert!(r.p1_distance_rub_per_km > 0.0, "ставка < 0 переворачивает смысл поправки");
+            assert!(r.p1_distance_adjust_rub(0) <= 0.0);
+            assert!(r.p1_distance_adjust_rub(r.p1_distance_neutral_km).abs() < 1e-9);
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -1049,48 +1048,88 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Коэффициент тарифа периода 1 по расстоянию
+    // Поправка периода 1 по расстоянию (аддитивная)
     // -----------------------------------------------------------------------
 
     #[test]
-    fn p1_tariff_coeff_disabled_by_default() {
+    fn p1_distance_adjust_disabled_by_default() {
         let r = BusinessRules::default();
-        assert!(!r.p1_tariff_distance_coeff_enabled());
-        assert_eq!(r.p1_tariff_distance_coeff(0), 1.0);
-        assert_eq!(r.p1_tariff_distance_coeff(9_000), 1.0);
-        assert_eq!(r.p1_load_tariff_coeff(1, DemandPurpose::Load, 100), 1.0);
+        assert!(!r.p1_distance_adjust_enabled());
+        assert_eq!(r.p1_distance_adjust_rub(0), 0.0);
+        assert_eq!(r.p1_distance_adjust_rub(9_000), 0.0);
+        assert_eq!(r.p1_load_distance_adjust_rub(1, DemandPurpose::Load, 100), 0.0);
+        let r: BusinessRules = serde_json::from_str("{}").unwrap();
+        assert!(!r.p1_distance_adjust_enabled());
     }
 
     #[test]
-    fn p1_tariff_coeff_linear_and_clamped() {
+    fn p1_distance_adjust_linear_and_capped() {
         let r = BusinessRules {
-            p1_tariff_coeff_near: 0.8,
-            p1_tariff_coeff_far: 1.2,
-            p1_tariff_coeff_far_km: 2_000,
+            p1_distance_neutral_km: 2_000,
+            p1_distance_rub_per_km: 5.0,
+            p1_distance_cap_rub: 8_000.0,
             ..Default::default()
         };
-        assert!(r.p1_tariff_distance_coeff_enabled());
-        assert!((r.p1_tariff_distance_coeff(0) - 0.8).abs() < 1e-12);
-        assert!((r.p1_tariff_distance_coeff(1_000) - 1.0).abs() < 1e-12);
-        assert!((r.p1_tariff_distance_coeff(2_000) - 1.2).abs() < 1e-12);
-        assert!((r.p1_tariff_distance_coeff(9_000) - 1.2).abs() < 1e-12, "дальше FarKm не растёт");
-        assert_eq!(r.p1_load_tariff_coeff(10, DemandPurpose::Load, 0), 1.0);
-        assert_eq!(r.p1_load_tariff_coeff(1, DemandPurpose::Wash, 0), 1.0);
-        assert!((r.p1_load_tariff_coeff(1, DemandPurpose::Load, 0) - 0.8).abs() < 1e-12);
+        assert!(r.p1_distance_adjust_enabled());
+        assert!((r.p1_distance_adjust_rub(2_000)).abs() < 1e-12, "на d₀ поправки нет");
+        assert!((r.p1_distance_adjust_rub(1_000) + 5_000.0).abs() < 1e-12, "ближе — бонус");
+        assert!((r.p1_distance_adjust_rub(3_000) - 5_000.0).abs() < 1e-12, "дальше — надбавка");
+        assert!((r.p1_distance_adjust_rub(0) + 8_000.0).abs() < 1e-12, "потолок снизу");
+        assert!((r.p1_distance_adjust_rub(6_000) - 8_000.0).abs() < 1e-12, "потолок сверху");
+        assert_eq!(r.p1_load_distance_adjust_rub(10, DemandPurpose::Load, 0), 0.0);
+        assert_eq!(r.p1_load_distance_adjust_rub(1, DemandPurpose::Wash, 0), 0.0);
+        assert!((r.p1_load_distance_adjust_rub(1, DemandPurpose::Load, 3_000) - 5_000.0).abs() < 1e-12);
     }
 
     #[test]
-    fn p1_tariff_coeff_negative_clamped_in_normalize() {
+    fn p1_distance_adjust_disable_for_day1_mode() {
         let mut r = BusinessRules {
-            p1_tariff_coeff_near: -0.5,
-            p1_tariff_coeff_far: f64::NAN,
-            p1_tariff_coeff_far_km: -10,
+            p1_distance_neutral_km: 2_000,
+            p1_distance_rub_per_km: 5.0,
+            p1_distance_cap_rub: 15_000.0,
+            ..Default::default()
+        };
+        assert!(r.p1_distance_adjust_enabled());
+        r.disable_p1_distance_adjust();
+        assert!(!r.p1_distance_adjust_enabled());
+        assert_eq!(r.p1_load_distance_adjust_rub(1, DemandPurpose::Load, 0), 0.0);
+        assert_eq!(r.p1_load_distance_adjust_rub(1, DemandPurpose::Load, 6_000), 0.0);
+    }
+
+    #[test]
+    fn p1_distance_adjust_without_cap_is_unbounded() {
+        let r = BusinessRules {
+            p1_distance_neutral_km: 1_000,
+            p1_distance_rub_per_km: 10.0,
+            p1_distance_cap_rub: 0.0,
+            ..Default::default()
+        };
+        assert!((r.p1_distance_adjust_rub(6_000) - 50_000.0).abs() < 1e-12);
+        assert!((r.p1_distance_adjust_rub(0) + 10_000.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn p1_distance_adjust_normalize_garbage() {
+        let mut r = BusinessRules {
+            p1_distance_neutral_km: -10,
+            p1_distance_rub_per_km: f64::NAN,
+            p1_distance_cap_rub: -5.0,
             ..Default::default()
         };
         r.normalize();
-        assert_eq!(r.p1_tariff_coeff_near, 0.0);
-        assert_eq!(r.p1_tariff_coeff_far, 1.0);
-        assert_eq!(r.p1_tariff_coeff_far_km, 0);
-        assert!(!r.p1_tariff_distance_coeff_enabled());
+        assert_eq!(r.p1_distance_neutral_km, 0);
+        assert_eq!(r.p1_distance_rub_per_km, 0.0);
+        assert_eq!(r.p1_distance_cap_rub, 0.0);
+        assert!(!r.p1_distance_adjust_enabled());
+
+        let mut r: BusinessRules = serde_json::from_str(
+            r#"{"P1DistanceNeutralKm": 2000, "P1DistanceRubPerKm": 5, "P1DistanceCapRub": 15000}"#,
+        )
+        .unwrap();
+        r.normalize();
+        assert!(r.p1_distance_adjust_enabled());
+        assert_eq!(r.p1_distance_neutral_km, 2_000);
+        assert_eq!(r.p1_distance_rub_per_km, 5.0);
+        assert_eq!(r.p1_distance_cap_rub, 15_000.0);
     }
 }

@@ -4,6 +4,7 @@ use chrono::Utc;
 use serde::Deserialize;
 
 use crate::node::{CarKind, RepairStatus, SupplyNode};
+use super::business_rules::BusinessRules;
 use super::client::{ApiClient, ApiEndpoint, ApiError};
 
 /// Минимальное суммарное количество вагонов на станции назначения,
@@ -70,10 +71,13 @@ impl NumberedCarItem {
         self.opz_c1.as_deref().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
     }
 
-    fn repair_status(&self) -> RepairStatus {
-        let needs = self.is_car_repair
-            || self.days_to_repair.map(|d| d < 15.0).unwrap_or(false);
-        if needs { RepairStatus::NeedsRepair } else { RepairStatus::Ok }
+    fn repair_status(&self, rules: &BusinessRules) -> RepairStatus {
+        let railway = self.railway_to_short.as_deref().unwrap_or("");
+        if rules.wagon_needs_repair(self.is_car_repair, self.days_to_repair, railway) {
+            RepairStatus::NeedsRepair
+        } else {
+            RepairStatus::Ok
+        }
     }
 }
 
@@ -153,10 +157,12 @@ fn kind_to_ord(kind: &CarKind) -> u8 {
 /// Группирует плоский список вагонов в агрегированные узлы предложения.
 ///
 /// `supply_period`: `1` для данных АПИ, `10` для дислокации (2–10 сутки).
+/// `rules` — правило 7 (горизонт вывода в ремонт, в т.ч. 45 сут. на инотерритории).
 fn group_supply(
     numbered: impl Iterator<Item = NumberedCarItem>,
     no_number: impl Iterator<Item = NoNumberItem>,
     supply_period: u8,
+    rules: &BusinessRules,
 ) -> Vec<SupplyNode> {
     let mut groups: HashMap<GroupKey, GroupData> = HashMap::new();
     // Сохраняем порядок первого появления ключа.
@@ -165,7 +171,7 @@ fn group_supply(
     // --- Именные вагоны ---
     for c in numbered {
         let car_type = c.car_type();
-        let repair   = c.repair_status();
+        let repair   = c.repair_status(rules);
         let kind     = if c.opz_railway_id.is_some() { CarKind::Assigned } else { CarKind::Free };
 
         let key = GroupKey {
@@ -302,9 +308,11 @@ impl DislocationSupply {
 /// исключаются, чтобы один вагон не участвовал в оптимизации дважды. Повторы номера
 /// внутри самой выгрузки схлопываются. Фильтрация идёт по записям **до** группировки,
 /// иначе разошлись бы выровненные по вагонам списки узла (`car_numbers`, `stations_from*`).
+/// `rules` — правило 7 при группировке (горизонт вывода в ремонт).
 pub fn supply_nodes_from_dislocation_json(
     json: &str,
     period1_cars: &HashSet<u64>,
+    rules: &BusinessRules,
 ) -> Result<DislocationSupply, serde_json::Error> {
     let numbered: Vec<NumberedCarItem> = serde_json::from_str(json)?;
     let cars_total = numbered.len();
@@ -322,7 +330,7 @@ pub fn supply_nodes_from_dislocation_json(
         })
         .collect();
 
-    let nodes = group_supply(numbered.into_iter(), std::iter::empty::<NoNumberItem>(), 10);
+    let nodes = group_supply(numbered.into_iter(), std::iter::empty::<NoNumberItem>(), 10, rules);
     Ok(DislocationSupply { nodes, cars_total, duplicates_within, overlap_with_period1 })
 }
 
@@ -350,7 +358,7 @@ pub fn apply_mass_unloading_flags(nodes: &mut [SupplyNode]) {
 // ---------------------------------------------------------------------------
 
 impl ApiClient {
-    pub async fn fetch_supply_nodes(&self) -> Result<Vec<SupplyNode>, ApiError> {
+    pub async fn fetch_supply_nodes(&self, rules: &BusinessRules) -> Result<Vec<SupplyNode>, ApiError> {
         let doc_date = Utc::now().format("%Y-%m-%d").to_string();
         // let doc_date = "2026-06-10".to_string(); // TEMP: фиксированная дата для теста в выходной день
         // let doc_date = chrono::NaiveDate::from_ymd_opt(2026, 6, 10).unwrap();
@@ -394,6 +402,7 @@ impl ApiClient {
             numbered_all.into_iter(),
             no_number_all.into_iter(),
             1,
+            rules,
         ))
     }
 }
@@ -415,6 +424,10 @@ mod tests {
         format!("[{}]", cars.join(","))
     }
 
+    fn disl(json: &str, period1: &HashSet<u64>) -> DislocationSupply {
+        supply_nodes_from_dislocation_json(json, period1, &BusinessRules::default()).unwrap()
+    }
+
     fn all_car_numbers(nodes: &[SupplyNode]) -> Vec<u64> {
         let mut v: Vec<u64> = nodes.iter().flat_map(|n| n.car_numbers.iter().copied()).collect();
         v.sort_unstable();
@@ -431,7 +444,7 @@ mod tests {
         ]);
         let period1: HashSet<u64> = [1002_u64, 9999].into_iter().collect();
 
-        let d = supply_nodes_from_dislocation_json(&json, &period1).unwrap();
+        let d = disl(&json, &period1);
         assert_eq!(d.cars_total, 3);
         assert_eq!(d.duplicates_within, 0);
         assert_eq!(d.overlap_with_period1, vec![1002]);
@@ -460,7 +473,7 @@ mod tests {
         ]);
         let period1: HashSet<u64> = [1002_u64].into_iter().collect();
 
-        let d = supply_nodes_from_dislocation_json(&json, &period1).unwrap();
+        let d = disl(&json, &period1);
         assert_eq!(d.cars_total, 5);
         assert_eq!(d.duplicates_within, 3);
         assert_eq!(d.overlap_with_period1, vec![1002]);
@@ -473,7 +486,7 @@ mod tests {
     #[test]
     fn dislocation_without_overlap_is_unchanged() {
         let json = json_of(&[car_json(1001, "100001", "200001"), car_json(1002, "100001", "200002")]);
-        let d = supply_nodes_from_dislocation_json(&json, &HashSet::new()).unwrap();
+        let d = disl(&json, &HashSet::new());
         assert_eq!(d.cars_total, 2);
         assert_eq!(d.duplicates_within, 0);
         assert!(d.overlap_with_period1.is_empty());
@@ -487,7 +500,7 @@ mod tests {
     fn dislocation_fully_covered_by_period1_yields_no_nodes() {
         let json = json_of(&[car_json(1001, "100001", "200001")]);
         let period1: HashSet<u64> = [1001_u64].into_iter().collect();
-        let d = supply_nodes_from_dislocation_json(&json, &period1).unwrap();
+        let d = disl(&json, &period1);
         assert!(d.nodes.is_empty());
         assert_eq!(d.cars_total, 1);
         assert_eq!(d.overlap_with_period1, vec![1001]);
@@ -508,5 +521,46 @@ mod tests {
         let nums: Vec<u64> = items.iter().map(|c| c.car_number).collect();
         assert_eq!(nums, vec![1001, 1002]);
         assert_eq!(items[0].station_to_code.as_deref(), Some("100001"), "оставлено первое вхождение");
+    }
+
+    fn car_json_repair(car_number: u64, railway_to: &str, days: f64, is_car_repair: bool) -> String {
+        format!(
+            r#"{{"CarNumber": {car_number}, "StationTo": "СТ", "StationToCode": "100001",
+                "RailWayToShort": "{railway_to}", "StationFromCode": "200001", "OPZRailWayId": null,
+                "OPZComment1": "БКТ", "GRPOName": "ПОР", "PrevFrETSNGCode": "011005",
+                "CarNextRepairDays": {days}, "IsCarRepair": {is_car_repair}}}"#
+        )
+    }
+
+    fn rules_with_foreign() -> BusinessRules {
+        let mut r = BusinessRules::default();
+        r.foreign_railways = ["КЗХ", "УЗБ"].iter().map(|s| s.to_string()).collect();
+        r
+    }
+
+    /// Правило 7: на российской дороге порог 15 сут., на инотерритории 45; IsCarRepair безусловен.
+    #[test]
+    fn grouping_marks_repair_by_rule7_thresholds() {
+        let json = json_of(&[
+            car_json_repair(1, "СКВ", 14.0, false),
+            car_json_repair(2, "СКВ", 20.0, false),
+            car_json_repair(3, "КЗХ", 20.0, false),
+            car_json_repair(4, "КЗХ", 45.0, false),
+            car_json_repair(5, "УЗБ", 100.0, true),
+        ]);
+        let d = supply_nodes_from_dislocation_json(&json, &HashSet::new(), &rules_with_foreign()).unwrap();
+        let status = |n: u64| {
+            d.nodes.iter().find(|node| node.car_numbers.contains(&n)).map(|node| node.repair_status.clone())
+        };
+        assert_eq!(status(1), Some(RepairStatus::NeedsRepair), "СКВ 14 < 15");
+        assert_eq!(status(2), Some(RepairStatus::Ok), "СКВ 20 ≥ 15");
+        assert_eq!(status(3), Some(RepairStatus::NeedsRepair), "КЗХ 20 < 45 — вывоз с инотерритории");
+        assert_eq!(status(4), Some(RepairStatus::Ok), "КЗХ 45 ≥ 45");
+        assert_eq!(status(5), Some(RepairStatus::NeedsRepair), "IsCarRepair");
+        // Ремонт входит в ключ группы: СКВ 14 и СКВ 20 — разные узлы.
+        assert_eq!(
+            d.nodes.iter().filter(|n| n.railway_to == "СКВ").count(),
+            2
+        );
     }
 }

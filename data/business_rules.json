@@ -34,5 +34,9 @@
     "WashProcedureCostRub": 10000,
     "EmptyRunAfterWashCostRub": 40000,
     "DirtySameCargoMaxCostRatioToWash": 1.0,
-    "DirtySameCargoRewardShare": 0.5
+    "DirtySameCargoRewardShare": 0.5,
+
+    "_comment_RepairDays": "Правило 7. Вывод вагона в ремонт при формировании узлов предложения (не в classify_pair). IsCarRepair=true — всегда в ремонт. Иначе CarNextRepairDays строго меньше порога: RepairDaysThreshold (15) на российских дорогах, RepairDaysThresholdForeign (45) если дорога образования (RailWayToShort) в ForeignRailways — вагон нужно успеть вывезти с инотерритории. 0 — проверка по дням выключена (остаётся только флаг АПИ). Список инотерриторий тот же, что правило 1 / ForeignRoads в references.json.",
+    "RepairDaysThreshold": 15,
+    "RepairDaysThresholdForeign": 45
 }

@@ -2,7 +2,8 @@
 """
 Дислокация вагонов для периода 2–10 суток:
   1) Redis: hash `supply_data` — ключ = номер вагона, value = JSON; в список попадают только
-     вагоны, у которых в value поле `OPZperiod` равно 10 (период 2–10 суток).
+     вагоны с `ToOptimizer = true` (соседний сервис помечает так вагоны с прогнозом прибытия
+     не позднее 4 суток и не из брошенных поездов — Operation не содержит «БРОС»).
   2) MSSQL (pymssql): выборка по отобранным номерам.
 
 Переменные окружения — Redis:
@@ -29,8 +30,6 @@ from __future__ import annotations
 import json
 import os
 import sys
-import pymssql
-import redis
 
 
 def _env(key: str, default: str | None = None) -> str | None:
@@ -73,39 +72,52 @@ def _to_float_opt(x):
         return None
 
 
-def _is_opz_period_10(raw: str | None) -> bool:
-    """
-    В value поля hash `supply_data` ожидается JSON с полем OPZperiod.
-    Учитывается только период 10 (10-суточное предложение).
-    """
+def _json_object(raw: str | None) -> dict | None:
     if raw is None or (isinstance(raw, str) and not raw.strip()):
-        return False
+        return None
     try:
         obj = json.loads(raw)
     except (json.JSONDecodeError, TypeError):
-        return False
-    if not isinstance(obj, dict):
-        return False
-    period = obj.get("OPZperiod")
-    if period is None:
-        period = obj.get("opzperiod")
-    if period is None:
-        return False
-    try:
-        return int(period) == 10
-    except (TypeError, ValueError):
-        return str(period).strip() == "10"
+        return None
+    return obj if isinstance(obj, dict) else None
 
 
-def _wagon_numbers_for_supply_period_10(r: redis.Redis) -> list[int]:
-    """Номера вагонов из supply_data, у которых в JSON value OPZperiod == 10."""
+def _is_true(value) -> bool:
+    """JSON-флаг: true / 1 / \"true\" / \"yes\". bool проверяется раньше int (`True` — подкласс int)."""
+    if value is True:
+        return True
+    if value is False or value is None:
+        return False
+    if isinstance(value, (int, float)):
+        return int(value) == 1
+    if isinstance(value, str):
+        return value.strip().lower() in ("true", "1", "yes", "t")
+    return False
+
+
+def _is_to_optimizer(raw: str | None) -> bool:
+    """
+    В value HASH `supply_data` соседний сервис ставит `ToOptimizer`, если вагон можно
+    отдавать в оптимизацию (прибытие ≤ 4 сут., не брошенный поезд). Без поля / false — нет.
+    """
+    obj = _json_object(raw)
+    if obj is None:
+        return False
+    value = obj.get("ToOptimizer")
+    if value is None:
+        value = obj.get("tooptimizer")
+    return _is_true(value)
+
+
+def _wagon_numbers_to_optimizer(r) -> list[int]:
+    """Номера вагонов из supply_data, у которых ToOptimizer истинно."""
     numbers: list[int] = []
     for field, raw in r.hgetall("supply_data").items():
         try:
             n = int(str(field).strip())
         except ValueError:
             continue
-        if _is_opz_period_10(raw):
+        if _is_to_optimizer(raw):
             numbers.append(n)
     return numbers
 
@@ -166,6 +178,8 @@ def _row_to_item(row: tuple) -> dict:
 
 
 def _mssql_connect():
+    import pymssql
+
     server = _env("MSSQL_SERVER_MSKASUVPL")
     if not server:
         return None
@@ -244,6 +258,8 @@ def shipment_goals_for_cars() -> None:
 
 
 def main() -> None:
+    import redis
+
     host = _env("REDIS_SUPPLY_HOST")
     if not host:
         print("[]", flush=True)
@@ -260,7 +276,7 @@ def main() -> None:
         password=password,
         decode_responses=True,
     )
-    numbers = _wagon_numbers_for_supply_period_10(r)
+    numbers = _wagon_numbers_to_optimizer(r)
     if not numbers:
         print("[]", flush=True)
         return
@@ -312,11 +328,23 @@ if __name__ == "__main__":
     # Без подкоманды — прежнее поведение (совместимость с `python3 dislocations.py`).
     if len(sys.argv) > 1 and sys.argv[1] == "shipment_goals":
         shipment_goals_for_cars()
+    elif len(sys.argv) > 1 and sys.argv[1] == "--self-test":
+        assert _is_to_optimizer('{"ToOptimizer": true}')
+        assert _is_to_optimizer('{"ToOptimizer": "True"}')
+        assert _is_to_optimizer('{"ToOptimizer": 1}')
+        assert _is_to_optimizer('{"tooptimizer": "yes"}')
+        assert not _is_to_optimizer('{"ToOptimizer": false}')
+        assert not _is_to_optimizer('{"ToOptimizer": 0}')
+        assert not _is_to_optimizer('{"OPZperiod": 10}')
+        assert not _is_to_optimizer("{}")
+        assert not _is_to_optimizer(None)
+        print("ok", flush=True)
     elif len(sys.argv) > 1 and sys.argv[1] in ("--help", "-h", "help"):
         print(
             "Использование:\n"
-            "  python3 dislocations.py              — выгрузка периода 10 (Redis+MSSQL)\n"
-            "  python3 dislocations.py shipment_goals < cars.json  — цели назначения по номерам",
+            "  python3 dislocations.py              — выгрузка периода 10 (Redis ToOptimizer + MSSQL)\n"
+            "  python3 dislocations.py shipment_goals < cars.json  — цели назначения по номерам\n"
+            "  python3 dislocations.py --self-test  — проверка разбора ToOptimizer",
             file=sys.stderr,
         )
         sys.exit(0)

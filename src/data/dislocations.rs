@@ -1,5 +1,4 @@
-//! Дислокация вагонов (2–10 сутки): данные из Redis + MSSQL через Python (`dislocations.py`).
-
+//! Дислокация вагонов (период 10): Redis HASH `supply_data` (`ToOptimizer`) + MSSQL через `dislocations.py`.
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::path::PathBuf;

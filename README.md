@@ -86,9 +86,10 @@ railoptim/
 
 Предложение собирается из двух источников: **период 1** — АПИ `GetSupplyDataTransmission`
 (вагоны, свободные сегодня; номерные `opzCarNumberModelCollection` и безномерные), и
-**период 10** — дислокация на 2–10 сутки (`src/data/dislocations.py`: HASH `supply_data`
-в Redis, ключ — номер вагона, берутся только записи с `OPZperiod = 10`; атрибуты
-дотягиваются из MSSQL `DislocationPreview`). Один вагон не должен участвовать в
+**период 10** — дислокация (`src/data/dislocations.py`: HASH `supply_data`
+в Redis, ключ — номер вагона; берутся записи с `ToOptimizer = true` — соседний сервис
+помечает так вагоны с прогнозом прибытия не позднее 4 суток и не из брошенных поездов,
+`Operation` без «БРОС»; атрибуты дотягиваются из MSSQL `DislocationPreview`). Один вагон не должен участвовать в
 оптимизации дважды, поэтому перед объединением
 (`supply_nodes_from_dislocation_json`, `main.rs`):
 

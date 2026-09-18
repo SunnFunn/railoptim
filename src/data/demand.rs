@@ -167,7 +167,7 @@ impl ApiClient {
     /// до присвоения ID, чтобы не раздувать размерность задачи.
     pub async fn fetch_demand_nodes(&self) -> Result<Vec<DemandNode>, ApiError> {
         let today = Utc::now().date_naive();
-        // let today = chrono::NaiveDate::from_ymd_opt(2026, 3, 27).unwrap(); // TEMP: фиксированная дата для теста в выходной день
+        // let today = chrono::NaiveDate::from_ymd_opt(2026, 9, 16).unwrap(); // TEMP: фиксированная дата для теста в выходной день
 
         let periods: Vec<(String, String)> = DEMAND_PERIODS
             .iter()

@@ -5,9 +5,11 @@
 //! как жёсткие фильтры и/или надбавки (правило 6 — поощрение, правило 8 — капризная
 //! дорога при профиците) к тарифу и при группировке предложения (правило 7 —
 //! горизонт вывода в ремонт). Правило 8 также снимает «грязность» с вагонов
-//! иномойки: они не едут в промывку. Отстой и пути клиента правилами не
-//! ограничиваются; правило 6 задаёт стоимость промывочного маршрута, с которой
-//! сравнивается прямая погрузка.
+//! иномойки: они не едут в промывку. Потолок дальности излишка
+//! ([`BusinessRules::max_reserve_empty_run_km`]) — жёсткий фильтр пар этапов 2–3
+//! (отстой и пути клиента); промывка им не ограничивается.
+//! Правило 6 задаёт стоимость промывочного маршрута, с которой сравнивается
+//! прямая погрузка.
 //!
 //! Дороги сравниваются по коротким кодам: `SupplyNode::railway_to` (RailWayToShort)
 //! и `DemandNode::railway_name` (RailWayShortFrom).
@@ -42,6 +44,23 @@ pub struct BusinessRules {
     /// `None`/`0` — без потолка. Дальний подсыл (ДВС → центр) не практикуется.
     #[serde(rename = "MaxEmptyRunDistanceKm", deserialize_with = "de_positive_i32")]
     pub max_empty_run_distance_km: Option<i32>,
+
+    /// Базовый потолок тарифного расстояния порожнего подсыла излишка
+    /// (отстой и пути клиента), км. `None`/`0` — без потолка.
+    /// Дальний подсыл излишка (8+ тыс. км) диспетчерами не практикуется.
+    #[serde(rename = "MaxReserveEmptyRunDistanceKm", deserialize_with = "de_positive_i32")]
+    pub max_reserve_empty_run_distance_km: Option<i32>,
+
+    /// Потолок излишка (отстой / пути клиента) для дорог из [`Self::reserve_far_east_railways`] (ДВС, ЗАБ), км.
+    /// `None`/`0` — для этих дорог берётся базовый [`Self::max_reserve_empty_run_distance_km`].
+    #[serde(rename = "MaxReserveEmptyRunDistanceFarEastKm", deserialize_with = "de_positive_i32")]
+    pub max_reserve_empty_run_distance_far_east_km: Option<i32>,
+
+    /// Дороги образования, для которых у излишка (отстой / пути клиента) действует более длинный потолок
+    /// ([`Self::max_reserve_empty_run_distance_far_east_km`]). Короткие коды
+    /// `RailWayToShort` (ДВС — Дальневосточная, ЗАБ — Забайкальская).
+    #[serde(rename = "ReserveFarEastRailways")]
+    pub reserve_far_east_railways: HashSet<String>,
 
     /// Правило 1: дороги-инотерритории. Заявка на такой дороге закрывается только
     /// вагонами с той же дороги либо по исключению из [`Self::foreign_exceptions`].
@@ -205,6 +224,9 @@ impl Default for BusinessRules {
     fn default() -> Self {
         Self {
             max_empty_run_distance_km: None,
+            max_reserve_empty_run_distance_km: None,
+            max_reserve_empty_run_distance_far_east_km: None,
+            reserve_far_east_railways: HashSet::new(),
             foreign_railways: HashSet::new(),
             foreign_exceptions: Vec::new(),
             deficit_railways: HashSet::new(),
@@ -293,6 +315,7 @@ impl BusinessRules {
         }
         self.foreign_railways = trim_set(&self.foreign_railways);
         self.deficit_railways = trim_set(&self.deficit_railways);
+        self.reserve_far_east_railways = trim_set(&self.reserve_far_east_railways);
         self.foreign_washed_roads = trim_set(&self.foreign_washed_roads);
         self.foreign_washed_picky_railways = trim_set(&self.foreign_washed_picky_railways);
         for e in &mut self.foreign_exceptions {
@@ -354,6 +377,16 @@ impl BusinessRules {
             self.p1_distance_cap_rub = 0.0;
         }
         self.p1_distance_neutral_km = self.p1_distance_neutral_km.max(0);
+        if let (Some(base), Some(far)) = (
+            self.max_reserve_empty_run_distance_km,
+            self.max_reserve_empty_run_distance_far_east_km,
+        ) {
+            if far < base {
+                eprintln!(
+                    "  [!] business_rules.json: MaxReserveEmptyRunDistanceFarEastKm ({far}) < MaxReserveEmptyRunDistanceKm ({base}) — для ДВС/ЗАБ потолок короче базового"
+                );
+            }
+        }
         if self.p1_distance_rub_per_km < 0.0 {
             eprintln!(
                 "  [!] business_rules.json: P1DistanceRubPerKm ({}) < 0 — дальние подсылы периода 1 станут дешевле ближних",
@@ -387,6 +420,29 @@ impl BusinessRules {
     /// Правило 6: потолок дальности прямой погрузки грязного вагона включён.
     pub fn dirty_same_cargo_cap_enabled(&self) -> bool {
         self.dirty_same_cargo_max_cost_ratio_to_wash > 0.0
+    }
+
+    /// Потолок дальности порожнего подсыла излишка (км) для дороги образования вагона
+    /// (`SupplyNode::railway_to` / `RailWayToShort`): этап 2 (отстой) и этап 3 (пути клиента).
+    ///
+    /// `None` — без потолка (пара входит в задачу при наличии тарифа).
+    /// Для дорог из [`Self::reserve_far_east_railways`] — более длинный
+    /// [`Self::max_reserve_empty_run_distance_far_east_km`], если задан; иначе базовый
+    /// [`Self::max_reserve_empty_run_distance_km`].
+    pub fn max_reserve_empty_run_km(&self, supply_railway: &str) -> Option<i32> {
+        let rw = supply_railway.trim();
+        if !rw.is_empty() && self.reserve_far_east_railways.contains(rw) {
+            self.max_reserve_empty_run_distance_far_east_km
+                .or(self.max_reserve_empty_run_distance_km)
+        } else {
+            self.max_reserve_empty_run_distance_km
+        }
+    }
+
+    /// Пара станция образования → отстой / пути клиента дальше потолка дальности этапов 2–3.
+    pub fn reserve_empty_run_too_far(&self, supply_railway: &str, distance_km: i32) -> bool {
+        self.max_reserve_empty_run_km(supply_railway)
+            .is_some_and(|max_km| distance_km > max_km)
     }
 
     /// Правило 7: горизонт вывода в ремонт (сут.) для дороги образования вагона.
@@ -570,6 +626,7 @@ impl BusinessRules {
     /// Есть ли хоть одно активное правило (для логов).
     pub fn is_empty(&self) -> bool {
         self.max_empty_run_distance_km.is_none()
+            && self.max_reserve_empty_run_distance_km.is_none()
             && self.foreign_railways.is_empty()
             && self.deficit_railways.is_empty()
     }
@@ -711,6 +768,14 @@ mod tests {
         let r = BusinessRules::load(&path).unwrap();
         // Конкретное значение потолка — настройка логистов, тест проверяет только наличие.
         assert!(r.max_empty_run_distance_km.is_some_and(|km| km >= 1000), "потолок подсыла задан и разумен");
+        assert_eq!(r.max_reserve_empty_run_km("МСК"), Some(3000));
+        assert_eq!(r.max_reserve_empty_run_km("СКВ"), Some(3000));
+        assert_eq!(r.max_reserve_empty_run_km("ДВС"), Some(4100));
+        assert_eq!(r.max_reserve_empty_run_km("ЗАБ"), Some(4100));
+        assert!(!r.reserve_empty_run_too_far("МСК", 3000));
+        assert!(r.reserve_empty_run_too_far("МСК", 3001));
+        assert!(!r.reserve_empty_run_too_far("ДВС", 4100));
+        assert!(r.reserve_empty_run_too_far("ДВС", 4101));
         for rw in FOREIGN_1520 {
             assert!(r.foreign_railways.contains(*rw), "нет инотерритории {rw}");
         }
@@ -942,6 +1007,52 @@ mod tests {
         assert_eq!(BusinessRules::load(&path).unwrap().max_empty_run_distance_km, None);
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // -----------------------------------------------------------------------
+    // Потолок дальности подсыла излишка (отстой и пути клиента)
+    // -----------------------------------------------------------------------
+
+    /// По умолчанию потолка нет; JSON задаёт 3000 км, для ДВС/ЗАБ — 4100.
+    #[test]
+    fn reserve_distance_cap_by_origin_railway() {
+        let r = BusinessRules::default();
+        assert_eq!(r.max_reserve_empty_run_km("МСК"), None);
+        assert_eq!(r.max_reserve_empty_run_km("ДВС"), None);
+        assert!(!r.reserve_empty_run_too_far("МСК", 9_000));
+
+        let mut r: BusinessRules = serde_json::from_str(
+            r#"{
+                "MaxReserveEmptyRunDistanceKm": 3000,
+                "MaxReserveEmptyRunDistanceFarEastKm": 4100,
+                "ReserveFarEastRailways": [" ДВС ", "ЗАБ"]
+            }"#,
+        )
+        .unwrap();
+        r.normalize();
+        assert!(r.reserve_far_east_railways.contains("ДВС"));
+        assert_eq!(r.max_reserve_empty_run_km("МСК"), Some(3000));
+        assert_eq!(r.max_reserve_empty_run_km("СКВ"), Some(3000));
+        assert_eq!(r.max_reserve_empty_run_km(""), Some(3000), "неизвестная дорога — базовый порог");
+        assert_eq!(r.max_reserve_empty_run_km("ДВС"), Some(4100));
+        assert_eq!(r.max_reserve_empty_run_km("ЗАБ"), Some(4100));
+        assert!(!r.reserve_empty_run_too_far("МСК", 3000));
+        assert!(r.reserve_empty_run_too_far("МСК", 3001));
+        assert!(!r.reserve_empty_run_too_far("ДВС", 4100));
+        assert!(r.reserve_empty_run_too_far("ДВС", 4101));
+        assert!(!r.reserve_empty_run_too_far("ЗАБ", 4000));
+
+        // Нет базового ключа — для остальных дорог потолка нет; ДВС берёт дальневосточный.
+        let r: BusinessRules = serde_json::from_str(
+            r#"{"MaxReserveEmptyRunDistanceFarEastKm": 4100, "ReserveFarEastRailways": ["ДВС"]}"#,
+        )
+        .unwrap();
+        assert_eq!(r.max_reserve_empty_run_km("МСК"), None);
+        assert_eq!(r.max_reserve_empty_run_km("ДВС"), Some(4100));
+
+        // 0 → выкл.
+        let r: BusinessRules = serde_json::from_str(r#"{"MaxReserveEmptyRunDistanceKm": 0}"#).unwrap();
+        assert_eq!(r.max_reserve_empty_run_km("МСК"), None);
     }
 
     // -----------------------------------------------------------------------

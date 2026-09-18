@@ -14,11 +14,14 @@
 //!
 //! Ограничения типа вагона, промывки, MIN_BATCH и ДМЗИ к отстою не применяются.
 //! Конвенции РЖД (правило 5) закрывают отдельные пары станция→отстой.
+//! Потолок дальности ([`crate::data::business_rules::BusinessRules::max_reserve_empty_run_km`]) отсекает пары
+//! дальше 3000 км (ДВС/ЗАБ — 4100 км); тот же порог — у этапа 3 (пути клиента).
 
 use std::collections::HashMap;
 
 use highs::{ColProblem, Sense};
 
+use crate::data::business_rules::BusinessRules;
 use crate::data::convention_index::{ConventionIndex, ConventionScope, EmptyDestRef};
 use crate::node::{ReserveNode, SupplyNode, TariffNode};
 use super::model::supply_release_shift_days;
@@ -54,13 +57,16 @@ pub struct ReserveAssignment {
 ///   (направление: **от** станции дислокации порожнего `SupplyNode::station_to_code`
 ///   **к** станции резерва);
 /// - пары без тарифа переменной не получают;
-/// - `conventions` — запрет порожнего на станцию отстоя ([`ConventionIndex::disabled`] — без правила 5).
+/// - `conventions` — запрет порожнего на станцию отстоя ([`ConventionIndex::disabled`] — без правила 5);
+/// - `rules` — потолок дальности подсыла в отстой ([`BusinessRules::reserve_empty_run_too_far`];
+///   [`BusinessRules::default()`] — без потолка).
 pub fn solve_reserve_assignment(
     excess: &[i32],
     supply: &[SupplyNode],
     reserves: &[ReserveNode],
     tariffs: &HashMap<(String, String), TariffNode>,
     conventions: &ConventionIndex,
+    rules: &BusinessRules,
 ) -> Vec<ReserveAssignment> {
     let mut model = ColProblem::default();
 
@@ -85,6 +91,7 @@ pub fn solve_reserve_assignment(
     let mut sorted_s: Vec<usize> = supply_rows.keys().copied().collect();
     sorted_s.sort_unstable();
     let mut convention_skip = 0usize;
+    let mut distance_skip = 0usize;
     for &s_idx in &sorted_s {
         let s = &supply[s_idx];
         let from_code = s.station_to_code.as_str();
@@ -93,6 +100,10 @@ pub fn solve_reserve_assignment(
             let Some(t) = tariffs.get(&(from_code.to_string(), r.station_code.clone())) else {
                 continue;
             };
+            if rules.reserve_empty_run_too_far(&s.railway_to, t.distance) {
+                distance_skip += 1;
+                continue;
+            }
             let rec_okpo: &[String] = match &r.owner_okpo {
                 Some(o) => std::slice::from_ref(o),
                 None => &[],
@@ -133,6 +144,9 @@ pub fn solve_reserve_assignment(
     }
     if convention_skip > 0 {
         println!("  отстой: {convention_skip} пар станция→резерв закрыты конвенцией РЖД");
+    }
+    if distance_skip > 0 {
+        println!("  отстой: {distance_skip} пар станция→резерв дальше потолка дальности");
     }
     if cols.is_empty() {
         return Vec::new();
@@ -175,7 +189,40 @@ mod tests {
         reserves: &[ReserveNode],
         tariffs: &HashMap<(String, String), TariffNode>,
     ) -> Vec<ReserveAssignment> {
-        solve_reserve_assignment(excess, supply, reserves, tariffs, &ConventionIndex::disabled())
+        solve_reserve_assignment(
+            excess,
+            supply,
+            reserves,
+            tariffs,
+            &ConventionIndex::disabled(),
+            &BusinessRules::default(),
+        )
+    }
+
+    fn solve_with_rules(
+        excess: &[i32],
+        supply: &[SupplyNode],
+        reserves: &[ReserveNode],
+        tariffs: &HashMap<(String, String), TariffNode>,
+        rules: &BusinessRules,
+    ) -> Vec<ReserveAssignment> {
+        solve_reserve_assignment(
+            excess,
+            supply,
+            reserves,
+            tariffs,
+            &ConventionIndex::disabled(),
+            rules,
+        )
+    }
+
+    fn reserve_cap_rules() -> BusinessRules {
+        BusinessRules {
+            max_reserve_empty_run_distance_km: Some(3000),
+            max_reserve_empty_run_distance_far_east_km: Some(4100),
+            reserve_far_east_railways: ["ДВС".into(), "ЗАБ".into()].into_iter().collect(),
+            ..Default::default()
+        }
     }
 
     fn supply_at(code: &str, count: i32) -> SupplyNode {
@@ -222,6 +269,10 @@ mod tests {
     }
 
     fn tariff(from: &str, to: &str, cost: f64) -> ((String, String), TariffNode) {
+        tariff_dist(from, to, cost, 100)
+    }
+
+    fn tariff_dist(from: &str, to: &str, cost: f64, distance: i32) -> ((String, String), TariffNode) {
         (
             (from.to_string(), to.to_string()),
             TariffNode {
@@ -233,7 +284,7 @@ mod tests {
                 station_to_code: to.to_string(),
                 railway_to: "МСК".to_string(),
                 railway_to_code: 17,
-                distance: 100,
+                distance,
                 period_of_delivery: 2,
                 cost,
                 actual_date: chrono::NaiveDate::from_ymd_opt(2026, 6, 11)
@@ -336,9 +387,85 @@ mod tests {
         let tariffs: HashMap<_, _> =
             [tariff("S1", "987303", 10_000.0), tariff("S1", "R2", 50_000.0)].into();
         let idx = ConventionIndex::build(vec![conv_empty_esr("9001", "987303")]);
-        let a = solve_reserve_assignment(&[4], &supply, &reserves, &tariffs, &idx);
+        let a = solve_reserve_assignment(
+            &[4],
+            &supply,
+            &reserves,
+            &tariffs,
+            &idx,
+            &BusinessRules::default(),
+        );
         assert_eq!(a.len(), 1);
         assert_eq!(a[0].r_idx, 1);
         assert_eq!(a[0].quantity, 4);
+    }
+
+    fn supply_at_rw(code: &str, count: i32, railway: &str) -> SupplyNode {
+        let mut s = supply_at(code, count);
+        s.railway_to = railway.to_string();
+        s
+    }
+
+    /// С МСК дешёвый отстой на 8000 км отсекается — берём ближний дороже.
+    #[test]
+    fn distance_cap_skips_far_reserve_on_other_roads() {
+        let supply = vec![supply_at_rw("S1", 4, "МСК")];
+        let reserves = vec![reserve_at("R1", 10), reserve_at("R2", 10)];
+        let tariffs: HashMap<_, _> = [
+            tariff_dist("S1", "R1", 5_000.0, 8_000),
+            tariff_dist("S1", "R2", 50_000.0, 500),
+        ]
+        .into();
+        let a = solve_with_rules(&[4], &supply, &reserves, &tariffs, &reserve_cap_rules());
+        assert_eq!(a.len(), 1);
+        assert_eq!(a[0].r_idx, 1);
+        assert_eq!(a[0].quantity, 4);
+        assert_eq!(a[0].distance, 500);
+    }
+
+    /// Ровно 3000 км с обычной дороги — ещё допустимо; 3001 — нет.
+    #[test]
+    fn distance_cap_3000_inclusive_for_other_roads() {
+        let supply = vec![supply_at_rw("S1", 2, "СКВ")];
+        let reserves = vec![reserve_at("R1", 10), reserve_at("R2", 10)];
+        let tariffs: HashMap<_, _> = [
+            tariff_dist("S1", "R1", 10_000.0, 3000),
+            tariff_dist("S1", "R2", 10_000.0, 3001),
+        ]
+        .into();
+        let a = solve_with_rules(&[2], &supply, &reserves, &tariffs, &reserve_cap_rules());
+        assert_eq!(a.len(), 1);
+        assert_eq!(a[0].r_idx, 0);
+        assert_eq!(a[0].distance, 3000);
+    }
+
+    /// С ДВС и ЗАБ порог 4100 км: 4100 проходит, 4101 нет.
+    #[test]
+    fn distance_cap_4100_for_dvs_and_zab() {
+        let rules = reserve_cap_rules();
+        for rw in ["ДВС", "ЗАБ"] {
+            let supply = vec![supply_at_rw("S1", 2, rw)];
+            let reserves = vec![reserve_at("R1", 10), reserve_at("R2", 10)];
+            let tariffs: HashMap<_, _> = [
+                tariff_dist("S1", "R1", 10_000.0, 4100),
+                tariff_dist("S1", "R2", 1_000.0, 4101),
+            ]
+            .into();
+            let a = solve_with_rules(&[2], &supply, &reserves, &tariffs, &rules);
+            assert_eq!(a.len(), 1, "{rw}");
+            assert_eq!(a[0].r_idx, 0, "{rw}");
+            assert_eq!(a[0].distance, 4100, "{rw}");
+        }
+    }
+
+    /// Без правил потолка 8000 км по-прежнему размещается (премия важнее тарифа).
+    #[test]
+    fn default_rules_allow_long_reserve_haul() {
+        let supply = vec![supply_at_rw("S1", 2, "МСК")];
+        let reserves = vec![reserve_at("R1", 10)];
+        let tariffs: HashMap<_, _> = [tariff_dist("S1", "R1", 5_000.0, 8_000)].into();
+        let a = solve(&[2], &supply, &reserves, &tariffs);
+        assert_eq!(a.len(), 1);
+        assert_eq!(a[0].quantity, 2);
     }
 }

@@ -17,11 +17,15 @@
 //! ```
 //!
 //! Ограничения типа вагона, промывки и ДМЗИ к этому этапу не применяются.
+//! Потолок дальности — тот же, что у отстоя
+//! ([`crate::data::business_rules::BusinessRules::max_reserve_empty_run_km`]):
+//! дальше 3000 км (ДВС/ЗАБ — 4100 км) пара в модель не входит.
 
 use std::collections::HashMap;
 
 use highs::{ColProblem, Sense};
 
+use crate::data::business_rules::BusinessRules;
 use crate::data::free_loadroads::FreeLoadRoad;
 use crate::node::{SupplyNode, TariffNode};
 
@@ -59,12 +63,15 @@ pub struct LoadRoadAssignment {
 ///   (направление: **от** станции дислокации порожнего `SupplyNode::station_to_code`
 ///   **к** станции погрузки `FreeLoadRoad::load_station_code`);
 /// - пары без тарифа переменной не получают;
+/// - пары дальше потолка дальности излишка ([`BusinessRules::reserve_empty_run_too_far`])
+///   переменной не получают ([`BusinessRules::default()`] — без потолка);
 /// - на каждую станцию погрузки назначается 0 или ≥ [`LOADROAD_MIN_BATCH`] вагонов.
 pub fn solve_loadroad_assignment(
     excess: &[i32],
     supply: &[SupplyNode],
     loadroads: &[FreeLoadRoad],
     tariffs: &HashMap<(String, String), TariffNode>,
+    rules: &BusinessRules,
 ) -> Vec<LoadRoadAssignment> {
     let mut model = ColProblem::default();
 
@@ -94,8 +101,10 @@ pub fn solve_loadroad_assignment(
     let mut cols: Vec<(usize, usize, f64, i32, i32)> = Vec::new();
     let mut sorted_s: Vec<usize> = supply_rows.keys().copied().collect();
     sorted_s.sort_unstable();
+    let mut distance_skip = 0usize;
     for &s_idx in &sorted_s {
-        let from_code = supply[s_idx].station_to_code.as_str();
+        let s = &supply[s_idx];
+        let from_code = s.station_to_code.as_str();
         let rem = excess[s_idx];
         for (l_idx, l) in loadroads.iter().enumerate() {
             let cap = l.free_rail_road_capacity.max(0) as i32;
@@ -105,6 +114,10 @@ pub fn solve_loadroad_assignment(
             let Some(t) = tariffs.get(&(from_code.to_string(), l.load_station_code.clone())) else {
                 continue;
             };
+            if rules.reserve_empty_run_too_far(&s.railway_to, t.distance) {
+                distance_skip += 1;
+                continue;
+            }
             let upper = rem.min(cap).max(0) as f64;
             model.add_integer_column(
                 t.cost - LOADROAD_PLACEMENT_REWARD,
@@ -117,6 +130,9 @@ pub fn solve_loadroad_assignment(
             );
             cols.push((s_idx, l_idx, t.cost, t.distance, t.period_of_delivery));
         }
+    }
+    if distance_skip > 0 {
+        println!("  пути погрузки: {distance_skip} пар станция→пути дальше потолка дальности");
     }
     if cols.is_empty() {
         return Vec::new();
@@ -167,6 +183,34 @@ mod tests {
     use super::*;
     use crate::node::{CarKind, RepairStatus};
 
+    fn solve(
+        excess: &[i32],
+        supply: &[SupplyNode],
+        loadroads: &[FreeLoadRoad],
+        tariffs: &HashMap<(String, String), TariffNode>,
+    ) -> Vec<LoadRoadAssignment> {
+        solve_loadroad_assignment(excess, supply, loadroads, tariffs, &BusinessRules::default())
+    }
+
+    fn solve_with_rules(
+        excess: &[i32],
+        supply: &[SupplyNode],
+        loadroads: &[FreeLoadRoad],
+        tariffs: &HashMap<(String, String), TariffNode>,
+        rules: &BusinessRules,
+    ) -> Vec<LoadRoadAssignment> {
+        solve_loadroad_assignment(excess, supply, loadroads, tariffs, rules)
+    }
+
+    fn reserve_cap_rules() -> BusinessRules {
+        BusinessRules {
+            max_reserve_empty_run_distance_km: Some(3000),
+            max_reserve_empty_run_distance_far_east_km: Some(4100),
+            reserve_far_east_railways: ["ДВС".into(), "ЗАБ".into()].into_iter().collect(),
+            ..Default::default()
+        }
+    }
+
     fn supply_at(code: &str, count: i32) -> SupplyNode {
         SupplyNode {
             s_id: 1,
@@ -207,6 +251,10 @@ mod tests {
     }
 
     fn tariff(from: &str, to: &str, cost: f64) -> ((String, String), TariffNode) {
+        tariff_dist(from, to, cost, 100)
+    }
+
+    fn tariff_dist(from: &str, to: &str, cost: f64, distance: i32) -> ((String, String), TariffNode) {
         (
             (from.to_string(), to.to_string()),
             TariffNode {
@@ -218,7 +266,7 @@ mod tests {
                 station_to_code: to.to_string(),
                 railway_to: "ПРВ".to_string(),
                 railway_to_code: 61,
-                distance: 100,
+                distance,
                 period_of_delivery: 2,
                 cost,
                 actual_date: chrono::NaiveDate::from_ymd_opt(2026, 6, 11)
@@ -235,7 +283,7 @@ mod tests {
         let supply = vec![supply_at("S1", 10)];
         let roads = vec![loadroad("L1", 6)];
         let tariffs: HashMap<_, _> = [tariff("S1", "L1", 10_000.0)].into();
-        let a = solve_loadroad_assignment(&[10], &supply, &roads, &tariffs);
+        let a = solve(&[10], &supply, &roads, &tariffs);
         assert_eq!(a.iter().map(|x| x.quantity).sum::<i32>(), 6);
     }
 
@@ -246,7 +294,7 @@ mod tests {
         let roads = vec![loadroad("L1", 100), loadroad("L2", 100)];
         let tariffs: HashMap<_, _> =
             [tariff("S1", "L1", 50_000.0), tariff("S1", "L2", 10_000.0)].into();
-        let a = solve_loadroad_assignment(&[8], &supply, &roads, &tariffs);
+        let a = solve(&[8], &supply, &roads, &tariffs);
         assert_eq!(a.len(), 1);
         assert_eq!(a[0].l_idx, 1);
         assert_eq!(a[0].quantity, 8);
@@ -259,7 +307,7 @@ mod tests {
         let supply = vec![supply_at("S1", 3)];
         let roads = vec![loadroad("L1", 100)];
         let tariffs: HashMap<_, _> = [tariff("S1", "L1", 10_000.0)].into();
-        let a = solve_loadroad_assignment(&[3], &supply, &roads, &tariffs);
+        let a = solve(&[3], &supply, &roads, &tariffs);
         assert!(a.is_empty(), "3 < MIN_BATCH(5) — размещения быть не должно");
     }
 
@@ -269,7 +317,7 @@ mod tests {
         let supply = vec![supply_at("S1", 5)];
         let roads = vec![loadroad("L1", 100)];
         let tariffs: HashMap<_, _> = [tariff("S1", "L1", 10_000.0)].into();
-        let a = solve_loadroad_assignment(&[5], &supply, &roads, &tariffs);
+        let a = solve(&[5], &supply, &roads, &tariffs);
         assert_eq!(a.iter().map(|x| x.quantity).sum::<i32>(), 5);
     }
 
@@ -280,7 +328,7 @@ mod tests {
         let roads = vec![loadroad("L1", 100)];
         let tariffs: HashMap<_, _> =
             [tariff("S1", "L1", 10_000.0), tariff("S2", "L1", 10_000.0)].into();
-        let a = solve_loadroad_assignment(&[3, 4], &supply, &roads, &tariffs);
+        let a = solve(&[3, 4], &supply, &roads, &tariffs);
         // 3 + 4 = 7 ≥ 5 — станция используется, размещены все 7.
         assert_eq!(a.iter().map(|x| x.quantity).sum::<i32>(), 7);
     }
@@ -291,7 +339,7 @@ mod tests {
         let supply = vec![supply_at("S1", 10)];
         let roads = vec![loadroad("L1", 100)];
         let tariffs: HashMap<_, _> = HashMap::new();
-        let a = solve_loadroad_assignment(&[10], &supply, &roads, &tariffs);
+        let a = solve(&[10], &supply, &roads, &tariffs);
         assert!(a.is_empty());
     }
 
@@ -301,7 +349,57 @@ mod tests {
         let supply = vec![supply_at("S1", 0)];
         let roads = vec![loadroad("L1", 100)];
         let tariffs: HashMap<_, _> = [tariff("S1", "L1", 10_000.0)].into();
-        let a = solve_loadroad_assignment(&[0], &supply, &roads, &tariffs);
+        let a = solve(&[0], &supply, &roads, &tariffs);
         assert!(a.is_empty());
+    }
+
+    fn supply_at_rw(code: &str, count: i32, railway: &str) -> SupplyNode {
+        let mut s = supply_at(code, count);
+        s.railway_to = railway.to_string();
+        s
+    }
+
+    /// С МСК дешёвые пути на 8000 км отсекаются — берём ближние дороже (≥ min-batch).
+    #[test]
+    fn distance_cap_skips_far_station_on_other_roads() {
+        let supply = vec![supply_at_rw("S1", 8, "МСК")];
+        let roads = vec![loadroad("L1", 100), loadroad("L2", 100)];
+        let tariffs: HashMap<_, _> = [
+            tariff_dist("S1", "L1", 5_000.0, 8_000),
+            tariff_dist("S1", "L2", 50_000.0, 500),
+        ]
+        .into();
+        let a = solve_with_rules(&[8], &supply, &roads, &tariffs, &reserve_cap_rules());
+        assert_eq!(a.len(), 1);
+        assert_eq!(a[0].l_idx, 1);
+        assert_eq!(a[0].quantity, 8);
+        assert_eq!(a[0].distance, 500);
+    }
+
+    /// С ДВС порог 4100 км: дальняя дешёвая станция отсекается.
+    #[test]
+    fn distance_cap_4100_for_dvs() {
+        let supply = vec![supply_at_rw("S1", 5, "ДВС")];
+        let roads = vec![loadroad("L1", 100), loadroad("L2", 100)];
+        let tariffs: HashMap<_, _> = [
+            tariff_dist("S1", "L1", 1_000.0, 4101),
+            tariff_dist("S1", "L2", 10_000.0, 4100),
+        ]
+        .into();
+        let a = solve_with_rules(&[5], &supply, &roads, &tariffs, &reserve_cap_rules());
+        assert_eq!(a.len(), 1);
+        assert_eq!(a[0].l_idx, 1);
+        assert_eq!(a[0].distance, 4100);
+    }
+
+    /// Без правил потолка 8000 км по-прежнему размещается.
+    #[test]
+    fn default_rules_allow_long_loadroad_haul() {
+        let supply = vec![supply_at_rw("S1", 5, "МСК")];
+        let roads = vec![loadroad("L1", 100)];
+        let tariffs: HashMap<_, _> = [tariff_dist("S1", "L1", 5_000.0, 8_000)].into();
+        let a = solve(&[5], &supply, &roads, &tariffs);
+        assert_eq!(a.len(), 1);
+        assert_eq!(a[0].quantity, 5);
     }
 }

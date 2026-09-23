@@ -36,21 +36,43 @@ async fn main() -> Result<()> {
                 .sum();
     println!("Получено узлов спроса (погрузка): {} или {} вагонов", demand_nodes.len(), demand_total_cars);
 
-    // Бизнес-правила логистов (data/business_rules.json): потолок дальности подсыла,
-    // инотерритории, дефицитные дороги (дуги погрузки), проверка ГУ-12 (спрос),
+    // Бизнес-правила логистов (data/business_rules.json): потолок дальности подсыла
+    // под погрузку, в отстой и на пути клиента, инотерритории, дефицитные дороги (дуги погрузки),
+    // проверка ГУ-12 (спрос),
     // грязный вагон под аналогичный груз (правило 6: стоимость промывочного маршрута,
     // потолок и поощрение), вывод в ремонт (правило 7: 15 сут. / 45 сут. на инотерритории),
-    // иномойка (правило 8: не грязные; капризные дороги при профиците).
-    // Не загрузились => правил 1–2 нет, ограничения на дуги не применяются, правило 6 — с
-    // прежними константами (10 000 + 40 000) без поощрения, правило 7 — 15/45 сут. без списка
-    // инотерриторий (все дороги как российские), правило 8 выключено.
+    // иномойка (правило 8: не грязные; капризные дороги при профиците),
+    // поправка периода 1 по расстоянию (только модель, не отчёт; в режиме --day1 выключена —
+    // без периода 10 ей нечего балансировать).
+    // Не загрузились => правил 1–2 нет, ограничения на дуги не применяются, потолок отстоя/путей
+    // выкл., правило 6 — с прежними константами (10 000 + 40 000) без поощрения, правило 7 —
+    // 15/45 сут. без списка инотерриторий (все дороги как российские), правило 8 выключено.
+    let include_period10 = include_period10_from_env();
     let business_rules = match data::BusinessRules::load("data/business_rules.json") {
-        Ok(r) => {
+        Ok(mut r) => {
+            let p1_adjust_off_by_day1 = !include_period10 && r.p1_distance_adjust_enabled();
+            if p1_adjust_off_by_day1 {
+                r.disable_p1_distance_adjust();
+            }
             println!(
-                "Бизнес-правила (business_rules.json): потолок подсыла {}; инотерриторий {} (исключений {}); дефицитных дорог {} (вывоз ≤ {} км, надбавка {:.0} руб.); проверка ГУ-12 {}; загруженность станций (правило 4) {}; конвенции РЖД (правило 5) {}; грязный под свой груз (правило 6): промывочный маршрут +{:.0}+{:.0} руб., потолок {}, поощрение {}; ремонт (правило 7): {} сут. / инотерритория {} сут.; иномойка (правило 8): {} дорог образования, капризных {} (надбавка {:.0} руб. при предложении > {:.2} × спроса)",
+                "Бизнес-правила (business_rules.json): потолок подсыла {}; потолок отстоя/путей {}; инотерриторий {} (исключений {}); дефицитных дорог {} (вывоз ≤ {} км, надбавка {:.0} руб.); проверка ГУ-12 {}; загруженность станций (правило 4) {}; конвенции РЖД (правило 5) {}; грязный под свой груз (правило 6): промывочный маршрут +{:.0}+{:.0} руб., потолок {}, поощрение {}; ремонт (правило 7): {} сут. / инотерритория {} сут.; иномойка (правило 8): {} дорог образования, капризных {} (надбавка {:.0} руб. при предложении > {:.2} × спроса); поправка периода 1 по расстоянию: {}",
                 r.max_empty_run_distance_km
                     .map(|km| format!("{km} км"))
                     .unwrap_or_else(|| "выкл.".to_string()),
+                match r.max_reserve_empty_run_distance_km {
+                    None => "выкл.".to_string(),
+                    Some(base) => {
+                        if r.reserve_far_east_railways.is_empty() {
+                            format!("{base} км")
+                        } else {
+                            let mut roads: Vec<_> =
+                                r.reserve_far_east_railways.iter().cloned().collect();
+                            roads.sort();
+                            let far = r.max_reserve_empty_run_distance_far_east_km.unwrap_or(base);
+                            format!("{base} км, {} {far} км", roads.join("/"))
+                        }
+                    }
+                },
                 r.foreign_railways.len(),
                 r.foreign_exceptions.len(),
                 r.deficit_railways.len(),
@@ -83,11 +105,27 @@ async fn main() -> Result<()> {
                 r.foreign_washed_picky_railways.len(),
                 r.foreign_washed_picky_surcharge_rub,
                 r.foreign_washed_picky_surplus_ratio,
+                if r.p1_distance_adjust_enabled() {
+                    format!(
+                        "{:.1} руб./км × (км − {}), потолок {}, в отчёт не идёт",
+                        r.p1_distance_rub_per_km,
+                        r.p1_distance_neutral_km,
+                        if r.p1_distance_cap_rub > 0.0 {
+                            format!("±{:.0} руб.", r.p1_distance_cap_rub)
+                        } else {
+                            "нет".to_string()
+                        },
+                    )
+                } else if p1_adjust_off_by_day1 {
+                    "выкл. (режим --day1: без периода 10 не применяется)".to_string()
+                } else {
+                    "выкл.".to_string()
+                },
             );
             r
         }
         Err(e) => {
-            eprintln!("  business_rules.json: не загружен ({e}) — бизнес-правила 1–2 не применяются, правило 3 (ГУ-12) не выполняется без списка инотерриторий, правило 6 без поощрения, правило 7 без инотерриторий, правило 8 выключено");
+            eprintln!("  business_rules.json: не загружен ({e}) — бизнес-правила 1–2 не применяются, потолок отстоя/путей выкл., правило 3 (ГУ-12) не выполняется без списка инотерриторий, правило 6 без поощрения, правило 7 без инотерриторий, правило 8 выключено");
             data::BusinessRules::default()
         }
     };
@@ -157,7 +195,6 @@ async fn main() -> Result<()> {
     // Free и Assigned), из дислокации (период 10) исключается — иначе он участвовал бы в
     // оптимизации дважды. Приоритет у периода 1: это сегодняшняя дислокация, а не прогноз.
     // INCLUDE_PERIOD10=off (флаг run.sh --day1) — только 1-е сутки, к Redis/MSSQL не ходим.
-    let include_period10 = include_period10_from_env();
     if !include_period10 {
         println!(
             "Дислокация 2-10 сут. (период 10): пропущена (INCLUDE_PERIOD10=off) — оптимизация только по вагонам 1-х суток"
@@ -743,6 +780,27 @@ async fn main() -> Result<()> {
             arc_stats.dirty_reward_total_rub / arc_stats.arcs_dirty_rewarded as f64,
         );
     }
+    if business_rules.p1_distance_adjust_enabled() {
+        let bonus_avg = if arc_stats.arcs_p1_distance_bonus > 0 {
+            arc_stats.p1_distance_bonus_total_rub / arc_stats.arcs_p1_distance_bonus as f64
+        } else {
+            0.0
+        };
+        let surcharge_avg = if arc_stats.arcs_p1_distance_surcharge > 0 {
+            arc_stats.p1_distance_surcharge_total_rub / arc_stats.arcs_p1_distance_surcharge as f64
+        } else {
+            0.0
+        };
+        println!(
+            "  поправка периода 1 по расстоянию: бонус на {} дугах ({:.1}%, в среднем −{:.0} руб.), надбавка на {} дугах ({:.1}%, в среднем +{:.0} руб.)",
+            arc_stats.arcs_p1_distance_bonus,
+            100.0 * arc_stats.arcs_p1_distance_bonus as f64 / total.max(1) as f64,
+            bonus_avg,
+            arc_stats.arcs_p1_distance_surcharge,
+            100.0 * arc_stats.arcs_p1_distance_surcharge as f64 / total.max(1) as f64,
+            surcharge_avg,
+        );
+    }
     println!(
         "  допустимых дуг со штрафом за срок:   {} ({:.1}%)",
         arc_stats.arcs_period_penalized,
@@ -1092,6 +1150,7 @@ async fn main() -> Result<()> {
     // 6а. Этап 2: размещение излишка в узлы отстоя (резервы).
     //     Тарифы запрашиваются от станций излишка (станции дислокации
     //     порожних supply-узлов) к станциям резервов. ДМЗИ не расходуется.
+    //     Пары дальше MaxReserveEmptyRunDistanceKm (ДВС/ЗАБ — FarEast) не строятся.
     // -----------------------------------------------------------------------
     let mut reserve_assignments: Vec<solver::ReserveAssignment> = Vec::new();
     let reserve_nodes: Vec<ReserveNode> = reserve_data
@@ -1128,6 +1187,7 @@ async fn main() -> Result<()> {
                     &reserve_nodes,
                     &reserve_tariff_map,
                     &convention_index,
+                    &business_rules,
                 );
             }
             Err(e) => eprintln!(
@@ -1145,7 +1205,7 @@ async fn main() -> Result<()> {
             .map(|a| a.cost * a.quantity as f64)
             .sum();
         println!(
-            "В отстой: {} из {} ваг. излишка → {} станций отстоя, тариф {:.0} руб.; не размещено {} ваг. (нет тарифа / ёмкость исчерпана)",
+            "В отстой: {} из {} ваг. излишка → {} станций отстоя, тариф {:.0} руб.; не размещено {} ваг. (нет тарифа / ёмкость исчерпана / дальше потолка дальности)",
             placed,
             total_excess,
             used_stations.len(),
@@ -1165,6 +1225,7 @@ async fn main() -> Result<()> {
     //     На вход — остаток ПОСЛЕ отстоя. Тарифы запрашиваются от станций излишка
     //     ко всем станциям погрузки из справочника. Ограничение: на одну станцию
     //     не менее LOADROAD_MIN_BATCH (=5) вагонов. ДМЗИ не расходуется.
+    //     Пары дальше MaxReserveEmptyRunDistanceKm (ДВС/ЗАБ — FarEast) не строятся.
     // -----------------------------------------------------------------------
     let mut loadroad_assignments: Vec<solver::LoadRoadAssignment> = Vec::new();
     // Остаток после отстоя: вычитаем размещённое в резервы из остатка основного решения.
@@ -1211,6 +1272,7 @@ async fn main() -> Result<()> {
                     &opt_supply,
                     &free_loadroads,
                     &loadroad_tariff_map,
+                    &business_rules,
                 );
             }
             Err(e) => eprintln!(
@@ -1228,7 +1290,7 @@ async fn main() -> Result<()> {
             .map(|a| a.cost * a.quantity as f64)
             .sum();
         println!(
-            "На пути погрузки: {} из {} ваг. остатка → {} станций (≥{} ваг./станция), тариф {:.0} руб.; не размещено {} ваг.",
+            "На пути погрузки: {} из {} ваг. остатка → {} станций (≥{} ваг./станция), тариф {:.0} руб.; не размещено {} ваг. (нет тарифа / ёмкость / min-batch / дальше потолка дальности)",
             placed,
             total_excess_after_reserve,
             used_stations.len(),

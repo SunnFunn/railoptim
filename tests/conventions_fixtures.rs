@@ -485,7 +485,14 @@ fn service_station_telegrams_close_only_their_scope() {
         t.cost = 50_000.0;
         t
     });
-    let assigned = solve_reserve_assignment(&[4], &[excess_supply], &reserves, &reserve_tariffs, &idx);
+    let assigned = solve_reserve_assignment(
+        &[4],
+        &[excess_supply],
+        &reserves,
+        &reserve_tariffs,
+        &idx,
+        &BusinessRules::default(),
+    );
     assert_eq!(assigned.len(), 1);
     assert_eq!(assigned[0].r_idx, 1);
     assert_eq!(assigned[0].quantity, 4);

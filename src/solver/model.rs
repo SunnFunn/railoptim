@@ -74,8 +74,9 @@ pub const PER_DAY_DELIVERY_PERIOD_VIOLATION_PENALTY_PERIOD10_RUB: f64 = 15_000.0
 ///
 /// Намеренно **мала** (символический tie-breaker): исторически была 120 000,
 /// что заставляло модель посылать вагон периода 1 через всю страну вместо
-/// ближнего вагона дислокации. Ограничение дальнего подсыла теперь решается
-/// жёстким потолком расстояния (см. [`build_task_arcs`], `MaxEmptyRunDistanceKm`).
+/// ближнего вагона дислокации. Дальность подсыла периода 1 дополнительно
+/// регулируется аддитивной поправкой по расстоянию (`P1Distance*` в
+/// `business_rules.json`); жёсткий потолок — `MaxEmptyRunDistanceKm`.
 pub const PERIOD10_COST_SURCHARGE_RUB: f64 = 2_000.0;
 
 // Стоимость промывочного маршрута (промывка + порожний пробег после неё) и параметры
@@ -108,7 +109,8 @@ pub struct TaskArc {
     pub demand_station_code: String,
 
     /// Стоимость дуги для оптимизации, руб.: тариф + штраф за срок + надбавки
-    /// (промывка + порожний пробег после промывки для Wash-дуг, period 10, бизнес-правила).
+    /// (промывка + порожний пробег после промывки для Wash-дуг, period 10, бизнес-правила)
+    /// ± поправка периода 1 по расстоянию (`P1Distance*`).
     pub cost: f64,
     /// Чистый тариф передислокации порожнего вагона между станциями дуги, руб. —
     /// без модельных штрафов и надбавок. Используется в отчётах (Excel/API): для
@@ -400,6 +402,10 @@ pub fn build_task_arcs(
     let mut arcs_dirty_rewarded = 0usize;
     let mut dirty_reward_total_rub = 0.0_f64;
     let mut arcs_foreign_washed_picky = 0usize;
+    let mut arcs_p1_distance_bonus = 0usize;
+    let mut arcs_p1_distance_surcharge = 0usize;
+    let mut p1_distance_bonus_total_rub = 0.0_f64;
+    let mut p1_distance_surcharge_total_rub = 0.0_f64;
 
     // Порог правила 6 для грязных вагонов: минимальная стоимость промывочного маршрута
     // по станции образования (см. classify_pair). Считается один раз.
@@ -413,7 +419,7 @@ pub fn build_task_arcs(
         for (d_idx, d) in demand.iter().enumerate() {
             // Жёсткие фильтры пары вынесены в classify_pair — та же логика
             // переиспользуется в диагностике незакрытого спроса.
-            let (tariff, cost, period_ok, rule_surcharged, wait_days, dirty_reward_rub) = match classify_pair(
+            let (tariff, cost, period_ok, rule_surcharged, wait_days, dirty_reward_rub, p1_adjust) = match classify_pair(
                 s,
                 d,
                 &tariff_index,
@@ -426,8 +432,11 @@ pub fn build_task_arcs(
                 conventions,
                 market_surplus,
             ) {
-                PairOutcome::Feasible { tariff, cost, period_ok, rule_surcharge_rub, wait_days, dirty_reward_rub } => {
-                    (tariff, cost, period_ok, rule_surcharge_rub > 0.0, wait_days, dirty_reward_rub)
+                PairOutcome::Feasible {
+                    tariff, cost, period_ok, rule_surcharge_rub, wait_days, dirty_reward_rub,
+                    p1_distance_adjust_rub,
+                } => {
+                    (tariff, cost, period_ok, rule_surcharge_rub > 0.0, wait_days, dirty_reward_rub, p1_distance_adjust_rub)
                 }
                 PairOutcome::NoTariff => { no_tariff += 1; continue; }
                 PairOutcome::BadType => { bad_type += 1; continue; }
@@ -459,6 +468,13 @@ pub fn build_task_arcs(
             }
             if rules.foreign_washed_picky_surcharge(&s.railway_to, &d.railway_name, market_surplus) > 0.0 {
                 arcs_foreign_washed_picky += 1;
+            }
+            if p1_adjust < 0.0 {
+                arcs_p1_distance_bonus += 1;
+                p1_distance_bonus_total_rub += -p1_adjust;
+            } else if p1_adjust > 0.0 {
+                arcs_p1_distance_surcharge += 1;
+                p1_distance_surcharge_total_rub += p1_adjust;
             }
 
             // Ограничения минимальной партии действуют только для погрузки, не для промывки.
@@ -530,6 +546,10 @@ pub fn build_task_arcs(
         arcs_dirty_rewarded,
         dirty_reward_total_rub,
         arcs_foreign_washed_picky,
+        arcs_p1_distance_bonus,
+        arcs_p1_distance_surcharge,
+        p1_distance_bonus_total_rub,
+        p1_distance_surcharge_total_rub,
     };
 
     (arcs, stats)
@@ -557,6 +577,9 @@ pub enum PairOutcome<'a> {
         /// Поощрение правила 6 (руб.), снятое со стоимости дуги «грязный → тот же
         /// ЕТСНГ»; `0` — вагон чистый или поощрение выключено.
         dirty_reward_rub: f64,
+        /// Поправка периода 1 по расстоянию (руб., со знаком): `< 0` — бонус ближнему
+        /// подсылу, `> 0` — надбавка дальнему; `0` — период 10, промывка или выключено.
+        p1_distance_adjust_rub: f64,
     },
     /// Нет тарифа (для Wash также: вагон не требует промывки либо нет wash-тарифа).
     NoTariff,
@@ -757,7 +780,23 @@ pub fn classify_pair<'a>(
         }
     }
 
-    PairOutcome::Feasible { tariff, cost, period_ok, rule_surcharge_rub, wait_days, dirty_reward_rub }
+    // --- Поправка периода 1 по расстоянию (гипотеза «ближнее — сегодняшним, дальнее —
+    // дислокации») --- Прибавляется ПОСЛЕ правила 6: потолок «не дороже промывочного
+    // маршрута» сравнивает реальный тариф с реальным маршрутом, поправка в него не идёт.
+    // Только модельная стоимость; отчётный tariff_cost остаётся чистым тарифом АПИ.
+    let p1_distance_adjust_rub =
+        rules.p1_load_distance_adjust_rub(s.supply_period, d.purpose, tariff.distance);
+    cost = (cost + p1_distance_adjust_rub).max(0.0);
+
+    PairOutcome::Feasible {
+        tariff,
+        cost,
+        period_ok,
+        rule_surcharge_rub,
+        wait_days,
+        dirty_reward_rub,
+        p1_distance_adjust_rub,
+    }
 }
 
 /// Минимальная стоимость промывочного маршрута по станциям образования.
@@ -826,6 +865,14 @@ pub struct ArcStats {
     pub dirty_reward_total_rub: f64,
     /// Допустимых дуг погрузки с надбавкой правила 8 (иномойка → капризная дорога при профиците).
     pub arcs_foreign_washed_picky: usize,
+    /// Дуг погрузки периода 1 ближе нейтральной дальности — с бонусом поправки по расстоянию.
+    pub arcs_p1_distance_bonus: usize,
+    /// Дуг погрузки периода 1 дальше нейтральной дальности — с надбавкой поправки по расстоянию.
+    pub arcs_p1_distance_surcharge: usize,
+    /// Суммарный бонус по этим дугам (руб., положительное число).
+    pub p1_distance_bonus_total_rub: f64,
+    /// Суммарная надбавка по этим дугам (руб.).
+    pub p1_distance_surcharge_total_rub: f64,
 }
 
 // ---------------------------------------------------------------------------
@@ -1236,6 +1283,138 @@ mod tests {
         assert_eq!(arcs.len(), 1);
         assert!((arcs[0].cost - 51_000.0).abs() < 1e-9);
         assert!((arcs[0].tariff_cost - 1_000.0).abs() < 1e-9);
+    }
+
+    fn rules_p1_distance(neutral_km: i32, rub_per_km: f64, cap_rub: f64) -> BusinessRules {
+        BusinessRules {
+            p1_distance_neutral_km: neutral_km,
+            p1_distance_rub_per_km: rub_per_km,
+            p1_distance_cap_rub: cap_rub,
+            ..Default::default()
+        }
+    }
+
+    /// Поправка периода 1 по расстоянию меняет только `cost`; `tariff_cost` — исходный
+    /// тариф. Ближний p1 дешевле p10, дальний p1 дороже p10 с тем же тарифом;
+    /// период 10 поправки не получает. Счётчики ArcStats считают бонус/надбавку раздельно.
+    #[test]
+    fn p1_distance_adjust_shifts_solver_cost_not_report_tariff() {
+        let rules = rules_p1_distance(2_000, 5.0, 0.0);
+        let mut t_near = dummy_tariff("S1", "D_NEAR");
+        t_near.distance = 500; // −7 500
+        t_near.cost = 10_000.0;
+        let mut t_far = dummy_tariff("S1", "D_FAR");
+        t_far.distance = 3_500; // +7 500
+        t_far.cost = 10_000.0;
+        let p1 = dummy_supply(2, "S1", 1, false);
+        let p10 = dummy_supply(2, "S1", 10, false);
+        let d_near = dummy_demand(2, "D_NEAR", None);
+        let d_far = dummy_demand(2, "D_FAR", None);
+
+        let build = |s: &SupplyNode, d: &DemandNode, t: &TariffNode| {
+            build_task_arcs(
+                &[s.clone()], &[d.clone()], &[t.clone()],
+                &HashSet::new(), &HashSet::new(), &HashMap::new(),
+                &rules, &StationBacklogIndex::disabled(), &ConventionIndex::disabled(),
+            )
+        };
+        let (a_p1_near, st_p1_near) = build(&p1, &d_near, &t_near);
+        let (a_p10_near, st_p10_near) = build(&p10, &d_near, &t_near);
+        let (a_p1_far, st_p1_far) = build(&p1, &d_far, &t_far);
+        let (a_p10_far, st_p10_far) = build(&p10, &d_far, &t_far);
+
+        assert_eq!((a_p1_near.len(), a_p10_near.len(), a_p1_far.len(), a_p10_far.len()), (1, 1, 1, 1));
+        assert!((a_p1_near[0].cost - 2_500.0).abs() < 1e-9);
+        assert!((a_p10_near[0].cost - (10_000.0 + PERIOD10_COST_SURCHARGE_RUB)).abs() < 1e-9);
+        assert!(a_p1_near[0].cost < a_p10_near[0].cost);
+        assert!((a_p1_far[0].cost - 17_500.0).abs() < 1e-9);
+        assert!((a_p10_far[0].cost - (10_000.0 + PERIOD10_COST_SURCHARGE_RUB)).abs() < 1e-9);
+        assert!(a_p1_far[0].cost > a_p10_far[0].cost);
+        for arc in [&a_p1_near[0], &a_p10_near[0], &a_p1_far[0], &a_p10_far[0]] {
+            assert!((arc.tariff_cost - 10_000.0).abs() < 1e-9, "в отчёт — исходный тариф");
+        }
+
+        assert_eq!((st_p1_near.arcs_p1_distance_bonus, st_p1_near.arcs_p1_distance_surcharge), (1, 0));
+        assert!((st_p1_near.p1_distance_bonus_total_rub - 7_500.0).abs() < 1e-9);
+        assert_eq!((st_p1_far.arcs_p1_distance_bonus, st_p1_far.arcs_p1_distance_surcharge), (0, 1));
+        assert!((st_p1_far.p1_distance_surcharge_total_rub - 7_500.0).abs() < 1e-9);
+        assert_eq!((st_p10_near.arcs_p1_distance_bonus, st_p10_near.arcs_p1_distance_surcharge), (0, 0));
+        assert_eq!((st_p10_far.arcs_p1_distance_bonus, st_p10_far.arcs_p1_distance_surcharge), (0, 0));
+    }
+
+    /// Потолок поправки ограничивает и бонус, и надбавку; стоимость не уходит ниже нуля.
+    #[test]
+    fn p1_distance_adjust_capped_and_floored() {
+        let rules = rules_p1_distance(2_000, 10.0, 6_000.0);
+        let mut t_near = dummy_tariff("S1", "D_NEAR");
+        t_near.distance = 0; // −20 000 → −6 000
+        t_near.cost = 4_000.0; // 4 000 − 6 000 < 0 → 0
+        let mut t_far = dummy_tariff("S1", "D_FAR");
+        t_far.distance = 6_000; // +40 000 → +6 000
+        t_far.cost = 10_000.0;
+        let p1 = dummy_supply(2, "S1", 1, false);
+
+        let (a_near, _) = build_task_arcs(
+            &[p1.clone()], &[dummy_demand(2, "D_NEAR", None)], &[t_near],
+            &HashSet::new(), &HashSet::new(), &HashMap::new(),
+            &rules, &StationBacklogIndex::disabled(), &ConventionIndex::disabled(),
+        );
+        let (a_far, _) = build_task_arcs(
+            &[p1], &[dummy_demand(2, "D_FAR", None)], &[t_far],
+            &HashSet::new(), &HashSet::new(), &HashMap::new(),
+            &rules, &StationBacklogIndex::disabled(), &ConventionIndex::disabled(),
+        );
+        assert_eq!(a_near.len(), 1);
+        assert_eq!(a_far.len(), 1);
+        assert!(a_near[0].cost.abs() < 1e-9, "бонус ограничен потолком и стоимость не ниже 0");
+        assert!((a_near[0].tariff_cost - 4_000.0).abs() < 1e-9);
+        assert!((a_far[0].cost - 16_000.0).abs() < 1e-9);
+    }
+
+    /// Поправка не влияет на правило 6: потолок «не дороже промывочного маршрута»
+    /// сравнивает реальную стоимость, а не стоимость с надбавкой за дальность.
+    /// Прямая погрузка 1 000 против маршрута 1 200 допустима при любой поправке.
+    #[test]
+    fn p1_distance_adjust_does_not_leak_into_dirty_cap() {
+        let mut s = dummy_supply(5, "S1", 1, false);
+        s.prev_etsngs = vec!["421034".to_string()];
+        let mut d = dummy_demand(5, "D1", None);
+        d.etsng = Some("421034".to_string());
+        let wash_codes: HashSet<String> = ["421034".to_string()].into_iter().collect();
+        let mut wash_tariffs: HashMap<(String, String), TariffNode> = HashMap::new();
+        let mut wt = dummy_tariff("S1", "WASH");
+        wt.cost = 1_200.0;
+        wash_tariffs.insert(("S1".to_string(), "WASH".to_string()), wt);
+        let mut t = dummy_tariff("S1", "D1");
+        t.distance = 4_000; // далеко: надбавка +10 000 при 5 руб./км от 2 000 км
+        t.cost = 1_000.0;
+
+        // С поправкой: прямая погрузка (1 000) ≤ маршрут (1 200) → дуга есть, cost = 11 000.
+        let (arcs, stats) = build_task_arcs(
+            &[s.clone()], &[d.clone()], &[t.clone()],
+            &wash_codes, &HashSet::new(), &wash_tariffs,
+            &rules_p1_distance(2_000, 5.0, 0.0),
+            &StationBacklogIndex::disabled(),
+            &ConventionIndex::disabled(),
+        );
+        assert_eq!(arcs.len(), 1, "надбавка за дальность не должна включать потолок правила 6");
+        assert_eq!(stats.dirty_far_prefer_wash, 0);
+        assert!((arcs[0].cost - 11_000.0).abs() < 1e-9);
+        assert!((arcs[0].tariff_cost - 1_000.0).abs() < 1e-9);
+
+        // Контроль: та же пара, но реальная погрузка дороже маршрута — потолок срабатывает
+        // независимо от поправки (бонус её не спасает).
+        t.cost = 1_300.0;
+        t.distance = 0; // бонус −10 000
+        let (arcs, stats) = build_task_arcs(
+            &[s], &[d], &[t],
+            &wash_codes, &HashSet::new(), &wash_tariffs,
+            &rules_p1_distance(2_000, 5.0, 0.0),
+            &StationBacklogIndex::disabled(),
+            &ConventionIndex::disabled(),
+        );
+        assert!(arcs.is_empty(), "бонус за близость не должен обходить потолок правила 6");
+        assert_eq!(stats.dirty_far_prefer_wash, 1);
     }
 
     /// Правило 1: с российской дороги на инотерриторию дуги нет; ОКТ → КЗХ разрешено

@@ -7,7 +7,7 @@ web-ui/node_modules/
 web-ui/dist/**/*.map
 __pycache__/
 *.py[cod]
-# /logs
+/logs
 .cursorrules
 # *.log
 data/stations/cache/
@@ -22,17 +22,17 @@ data/stations/sbin_index_report.json
 data/stations/stations_geo.sqlite
 data/LoadStations.xlsx
 # Оперативный снимок HASH telegrams_db (шаг 1 конвенций; не коммитить боевой дамп)
-# data/conventions_from_redis.json
+data/conventions_from_redis.json
 # Накопительная БД ёмкостей отстоя (наполняется суточным прогоном, не коммитим)
 data/reserves/*.sqlite
 # Справочник свободных ёмкостей путей (пересобирается суточным прогоном railoptim)
-# data/load_stations_free_capacity.json
+data/load_stations_free_capacity.json
 data/stations/cross_border_esr6_conflicts.csv
 data/map/*.pmtiles
 data/map/*.partial
 data/map/ru_cis_download.log
 data/map/verify_report.txt
-# data/map/railways_voronoi_report.json
+data/map/railways_voronoi_report.json
 
 # Supermap (https://supermap.zatramvaj.su, WFS wms.zatramvaj.su) — сырьё с сайта, не коммитить.
 # В git только отфильтованный data/map/railways_zones.geojson (см. scripts/map/fetch_supermap_rworgs.py).

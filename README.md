@@ -112,11 +112,16 @@ railoptim/
 ```bash
 ./run.sh --day1              # dev
 ./run.sh prod --day1         # prod
+./run.sh --strong-gu12       # ГУ-12 отдельно по периодам; без флага — горизонт 1–15 суток
 INCLUDE_PERIOD10=off cargo run --release --bin railoptim
+GU12_MODE=strong cargo run --release --bin railoptim
 ```
 
-`run.sh` принимает `--day1` / `--no-period10` в любом месте аргументов и выставляет
-`INCLUDE_PERIOD10=off`. Без флага поведение прежнее (полный пул). Отчёты обоих прогонов
+`run.sh` принимает `--day1` / `--no-period10` и `--relaxed-gu12` / `--strong-gu12`
+в любом месте аргументов. `--day1` выставляет `INCLUDE_PERIOD10=off`. Без флага ГУ-12
+режим ослабленный (`GU12_MODE=relaxed`): заявка на весь горизонт 1–15 суток.
+`--strong-gu12` возвращает потолок на каждый период. Без флага периода 10 поведение
+прежнее (полный пул). Отчёты обоих прогонов
 пишутся в `tmp/`: полный пул — `result_YYYYMMDD_HHMMSS.json` / `checkpoint_*.xlsx`,
 только 1-е сутки — `result_day1_YYYYMMDD_HHMMSS.json` / `checkpoint_day1_*.xlsx`.
 На prod два таймера в рабочие дни: **11:05** полный пул, **12:30** `--day1`
@@ -182,6 +187,16 @@ INCLUDE_PERIOD10=off cargo run --release --bin railoptim
   на инотерритории (`SupplyNode.railway_to` из `ForeignRailways`), идут на погрузку
   без потолка: дуга `TaskArc.gu12_exempt` в ряд не входит. При нулевом потолке такая
   российская дуга не строится. Узлы промывки потолок не получают;
+- **режим** выбирается при запуске, не флагом JSON. По умолчанию ослабленный
+  (`./run.sh`, `./run.sh --relaxed-gu12`, `GU12_MODE=relaxed`): заявка и спрос
+  грузоотправителя на станции суммируются на горизонт 1–15 суток. Если заявка не
+  меньше спроса, потолки равны спросу АПИ. Иначе нехватка (`спрос − заявка`)
+  снимается с периода 11–15, затем 9–10, 6–8 и только потом 1–5; к более близкому
+  периоду переходим, только когда дальний занулён целиком. Внутри частично
+  срезанного периода остаток делится пропорционально спросу узлов.
+  `./run.sh --strong-gu12` (`GU12_MODE=strong`) — прежняя проверка отдельно на
+  каждый период, излишек заявки в одном периоде не закрывает другой. Оба флага
+  сразу — ошибка запуска;
 - **только Россия**: узлы, у которых дорога погрузки (`railway_name`) входит в
   `ForeignRailways` (`data/business_rules.json`, тот же список, что правило 1),
   не получают потолок. Классификация по коду станции ЕСР (`esr_country_prefixes.csv`)
@@ -550,15 +565,17 @@ Adaptive Large Neighbourhood Search — метаэвристика вокруг 
 
 ```bash
 # разовый запуск с секретами из Infisical (пароли БД, API-токены)
-./run.sh                     # dev, полный пул (периоды 1 и 10)
-./run.sh prod                # prod, полный пул
+./run.sh                     # dev, полный пул (периоды 1 и 10), ГУ-12 ослабленный
+./run.sh prod                # prod, полный пул, ГУ-12 ослабленный
 ./run.sh --day1              # только вагоны 1-х суток
 ./run.sh prod --day1
+./run.sh prod --strong-gu12  # ГУ-12 отдельно на каждый период
 ./run.sh prod off            # без MIP warm-start (второй позиционный — on|off)
 
 # или напрямую после экспорта переменных окружения
 cargo run --release --bin railoptim
 INCLUDE_PERIOD10=off cargo run --release --bin railoptim
+GU12_MODE=strong cargo run --release --bin railoptim
 ```
 
 На prod два oneshot-таймера в рабочие дни (`./deploy/install.sh optim`):

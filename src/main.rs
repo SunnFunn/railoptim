@@ -147,14 +147,16 @@ async fn main() -> Result<()> {
         );
         match data::fetch_gu12_claims() {
             Ok(claims) => {
+                let gu12_mode = gu12_mode_from_env();
                 let st = data::apply_gu12_limits(
                     &mut demand_nodes,
                     &claims,
                     &business_rules.foreign_railways,
+                    gu12_mode,
                 );
                 println!(
-                    "Спрос с учётом ГУ-12 (правило 3): узлов {} (спрос АПИ не режется); российский потолок {} ваг. из {}",
-                    st.nodes_after, st.cars_after, st.cars_before,
+                    "Спрос с учётом ГУ-12 (правило 3, {}): узлов {} (спрос АПИ не режется); российский потолок {} ваг. из {}",
+                    gu12_mode.label(), st.nodes_after, st.cars_after, st.cars_before,
                 );
                 println!(
                     "  заявок ГУ-12 согласованных: {} строк / {} станций (на станциях без спроса: {})",
@@ -1484,4 +1486,22 @@ fn include_period10_from_env() -> bool {
 /// Пометка в именах `tmp/result_*.json` и `tmp/checkpoint_*.xlsx` для прогона `--day1`.
 fn day1_file_tag() -> Option<&'static str> {
     (!include_period10_from_env()).then_some("day1")
+}
+
+/// Режим правила 3. `GU12_MODE=strong` — потолок на каждый период (`run.sh --strong-gu12`).
+/// Пусто, `relaxed` и любое неизвестное значение — горизонт 1–15 суток (`--relaxed-gu12`, по умолчанию).
+fn gu12_mode_from_env() -> data::Gu12Mode {
+    match std::env::var("GU12_MODE") {
+        Ok(v) => match v.trim().to_lowercase().as_str() {
+            "strong" => data::Gu12Mode::Strong,
+            "relaxed" | "" => data::Gu12Mode::Relaxed,
+            other => {
+                eprintln!(
+                    "  [!] GU12_MODE={other:?} не известен — берётся ослабленный режим ГУ-12 (горизонт 1–15 суток)"
+                );
+                data::Gu12Mode::Relaxed
+            }
+        },
+        Err(_) => data::Gu12Mode::Relaxed,
+    }
 }

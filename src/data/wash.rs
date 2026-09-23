@@ -219,6 +219,7 @@ pub fn wash_demand_nodes(stations: &[WashStation], id_start: usize) -> Vec<Deman
                 shipping_type: None,
                 car_type: None,
                 car_count: cap,
+                gu12_cap: None,
                 cars_on_station: 0,
             }
         })

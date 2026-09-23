@@ -118,6 +118,7 @@ impl DemandApiItem {
             shipping_type:   self.load_type_name,
             car_type,
             car_count,
+            gu12_cap: None,
             cars_on_station: self.cars_on_station,
         }
     }

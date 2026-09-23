@@ -119,6 +119,7 @@ fn demand(code: &str, name: &str, rw: &str, cars: i32) -> DemandNode {
         shipping_type: None,
         car_type: None,
         car_count: cars,
+        gu12_cap: None,
         cars_on_station: 0,
     }
 }

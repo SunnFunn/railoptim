@@ -170,11 +170,26 @@ fn max_flow_edmonds_karp_limit(
 /// Жадно набирает по дугам пары (порядок `pair_arc_indices`) до суммарного потока `min_target`.
 /// Изменяет `rem_s`, `rem_d`, `quota_rem` (остатки квот ДМЗИ).
 /// Возвращает список ненулевых отгрузок по индексам дуг в `arcs`.
+fn gu12_room(arc: &TaskArc, rem_gu12: &[i32]) -> i32 {
+    if arc.gu12_exempt {
+        i32::MAX
+    } else {
+        rem_gu12[arc.d_idx]
+    }
+}
+
+fn consume_gu12(arc: &TaskArc, rem_gu12: &mut [i32], q: i32) {
+    if !arc.gu12_exempt && q > 0 {
+        rem_gu12[arc.d_idx] -= q;
+    }
+}
+
 fn greedy_fill_mass_pair_to_min(
     pair_arc_indices: &[usize],
     arcs: &[TaskArc],
     rem_s: &mut [i32],
     rem_d: &mut [i32],
+    rem_gu12: &mut [i32],
     arc_bucket: &[Option<usize>],
     quota_rem: &mut [i32],
     min_target: i32,
@@ -188,6 +203,7 @@ fn greedy_fill_mass_pair_to_min(
             let arc = &arcs[arc_idx];
             let q = rem_s[arc.s_idx]
                 .min(rem_d[arc.d_idx])
+                .min(gu12_room(arc, rem_gu12))
                 .min(min_target - total_pair)
                 .min(dmzi_rem(arc_bucket, quota_rem, arc_idx));
             if q <= 0 {
@@ -196,6 +212,7 @@ fn greedy_fill_mass_pair_to_min(
             progressed = true;
             rem_s[arc.s_idx] -= q;
             rem_d[arc.d_idx] -= q;
+            consume_gu12(arc, rem_gu12, q);
             dmzi_consume(arc_bucket, quota_rem, arc_idx, q);
             total_pair += q;
             flows.push((arc_idx, q));
@@ -221,6 +238,7 @@ fn dinic_like_mass_pair_flow(
     arcs: &[TaskArc],
     rem_s: &mut [i32],
     rem_d: &mut [i32],
+    rem_gu12: &mut [i32],
     limit: i32,
 ) -> Option<Vec<(usize, i32)>> {
     let mut s_idx_set: Vec<usize> = pair_arc_indices
@@ -264,8 +282,12 @@ fn dinic_like_mass_pair_flow(
             add_residual_edge(&mut g, src, 1 + i, cap);
         }
     }
+    let pair_exempt = pair_arc_indices.iter().all(|&i| arcs[i].gu12_exempt);
     for (j, &didx) in d_idx_set.iter().enumerate() {
-        let cap = rem_d[didx];
+        let mut cap = rem_d[didx];
+        if !pair_exempt {
+            cap = cap.min(rem_gu12[didx]);
+        }
         if cap > 0 {
             add_residual_edge(&mut g, 1 + ns + j, snk, cap);
         }
@@ -315,6 +337,7 @@ fn dinic_like_mass_pair_flow(
         let arc = &arcs[arc_idx];
         rem_s[arc.s_idx] -= q;
         rem_d[arc.d_idx] -= q;
+        consume_gu12(arc, rem_gu12, q);
     }
 
     Some(merge_flows_by_arc(raw))
@@ -385,6 +408,7 @@ fn try_activate_mass_pair(
     min_target: i32,
     remaining_supply: &mut Vec<i32>,
     remaining_demand: &mut Vec<i32>,
+    remaining_gu12: &mut [i32],
     arc_bucket: &[Option<usize>],
     quota_rem: &mut Vec<i32>,
     mass_pair_totals: &mut HashMap<PairKey, i32>,
@@ -401,12 +425,14 @@ fn try_activate_mass_pair(
     let mut trial_s = remaining_supply.clone();
     let mut trial_d = remaining_demand.clone();
     let mut trial_q = quota_rem.clone();
+    let mut trial_g = remaining_gu12.to_vec();
 
     if let Some(flows) = greedy_fill_mass_pair_to_min(
         pair_arc_indices,
         arcs,
         &mut trial_s,
         &mut trial_d,
+        &mut trial_g,
         arc_bucket,
         &mut trial_q,
         min_target,
@@ -414,6 +440,7 @@ fn try_activate_mass_pair(
         remaining_supply.clone_from(&trial_s);
         remaining_demand.clone_from(&trial_d);
         quota_rem.clone_from(&trial_q);
+        remaining_gu12.copy_from_slice(&trial_g);
         record_assignments_for_mass_pair_flows(
             &flows,
             arcs,
@@ -428,11 +455,13 @@ fn try_activate_mass_pair(
 
     let mut trial_s = remaining_supply.clone();
     let mut trial_d = remaining_demand.clone();
+    let mut trial_g = remaining_gu12.to_vec();
     if let Some(flows) = dinic_like_mass_pair_flow(
         pair_arc_indices,
         arcs,
         &mut trial_s,
         &mut trial_d,
+        &mut trial_g,
         min_target,
     ) {
         // Пост-проверка квот ДМЗИ: поток Edmonds–Karp строится без учёта квот.
@@ -451,6 +480,7 @@ fn try_activate_mass_pair(
             remaining_supply.clone_from(&trial_s);
             remaining_demand.clone_from(&trial_d);
             quota_rem.clone_from(&trial_q);
+            remaining_gu12.copy_from_slice(&trial_g);
             record_assignments_for_mass_pair_flows(
                 &flows,
                 arcs,
@@ -547,6 +577,11 @@ pub fn greedy_initial_solution(
         });
     }
 
+    let mut remaining_gu12: Vec<i32> = demand
+        .iter()
+        .map(|d| d.gu12_cap.unwrap_or(i32::MAX).max(0))
+        .collect();
+
     let mut assignments: Vec<Assignment> = Vec::new();
     let mut total_cost: f64 = 0.0;
     let mut assigned_cars: i32 = 0;
@@ -583,6 +618,7 @@ pub fn greedy_initial_solution(
                     arc.pair_min_batch,
                     &mut remaining_supply,
                     &mut remaining_demand,
+                    &mut remaining_gu12,
                     &arc_bucket,
                     &mut quota_rem,
                     &mut mass_pair_totals,
@@ -607,12 +643,14 @@ pub fn greedy_initial_solution(
 
             let qty = avail_supply
                 .min(avail_demand)
+                .min(gu12_room(arc, &remaining_gu12))
                 .min(dmzi_rem(&arc_bucket, &quota_rem, arc_i));
             if qty <= 0 {
                 continue;
             }
             remaining_supply[arc.s_idx] -= qty;
             remaining_demand[arc.d_idx] -= qty;
+            consume_gu12(arc, &mut remaining_gu12, qty);
             dmzi_consume(&arc_bucket, &mut quota_rem, arc_i, qty);
 
             let arc_cost = qty as f64 * arc.cost;
@@ -631,6 +669,7 @@ pub fn greedy_initial_solution(
         } else {
             let qty = avail_supply
                 .min(avail_demand)
+                .min(gu12_room(arc, &remaining_gu12))
                 .min(dmzi_rem(&arc_bucket, &quota_rem, arc_i));
             if qty <= 0 {
                 continue;
@@ -638,6 +677,7 @@ pub fn greedy_initial_solution(
 
             remaining_supply[arc.s_idx] -= qty;
             remaining_demand[arc.d_idx] -= qty;
+            consume_gu12(arc, &mut remaining_gu12, qty);
             dmzi_consume(&arc_bucket, &mut quota_rem, arc_i, qty);
 
             let arc_cost = qty as f64 * arc.cost;
@@ -794,6 +834,7 @@ mod tests {
             shipping_type: None,
             car_type: Some("Прочие".to_string()),
             car_count: count,
+            gu12_cap: None,
             cars_on_station: 0,
         }
     }
@@ -820,6 +861,7 @@ mod tests {
             period_ok: true,
             car_type_ok: true,
             pair_min_batch: if mass { MIN_BATCH_FROM_MASS_STATION } else { 0 },
+            gu12_exempt: false,
         }
     }
 
@@ -1312,5 +1354,48 @@ mod tests {
         assert!(outcome.has_feasible_solution());
         assert_eq!(outcome.arc_vals[0].round() as i32, 0);
         assert_eq!(outcome.optim.excess_supply.round() as i32, 2);
+    }
+
+    /// Потолок ГУ-12 режет только российский подсыл. Более дорогая дуга с инотерритории
+    /// закрывает спрос сверх заявки и не расходует потолок.
+    #[test]
+    fn foreign_origin_covers_load_above_gu12_cap() {
+        use std::time::Duration;
+
+        let mut demand = dummy_demand(10, "D0", 0);
+        demand.gu12_cap = Some(4);
+        let supply = vec![
+            dummy_supply(10, "RU", 0, false),
+            dummy_supply(10, "KZ", 1, false),
+        ];
+        let russian = arc(0, 0, 0, "RU", "D0", 1_000.0, false);
+        let mut foreign = arc(1, 1, 0, "KZ", "D0", 5_000.0, false);
+        foreign.gu12_exempt = true;
+        let demand = vec![demand];
+        let arcs = vec![russian, foreign];
+        let p = crate::solver::lp::ExcessPenalties::build(&arcs, &supply, &demand);
+
+        let greedy = greedy_initial_solution(&arcs, &supply, &demand, None);
+        let qty = |id: usize| {
+            greedy
+                .assignments
+                .iter()
+                .find(|a| a.arc_id == id)
+                .map(|a| a.quantity)
+                .unwrap_or(0)
+        };
+        assert_eq!(qty(0), 4, "жадный: российский подсыл не выше ГУ-12");
+        assert_eq!(qty(1), 6, "жадный: инотерритория закрывает остаток");
+
+        let outcome = crate::solver::mip::solve_mip(
+            &arcs, &supply, &demand, Duration::from_secs(10), None, None, None, None, &p,
+        );
+        assert!(outcome.has_feasible_solution());
+        assert_eq!(outcome.arc_vals[0].round() as i32, 4);
+        assert_eq!(outcome.arc_vals[1].round() as i32, 6);
+
+        let (_res, vals) = crate::solver::lp::solve(&arcs, &supply, &demand, &p);
+        assert_eq!(vals[0].round() as i32, 4);
+        assert_eq!(vals[1].round() as i32, 6);
     }
 }

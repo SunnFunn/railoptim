@@ -246,6 +246,12 @@ pub fn solve_mip(
         })
         .collect();
 
+    // Потолок ГУ-12: сумма российских дуг в узел ≤ cap. Дуги с инотерриторий не входят.
+    let gu12_rows: Vec<Option<Row>> = demand
+        .iter()
+        .map(|d| d.gu12_russian_limit().map(|cap| model.add_row(0.0..=cap as f64)))
+        .collect();
+
     // Dummy-узлы: поглощение избытка и штрафное покрытие неудовлетворённого спроса.
     let dummy_demand_row = model.add_row(0.0..=total_supply);
     let dummy_supply_row = model.add_row(0.0..=total_load_demand);
@@ -290,10 +296,21 @@ pub fn solve_mip(
     // Дуговые переменные — целочисленные, верхняя граница `min(supply, demand)`
     // даёт HiGHS полезную априорную информацию.
     for (a_pos, arc) in arcs.iter().enumerate() {
-        let upper = supply[arc.s_idx].car_count.min(demand[arc.d_idx].car_count) as f64;
-        let mut factors: Vec<(Row, f64)> = Vec::with_capacity(5);
+        let mut upper = supply[arc.s_idx].car_count.min(demand[arc.d_idx].car_count);
+        if !arc.gu12_exempt {
+            if let Some(cap) = demand[arc.d_idx].gu12_cap {
+                upper = upper.min(cap.max(0));
+            }
+        }
+        let upper = upper.max(0) as f64;
+        let mut factors: Vec<(Row, f64)> = Vec::with_capacity(6);
         factors.push((supply_rows[arc.s_idx], 1.0));
         factors.push((demand_rows[arc.d_idx], 1.0));
+        if !arc.gu12_exempt {
+            if let Some(row) = gu12_rows[arc.d_idx] {
+                factors.push((row, 1.0));
+            }
+        }
         if let Some(p) = arc_to_pair[arc.arc_id] {
             factors.push((pair_lower_rows[p], -1.0));
             factors.push((pair_upper_rows[p], 1.0));

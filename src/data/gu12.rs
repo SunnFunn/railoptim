@@ -8,16 +8,19 @@
 //! совпадать с периодами узлов спроса.
 //!
 //! [`apply_gu12_limits`] выполняется **сразу после** формирования узлов спроса
-//! погрузки: для каждого узла (станция погрузки, период) верхняя граница подсыла
-//! `car_count` ограничивается разрешённой в ГУ-12 погрузкой. Сопоставление —
-//! по коду станции погрузки и ОКПО грузоотправителя (`DemandNode::sender_okpo` ↔
-//! `LoaderFromOKPO`); без ОКПО — по имени грузоотправителя; заявки, не привязанные
-//! ни к одному узлу станции, распределяются пропорционально спросу по всем узлам
-//! этой станции. Узлы без разрешённой погрузки (0) исключаются.
+//! погрузки: для каждого российского узла (станция погрузки, период) запоминается
+//! потолок [`crate::node::DemandNode::gu12_cap`] — сколько вагонов **с российских
+//! дорог** можно подослать по согласованным заявкам ГУ-12. Спрос АПИ (`car_count`)
+//! не уменьшается и узлы с нулевым потолком не удаляются: вагоны, образовавшиеся
+//! на инотерритории, закрывают этот спрос без потолка (ГУ-12 — документ РЖД).
+//! Сопоставление — по коду станции погрузки и ОКПО грузоотправителя
+//! (`DemandNode::sender_okpo` ↔ `LoaderFromOKPO`); без ОКПО — по имени
+//! грузоотправителя; заявки, не привязанные ни к одному узлу станции,
+//! распределяются пропорционально спросу по всем узлам этой станции.
 //!
 //! Проверка относится только к территории России: узлы на дорогах-инотерриториях
 //! ([`crate::data::BusinessRules::foreign_railways`] — тот же список, что правило 1)
-//! не корректируются. Пустой список → вызывающий код не должен вызывать
+//! не получают потолок. Пустой список → вызывающий код не должен вызывать
 //! [`apply_gu12_limits`] ([`crate::data::BusinessRules::gu12_ready`]). Дорога узла —
 //! `DemandNode::railway_name` (RailWayShortFrom); классификация по коду станции ЕСР
 //! намеренно не используется (ненадёжна).
@@ -169,10 +172,12 @@ pub struct Gu12Stats {
     pub nodes_matched_okpo: usize,
     pub nodes_matched_name: usize,
     pub nodes_pool_only: usize,
-    /// Узлы без разрешённой погрузки (исключены).
+    /// Узлы без разрешённой погрузки: российский подсыл закрыт (`gu12_cap = 0`),
+    /// узел в задаче остаётся для вагонов с инотерриторий.
     pub nodes_removed: usize,
     pub cars_removed: i32,
-    /// Узлы, у которых спрос урезан до ГУ-12 (остались с `car_count > 0`).
+    /// Узлы, у которых потолок ГУ-12 для российских вагонов меньше спроса АПИ
+    /// и больше нуля.
     pub nodes_capped: usize,
     pub cars_cut: i32,
 }
@@ -216,18 +221,19 @@ pub fn split_proportional(total: i32, weights: &[i32]) -> Vec<i32> {
     parts
 }
 
-/// Ограничивает спрос погрузки разрешённой в ГУ-12 погрузкой (правило 3).
+/// Ставит потолок ГУ-12 на подсыл с российских дорог (правило 3).
 ///
 /// - `demand` — узлы спроса (обрабатываются только `purpose == Load`);
 /// - `claims` — согласованные заявки ГУ-12 ([`fetch_gu12_claims`]);
 /// - `foreign_railways` — короткие коды дорог-инотерриторий
 ///   ([`crate::data::BusinessRules::foreign_railways`]): узлы с такой
-///   `railway_name` не корректируются. Пустое множество трактует все узлы как
+///   `railway_name` не получают потолок. Пустое множество трактует все узлы как
 ///   российские — вызывающий код должен передавать непустой список
 ///   ([`crate::data::BusinessRules::gu12_ready`]).
 ///
-/// Узлы с итоговым `car_count == 0` удаляются, `d_id` перенумеровываются с 1
-/// в исходном порядке (узлы промывки к этому моменту ещё не созданы).
+/// `car_count` (спрос АПИ) не меняется, узлы не удаляются. Для российского узла
+/// погрузки [`DemandNode::gu12_cap`] = разрешённые заявкой вагоны (0 — российские
+/// дуги в узел не строятся). Вагоны с инотерриторий этот потолок не расходуют.
 pub fn apply_gu12_limits(
     demand: &mut Vec<DemandNode>,
     claims: &[Gu12Claim],
@@ -366,7 +372,8 @@ pub fn apply_gu12_limits(
         }
     }
 
-    // Применяем: car_count = min(car_count, allowance).
+    // Потолок для вагонов с российских дорог. Спрос АПИ (`car_count`) не режется:
+    // вагоны с инотерриторий закрывают его без ГУ-12, узлы с нулевым потолком остаются.
     for (i, d) in demand.iter_mut().enumerate() {
         let Some(&a) = allowance.get(&i) else { continue };
         match matched[&i] {
@@ -375,27 +382,32 @@ pub fn apply_gu12_limits(
             Gu12Match::PoolOnly => st.nodes_pool_only += 1,
             Gu12Match::NoClaim => {}
         }
-        let new = d.car_count.min(a.max(0));
-        if new <= 0 {
+        let cap = a.max(0);
+        if cap <= 0 {
             st.nodes_removed += 1;
             st.cars_removed += d.car_count;
-        } else if new < d.car_count {
+        } else if cap < d.car_count {
             st.nodes_capped += 1;
-            st.cars_cut += d.car_count - new;
+            st.cars_cut += d.car_count - cap;
         }
-        d.car_count = new;
-    }
-
-    demand.retain(|d| d.car_count > 0);
-    for (i, d) in demand.iter_mut().enumerate() {
-        d.d_id = i + 1;
+        d.gu12_cap = Some(cap);
     }
 
     st.nodes_after = demand.len();
-    st.cars_after = demand.iter().map(|d| d.car_count).sum();
+    st.cars_after = demand
+        .iter()
+        .map(|d| match d.gu12_cap {
+            Some(cap) => d.car_count.min(cap.max(0)),
+            None => d.car_count,
+        })
+        .sum();
     for d in demand.iter() {
         if let Some(p) = period_slot(d.period) {
-            st.cars_after_by_period[p] += d.car_count;
+            let covered = match d.gu12_cap {
+                Some(cap) => d.car_count.min(cap.max(0)),
+                None => d.car_count,
+            };
+            st.cars_after_by_period[p] += covered;
         }
     }
     st
@@ -444,6 +456,7 @@ mod tests {
             shipping_type: None,
             car_type: None,
             car_count: cars,
+            gu12_cap: None,
             cars_on_station: 0,
         }
     }
@@ -501,16 +514,21 @@ mod tests {
         let claims = vec![claim("583506", "Акционерное общество КРИСТАЛЛ", "00335717", [7, 9, 0, 0])];
         let st = apply_gu12_limits(&mut demand, &claims, &foreign());
 
-        // Узел 1: 20 → 7 (ОКПО). Узел 2: другой ОКПО, пула нет → 0, исключён.
-        // Узел 3 (период 2): 5 ≤ 9 — без изменений. Узел 4: станция без заявок → исключён.
-        assert_eq!(demand.len(), 2);
-        assert_eq!(demand[0].car_count, 7);
-        assert_eq!(demand[1].car_count, 5);
+        // Узел 1: спрос АПИ 20, потолок ГУ-12 7. Узел 2: другой ОКПО, пула нет → потолок 0,
+        // узел остаётся. Узел 3 (период 2): потолок 9 ≥ спроса 5. Узел 4: станция без заявок → 0.
+        assert_eq!(demand.len(), 4);
+        assert_eq!(demand[0].car_count, 20);
+        assert_eq!(demand[0].gu12_cap, Some(7));
+        assert_eq!(demand[1].car_count, 10);
+        assert_eq!(demand[1].gu12_cap, Some(0));
+        assert_eq!(demand[2].car_count, 5);
+        assert_eq!(demand[2].gu12_cap, Some(9));
+        assert_eq!(demand[3].gu12_cap, Some(0));
         assert_eq!(demand[0].d_id, 1);
-        assert_eq!(demand[1].d_id, 2);
+        assert_eq!(demand[2].d_id, 3);
         assert_eq!(st.nodes_before, 4);
         assert_eq!(st.cars_before, 43);
-        assert_eq!(st.nodes_after, 2);
+        assert_eq!(st.nodes_after, 4);
         assert_eq!(st.cars_after, 12);
         assert_eq!(st.nodes_matched_okpo, 2);
         assert_eq!(st.nodes_removed, 2);
@@ -528,7 +546,8 @@ mod tests {
         ];
         let claims = vec![claim("603409", "Акционерное общество «Избердеевский элеватор»", "", [20, 0, 0, 0])];
         let st = apply_gu12_limits(&mut demand, &claims, &foreign());
-        assert_eq!(demand[0].car_count, 20);
+        assert_eq!(demand[0].car_count, 30);
+        assert_eq!(demand[0].gu12_cap, Some(20));
         assert_eq!(st.nodes_matched_name, 1);
         assert_eq!(st.nodes_matched_okpo, 0);
     }
@@ -542,8 +561,10 @@ mod tests {
         // Заявка от третьего лица без ОКПО и с чужим именем → пул 20 → 15 / 5.
         let claims = vec![claim("811407", "ООО Трейдер", "", [20, 0, 0, 0])];
         let st = apply_gu12_limits(&mut demand, &claims, &foreign());
-        assert_eq!(demand[0].car_count, 15);
-        assert_eq!(demand[1].car_count, 5);
+        assert_eq!(demand[0].car_count, 30);
+        assert_eq!(demand[1].car_count, 10);
+        assert_eq!(demand[0].gu12_cap, Some(15));
+        assert_eq!(demand[1].gu12_cap, Some(5));
         assert_eq!(st.nodes_pool_only, 2);
         assert_eq!(st.cars_after, 20);
     }
@@ -557,23 +578,29 @@ mod tests {
         ];
         let claims = vec![claim("657004", "ООО Раевский элеватор", "77697508", [8, 0, 0, 0])];
         apply_gu12_limits(&mut demand, &claims, &foreign());
-        assert_eq!(demand[0].car_count, 6);
-        assert_eq!(demand[1].car_count, 2);
+        assert_eq!(demand[0].car_count, 30);
+        assert_eq!(demand[1].car_count, 10);
+        assert_eq!(demand[0].gu12_cap, Some(6));
+        assert_eq!(demand[1].gu12_cap, Some(2));
 
-        // Заявка больше спроса — спрос не растёт.
+        // Заявка больше спроса — спрос АПИ не растёт, потолок может быть выше него.
         let mut demand = vec![node(1, 1, "657004", "КБШ", Some("Раевский"), Some("77697508"), 3)];
         apply_gu12_limits(&mut demand, &claims, &foreign());
         assert_eq!(demand[0].car_count, 3);
+        assert_eq!(demand[0].gu12_cap, Some(8));
     }
 
     /// Пустой список инотерриторий трактует все узлы как российские: казахстанский
-    /// спрос без заявки ГУ-12 исключается. Поэтому `main` не вызывает эту функцию,
+    /// спрос без заявки получает потолок 0 (узел остаётся для вагонов с инотерриторий,
+    /// но список пуст — таких исключений нет). Поэтому `main` не вызывает эту функцию,
     /// пока [`crate::data::BusinessRules::gu12_ready`] ложно.
     #[test]
     fn empty_foreign_list_treats_all_nodes_as_russia() {
         let mut demand = vec![node(1, 1, "687103", "КЗХ", Some("ТОО"), None, 40)];
         let st = apply_gu12_limits(&mut demand, &[], &HashSet::new());
-        assert!(demand.is_empty(), "инотерритория срезана без списка-исключения");
+        assert_eq!(demand.len(), 1);
+        assert_eq!(demand[0].car_count, 40);
+        assert_eq!(demand[0].gu12_cap, Some(0));
         assert_eq!(st.nodes_foreign, 0);
         assert_eq!(st.nodes_removed, 1);
     }
@@ -585,9 +612,12 @@ mod tests {
             node(2, 1, "583506", "ЮВС", Some("АО Кристалл"), Some("335717"), 20),
         ];
         let st = apply_gu12_limits(&mut demand, &[], &foreign());
-        assert_eq!(demand.len(), 1);
+        assert_eq!(demand.len(), 2);
         assert_eq!(demand[0].railway_name, "КЗХ");
         assert_eq!(demand[0].car_count, 40);
+        assert_eq!(demand[0].gu12_cap, None);
+        assert_eq!(demand[1].car_count, 20);
+        assert_eq!(demand[1].gu12_cap, Some(0));
         assert_eq!(st.nodes_foreign, 1);
         assert_eq!(st.cars_foreign, 40);
         assert_eq!(st.nodes_removed, 1);
@@ -602,9 +632,11 @@ mod tests {
             node(2, 1, "687103", " КЗХ ", Some("ТОО"), None, 30),     // КЗХ с пробелами
         ];
         let st = apply_gu12_limits(&mut demand, &[], &foreign());
-        assert_eq!(demand.len(), 1);
-        assert_eq!(demand[0].railway_name, " КЗХ ");
-        assert_eq!(demand[0].car_count, 30);
+        assert_eq!(demand.len(), 2);
+        assert_eq!(demand[0].gu12_cap, Some(0));
+        assert_eq!(demand[1].railway_name, " КЗХ ");
+        assert_eq!(demand[1].car_count, 30);
+        assert_eq!(demand[1].gu12_cap, None);
         assert_eq!(st.nodes_foreign, 1);
         assert_eq!(st.nodes_removed, 1);
     }
@@ -617,6 +649,7 @@ mod tests {
         apply_gu12_limits(&mut demand, &[], &foreign());
         assert_eq!(demand.len(), 1);
         assert_eq!(demand[0].car_count, 50);
+        assert_eq!(demand[0].gu12_cap, None);
     }
 
     #[test]

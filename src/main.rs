@@ -134,9 +134,9 @@ async fn main() -> Result<()> {
     // отстое и ремонте. Нет пароля/Redis — fail-open, пустой индекс.
     let convention_index = data::load_conventions_at_startup(business_rules.convention_check_enabled);
 
-    // Правило 3: спрос погрузки на российских дорогах ограничивается согласованными
-    // заявками ГУ-12 (MSSQL SLP через gu12.py). Выше — исходный спрос АПИ, ниже — с учётом ГУ-12.
-    // Заявки не загрузились => спрос остаётся исходным (громкое предупреждение).
+    // Правило 3: потолок ГУ-12 на российский подсыл под погрузку (MSSQL SLP через gu12.py).
+    // Спрос АПИ не режется: вагоны с инотерриторий закрывают узел без потолка.
+    // Заявки не загрузились => потолок не ставится (громкое предупреждение).
     // Инотерритории — по дороге узла из ForeignRailways (правило 1); классификация по коду
     // станции ЕСР не используется как ненадёжная. Список пуст => проверку нельзя ограничить
     // территорией России => она не выполняется (в т.ч. если business_rules.json не загрузился).
@@ -153,8 +153,8 @@ async fn main() -> Result<()> {
                     &business_rules.foreign_railways,
                 );
                 println!(
-                    "Спрос с учётом ГУ-12 (правило 3): {} узлов или {} вагонов (было {} / {})",
-                    st.nodes_after, st.cars_after, st.nodes_before, st.cars_before,
+                    "Спрос с учётом ГУ-12 (правило 3): узлов {} (спрос АПИ не режется); российский потолок {} ваг. из {}",
+                    st.nodes_after, st.cars_after, st.cars_before,
                 );
                 println!(
                     "  заявок ГУ-12 согласованных: {} строк / {} станций (на станциях без спроса: {})",
@@ -169,7 +169,7 @@ async fn main() -> Result<()> {
                     st.nodes_matched_okpo, st.nodes_matched_name, st.nodes_pool_only,
                 );
                 println!(
-                    "  урезано до ГУ-12: {} узлов / −{} ваг.; без заявки ГУ-12 (исключены): {} узлов / {} ваг.; инотерритория (без проверки): {} узлов / {} ваг.",
+                    "  потолок ниже спроса АПИ: {} узлов / −{} ваг. российского подсыла; нулевой потолок (узел остаётся для вагонов с инотерриторий): {} узлов / {} ваг.; погрузка на инотерритории (без потолка): {} узлов / {} ваг.",
                     st.nodes_capped, st.cars_cut,
                     st.nodes_removed, st.cars_removed,
                     st.nodes_foreign, st.cars_foreign,
@@ -778,6 +778,12 @@ async fn main() -> Result<()> {
             arc_stats.arcs_dirty_rewarded,
             100.0 * arc_stats.arcs_dirty_rewarded as f64 / total.max(1) as f64,
             arc_stats.dirty_reward_total_rub / arc_stats.arcs_dirty_rewarded as f64,
+        );
+    }
+    if arc_stats.gu12_blocked > 0 {
+        println!(
+            "  пар погрузки с российских дорог не построено: нулевой потолок ГУ-12 ({})",
+            arc_stats.gu12_blocked,
         );
     }
     if business_rules.p1_distance_adjust_enabled() {

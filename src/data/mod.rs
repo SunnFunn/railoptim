@@ -12,6 +12,7 @@ pub mod gu12;
 pub mod output;
 pub mod references;
 pub mod repairs;
+pub mod spray;
 pub mod station_backlog;
 pub mod stations_geo;
 pub mod supply;
@@ -36,6 +37,10 @@ pub use references::{
     load_reserve_owners_banlist, load_wash_product_codes, load_washed_empty_codes,
 };
 pub use repairs::load_repair_stations;
+pub use spray::{
+    build_clusters, fetch_prospective_stations, load_spray_stations, spray_window, SprayCluster,
+    SprayStation, DEFAULT_SPRAY_STATIONS_PATH, SPRAY_CLUSTER_RADIUS_KM,
+};
 pub use station_backlog::{StationBacklog, StationBacklogIndex, StationBacklogStats};
 pub use stations_geo::{StationGeo, StationGeoCatalog, StationGeoError, DEFAULT_DB_PATH};
 pub use tariffs::StationRef;

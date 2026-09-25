@@ -1,0 +1,17 @@
+[
+  {"rail_road": "ЗСБ", "station_name": "Входная", "station_code": "830200", "station_capacity": 70},
+  {"rail_road": "ЗСБ", "station_name": "Карбышево 1", "station_code": "830304", "station_capacity": 70},
+  {"rail_road": "КЗХ", "station_name": "Тобол", "station_code": "683102", "station_capacity": 70},
+  {"rail_road": "КЗХ", "station_name": "Караганда-Сортировочная", "station_code": "673007", "station_capacity": 70},
+  {"rail_road": "КБШ", "station_name": "Дема", "station_code": "650005", "station_capacity": 70},
+  {"rail_road": "КБШ", "station_name": "Новоспасское", "station_code": "635306", "station_capacity": 70},
+  {"rail_road": "КБШ", "station_name": "Кинель", "station_code": "657305", "station_capacity": 70},
+  {"rail_road": "КБШ", "station_name": "Рузаевка", "station_code": "640003", "station_capacity": 70},
+  {"rail_road": "КБШ", "station_name": "Сызрань 1", "station_code": "635607", "station_capacity": 70},
+  {"rail_road": "СКВ", "station_name": "Заречная", "station_code": "510702", "station_capacity": 70},
+  {"rail_road": "СКВ", "station_name": "Усть-Лабинская", "station_code": "525801", "station_capacity": 70},
+  {"rail_road": "ЮВС", "station_name": "Избердей", "station_code": "600307", "station_capacity": 70},
+  {"rail_road": "ЮВС", "station_name": "Елец", "station_code": "593000", "station_capacity": 70},
+  {"rail_road": "ЮВС", "station_name": "Лиски", "station_code": "582005", "station_capacity": 70},
+  {"rail_road": "ЮВС", "station_name": "Улусарка", "station_code": "597000", "station_capacity": 70}
+]

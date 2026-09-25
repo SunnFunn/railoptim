@@ -7,6 +7,7 @@ pub mod mip;
 pub mod model;
 pub mod reserve;
 pub mod result;
+pub mod spray;
 
 pub use alns::{AlnsConfig, run_alns};
 pub use diagnose::{diagnose_excess_supply, diagnose_unmet_demand};
@@ -27,6 +28,7 @@ pub use loadroads::{
     solve_loadroad_assignment, LoadRoadAssignment, LOADROAD_MIN_BATCH, LOADROAD_PLACEMENT_REWARD,
 };
 pub use reserve::{solve_reserve_assignment, ReserveAssignment, RESERVE_PLACEMENT_REWARD};
+pub use spray::{solve_spray_assignment, SprayAssignment, SPRAY_MIN_BATCH};
 pub use result::{
     build_assigned_output_records, build_output_records, build_repair_output_records, build_report,
     output_balance, output_records_for_api, save_result, AssignmentRecord, OptimReport,

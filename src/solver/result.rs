@@ -14,7 +14,9 @@ use crate::data::repairs::RepairStation;
 use super::lp::OptimResult;
 use super::loadroads::LoadRoadAssignment;
 use super::model::{supply_release_shift_days, TaskArc};
+use crate::data::spray::SprayCluster;
 use super::reserve::ReserveAssignment;
+use super::spray::SprayAssignment;
 
 // ---------------------------------------------------------------------------
 // Структуры отчёта
@@ -403,7 +405,9 @@ pub fn build_assigned_output_records(
 /// Для каждого активного узла предложения (`s_idx`) номера вагонов
 /// нарезаются последовательно по дугам с ненулевым потоком: каждая
 /// дуга получает ровно `qty` номеров из `SupplyNode::car_numbers`.
-/// Затем нарезаются назначения в отстой (`reserve_assignments`, этап 2) —
+/// Затем нарезаются назначения в распыление (`spray_assignments`) —
+/// записи с `assignment_type = "В распыление"`, затем назначения в отстой
+/// (`reserve_assignments`, этап 2) —
 /// записи с `assignment_type = "В отстой"`, далее размещение на путях станций
 /// погрузки (`loadroad_assignments`, этап 3) — записи `assignment_type =
 /// "На пути станции погрузки"`. Оставшиеся вагоны получают отдельную запись с
@@ -422,6 +426,8 @@ pub fn build_output_records(
     reserves: &[ReserveNode],
     loadroad_assignments: &[LoadRoadAssignment],
     loadroads: &[FreeLoadRoad],
+    spray_assignments: &[SprayAssignment],
+    spray_clusters: &[SprayCluster],
 ) -> Vec<OutputRecord> {
     let now_str = Local::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
 
@@ -441,6 +447,13 @@ pub fn build_output_records(
     // Сортируем каждую группу по arc_id для детерминированного порядка нарезки.
     for group in arcs_by_supply.values_mut() {
         group.sort_unstable_by_key(|(arc, _)| arc.arc_id);
+    }
+
+    let mut spray_by_supply: HashMap<usize, Vec<&SprayAssignment>> = HashMap::new();
+    for sa in spray_assignments {
+        if sa.quantity > 0 {
+            spray_by_supply.entry(sa.s_idx).or_default().push(sa);
+        }
     }
 
     // Назначения в отстой по s_idx (порядок внутри группы — порядок решателя этапа 2).
@@ -465,9 +478,15 @@ pub fn build_output_records(
     // Перебираем в порядке s_idx, чтобы выход был детерминирован.
     for (s_idx, s) in supply.iter().enumerate() {
         let group = arcs_by_supply.get(&s_idx).map(Vec::as_slice).unwrap_or(&[]);
+        let spray_group = spray_by_supply.get(&s_idx).map(Vec::as_slice).unwrap_or(&[]);
         let res_group = reserve_by_supply.get(&s_idx).map(Vec::as_slice).unwrap_or(&[]);
         let load_group = loadroad_by_supply.get(&s_idx).map(Vec::as_slice).unwrap_or(&[]);
-        if group.is_empty() && res_group.is_empty() && load_group.is_empty() && s.car_count <= 0 {
+        if group.is_empty()
+            && spray_group.is_empty()
+            && res_group.is_empty()
+            && load_group.is_empty()
+            && s.car_count <= 0
+        {
             continue;
         }
 
@@ -548,6 +567,51 @@ pub fn build_output_records(
                 period_label,
                 supply_period:      s.supply_period,
                 demand_period:      d.period,
+            });
+        }
+
+        // --- Шаг 2а2: распыление (излишек, до отстоя) ---
+        for sa in spray_group {
+            let cluster = &spray_clusters[sa.c_idx];
+            let spray = &cluster.spray;
+            let take = (sa.quantity as usize).min(car_nums.len().saturating_sub(cursor));
+            let slice: Vec<String> = car_nums[cursor..cursor + take]
+                .iter()
+                .map(|n| n.to_string())
+                .collect();
+            cursor += take;
+            assigned_total += sa.quantity;
+
+            records.push(OutputRecord {
+                opz_date:           now_str.clone(),
+                railway_from:       s.railway_to.clone(),
+                railway_from_div:   s.railway_part_to.clone(),
+                station_from:       s.station_to.clone(),
+                station_from_code:  s.station_to_code.clone(),
+                railway_to:         spray.railway.clone(),
+                railway_to_div:     None,
+                station_to:         spray.station_name.clone(),
+                station_to_code:    spray.station_code.clone(),
+                assigned_cars:      sa.quantity,
+                load_status:        s.status.clone(),
+                car_type:           s.car_type.clone(),
+                prev_etsng_name:    s.etsng_name.clone(),
+                etsng_name:         None,
+                gu12_number:        None,
+                claim_number:       None,
+                claim_date:         None,
+                client:             None,
+                sender:             None,
+                customer:           None,
+                distance:           sa.distance,
+                period_of_delivery: sa.delivery_days,
+                cost:               sa.cost,
+                assignment_type:    "В распыление".to_string(),
+                car_numbers_list:   slice,
+                supply_kind:        car_kind_str(&s.kind).to_string(),
+                period_label:       "распыление".to_string(),
+                supply_period:      s.supply_period,
+                demand_period:      0,
             });
         }
 
@@ -919,7 +983,7 @@ mod tests {
     fn build(solution: &[f64], arcs: &[TaskArc], supply: &[SupplyNode], demand: &[DemandNode]) -> Vec<OutputRecord> {
         build_output_records(
             solution, arcs, supply, demand,
-            &HashSet::new(), &HashSet::new(), &HashSet::new(), &[], &[], &[], &[],
+            &HashSet::new(), &HashSet::new(), &HashSet::new(), &[], &[], &[], &[], &[], &[],
         )
     }
 
@@ -1021,7 +1085,7 @@ mod tests {
         }];
         let records = build_output_records(
             &[2.0], &arcs, &supply, &demand,
-            &HashSet::new(), &HashSet::new(), &HashSet::new(), &ra, &reserves, &[], &[],
+            &HashSet::new(), &HashSet::new(), &HashSet::new(), &ra, &reserves, &[], &[], &[], &[],
         );
 
         assert_eq!(records.len(), 3);
@@ -1075,7 +1139,7 @@ mod tests {
         }];
         let records = build_output_records(
             &[2.0], &arcs, &supply, &demand,
-            &HashSet::new(), &HashSet::new(), &HashSet::new(), &ra, &reserves, &la, &roads,
+            &HashSet::new(), &HashSet::new(), &HashSet::new(), &ra, &reserves, &la, &roads, &[], &[],
         );
 
         // дуга(2) + отстой(2) + пути(3) = 7, остатка нет → 3 записи.
@@ -1110,7 +1174,7 @@ mod tests {
         }];
         let records = build_output_records(
             &[0.0], &arcs, &supply, &demand,
-            &HashSet::new(), &HashSet::new(), &HashSet::new(), &ra, &reserves, &[], &[],
+            &HashSet::new(), &HashSet::new(), &HashSet::new(), &ra, &reserves, &[], &[], &[], &[],
         );
 
         assert_eq!(records.len(), 1);

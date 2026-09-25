@@ -1044,7 +1044,7 @@ async fn main() -> Result<()> {
     //    При `is_globally_optimal() == true` HiGHS гарантирует оптимальность
     //    в рамках допустимого разрыва, и запускать ALNS — пустая потеря времени.
     // -----------------------------------------------------------------------
-    let (optim_result, solution, remaining_supply_vec) = if mip_outcome.is_globally_optimal() {
+    let (optim_result, solution, mut remaining_supply_vec) = if mip_outcome.is_globally_optimal() {
         println!(
             "MIP нашёл глобальный оптимум (gap={:.4}%) — фаза ALNS пропущена.",
             mip_outcome.mip_gap * 100.0
@@ -1178,6 +1178,158 @@ async fn main() -> Result<()> {
         - remaining_supply_p1
         - remaining_supply_p10)
         .max(0);
+
+    // -----------------------------------------------------------------------
+    // 6а0. Распыление излишка — до отстоя, только после 20-го числа.
+    //      Спрос: предварительные заявки SLP на 1–20 следующего месяца,
+    //      свёрнутые в кластеры вокруг станций data/spray_stations.json
+    //      (тарифное расстояние ≤ SPRAY_CLUSTER_RADIUS_KM).
+    //      Размещённые вагоны вычитаются из излишка: отстой и пути клиента
+    //      видят уже остаток.
+    // -----------------------------------------------------------------------
+    let mut spray_assignments: Vec<solver::SprayAssignment> = Vec::new();
+    let mut spray_clusters: Vec<data::SprayCluster> = Vec::new();
+    let spray_today = chrono::Local::now().date_naive();
+    match data::spray_window(spray_today) {
+        None => println!(
+            "Распыление: выключено (сегодня {spray_today}, правило действует после 20-го числа)"
+        ),
+        Some((from, to)) => match data::load_spray_stations(data::DEFAULT_SPRAY_STATIONS_PATH) {
+            Err(e) => eprintln!("  распыление: справочник станций не загружен ({e})"),
+            Ok(spray_stations) => match data::fetch_prospective_stations(from, to) {
+                Err(e) => eprintln!(
+                    "  распыление: перспективный спрос {from}..{to} не загружен ({e}) — излишек идёт в отстой"
+                ),
+                Ok(prospective) => {
+                    let prospective_cars: i32 = prospective.iter().map(|s| s.cars).sum();
+                    println!(
+                        "Распыление: окно {from}..{to}, станций погрузки {}, вагонов {}, станций распыления {}, радиус {} км",
+                        prospective.len(),
+                        prospective_cars,
+                        spray_stations.len(),
+                        data::SPRAY_CLUSTER_RADIUS_KM,
+                    );
+                    if prospective.is_empty() {
+                        println!("Распыление: предварительных заявок нет — излишек идёт в отстой");
+                    } else {
+                        let demand_refs: Vec<StationRef> = prospective
+                            .iter()
+                            .map(|s| StationRef::new(s.station_code.clone(), s.railway.clone()))
+                            .collect();
+                        let spray_refs: Vec<StationRef> = spray_stations
+                            .iter()
+                            .map(|s| StationRef::new(s.station_code.clone(), s.railway.clone()))
+                            .collect();
+                        match client.fetch_tariffs(&demand_refs, &spray_refs).await {
+                            Err(e) => eprintln!(
+                                "  распыление: тарифы кластеров не получены ({e}) — излишек идёт в отстой"
+                            ),
+                            Ok(items) => {
+                                let cluster_tariffs: HashMap<(String, String), TariffNode> = items
+                                    .into_iter()
+                                    .map(|t| ((t.station_from_code.clone(), t.station_to_code.clone()), t))
+                                    .collect();
+                                spray_clusters = data::build_clusters(
+                                    &prospective,
+                                    &spray_stations,
+                                    &cluster_tariffs,
+                                    data::SPRAY_CLUSTER_RADIUS_KM,
+                                );
+                                let clustered: usize = spray_clusters.iter().map(|c| c.members.len()).sum();
+                                let cluster_cars: i32 = spray_clusters.iter().map(|c| c.load_cars).sum();
+                                let cluster_cap: i32 = spray_clusters.iter().map(|c| c.assignment_capacity()).sum();
+                                println!(
+                                    "Кластеры распыления: {} (станций погрузки {} из {}, спрос {} ваг., к назначению не больше {} ваг.)",
+                                    spray_clusters.len(),
+                                    clustered,
+                                    prospective.len(),
+                                    cluster_cars,
+                                    cluster_cap,
+                                );
+                                for c in &spray_clusters {
+                                    println!(
+                                        "  {} {} ({}): спрос {} ваг., вместимость {}, к назначению {}",
+                                        c.spray.railway,
+                                        c.spray.station_name,
+                                        c.spray.station_code,
+                                        c.load_cars,
+                                        c.spray.station_capacity,
+                                        c.assignment_capacity(),
+                                    );
+                                }
+                                let spray_excess: i32 = remaining_supply_vec.iter().map(|&r| r.max(0)).sum();
+                                if spray_excess > 0 && cluster_cap > 0 {
+                                    let excess_from: Vec<StationRef> = opt_supply
+                                        .iter()
+                                        .zip(remaining_supply_vec.iter())
+                                        .filter(|&(_, &rem)| rem > 0)
+                                        .map(|(s, _)| (s.station_to_code.clone(), s.railway_to.clone()))
+                                        .collect::<HashSet<_>>()
+                                        .into_iter()
+                                        .map(|(code, rw)| StationRef::new(code, rw))
+                                        .collect();
+                                    let live_refs: Vec<StationRef> = spray_clusters
+                                        .iter()
+                                        .filter(|c| c.assignment_capacity() >= solver::SPRAY_MIN_BATCH)
+                                        .map(|c| StationRef::new(c.spray.station_code.clone(), c.spray.railway.clone()))
+                                        .collect();
+                                    if live_refs.is_empty() {
+                                        println!(
+                                            "Распыление: ни один кластер не набирает минимум {} ваг. — излишек {} ваг. идёт в отстой",
+                                            solver::SPRAY_MIN_BATCH,
+                                            spray_excess,
+                                        );
+                                    } else { match client.fetch_tariffs(&excess_from, &live_refs).await {
+                                        Err(e) => eprintln!(
+                                            "  распыление: тарифы излишка не получены ({e}) — излишек идёт в отстой"
+                                        ),
+                                        Ok(haul) => {
+                                            let haul_map: HashMap<(String, String), TariffNode> = haul
+                                                .into_iter()
+                                                .map(|t| ((t.station_from_code.clone(), t.station_to_code.clone()), t))
+                                                .collect();
+                                            println!(
+                                                "Тарифов до распыления:       {} (станций излишка {}, станций распыления {})",
+                                                haul_map.len(),
+                                                excess_from.len(),
+                                                live_refs.len(),
+                                            );
+                                            spray_assignments = solver::solve_spray_assignment(
+                                                &remaining_supply_vec,
+                                                &opt_supply,
+                                                &spray_clusters,
+                                                &haul_map,
+                                                &convention_index,
+                                                &business_rules,
+                                            );
+                                            let placed: i32 = spray_assignments.iter().map(|a| a.quantity).sum();
+                                            for a in &spray_assignments {
+                                                if let Some(rem) = remaining_supply_vec.get_mut(a.s_idx) {
+                                                    *rem -= a.quantity;
+                                                }
+                                            }
+                                            println!(
+                                                "В распыление: {} из {} ваг. излишка; остаток {} ваг. идёт в отстой",
+                                                placed,
+                                                spray_excess,
+                                                spray_excess - placed,
+                                            );
+                                        }
+                                    }
+                                    }
+                                } else if spray_excess > 0 {
+                                    println!(
+                                        "Распыление: кластеры пусты — излишек {} ваг. идёт в отстой",
+                                        spray_excess,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+        },
+    }
 
     // -----------------------------------------------------------------------
     // 6а. Этап 2: размещение излишка в узлы отстоя (резервы).
@@ -1346,6 +1498,7 @@ async fn main() -> Result<()> {
         &solution, &arcs, &opt_supply, &demand_lp, &wash_codes, foreign_washed_roads,
         &washed_empty_codes, &reserve_assignments, &reserve_nodes,
         &loadroad_assignments, &free_loadroads,
+        &spray_assignments, &spray_clusters,
     );
     // Самопроверка баланса: вагоны не должны «исчезать» из отчёта — каждый вагон
     // предложения либо назначен, либо получает «Затягивание грузовой операции».

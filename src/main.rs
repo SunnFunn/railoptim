@@ -27,6 +27,34 @@ async fn main() -> Result<()> {
     // Справочник станций ЕСР + координаты (опционально; не блокирует оптимизацию).
     let _stations_geo = data::StationGeoCatalog::load_from_env();
 
+    // БД отстоя чистится до узлов спроса и предложения: чужие владельцы из
+    // reserve_owners.json и разрешения с date_end ≤ сегодня удаляются из файла,
+    // а не только отфильтровываются при чтении.
+    let reserve_owners = match data::load_reserve_owners_banlist("data/reserve_owners.json") {
+        Ok(s) => {
+            println!(
+                "Ban-list чужих владельцев отстоя (reserve_owners.json): {} пар (станция+ОКПО)",
+                s.len()
+            );
+            s
+        }
+        Err(e) => {
+            eprintln!("  reserve_owners.json не загружен ({e}) — чужие ёмкости из БД отстоя не удаляются");
+            HashSet::new()
+        }
+    };
+    let reserve_today = chrono::Utc::now().date_naive();
+    match data::open_reserves_db(data::reserves_db_path()) {
+        Ok(conn) => match data::purge_reserve_permits(&conn, reserve_today, &reserve_owners) {
+            Ok(st) => println!(
+                "БД отстоя очищена:          чужих {} / истёкших {} (date_end ≤ {})",
+                st.banned, st.expired, reserve_today,
+            ),
+            Err(e) => eprintln!("  ВНИМАНИЕ: очистка БД отстоя не удалась ({e})"),
+        },
+        Err(e) => eprintln!("  ВНИМАНИЕ: БД отстоя недоступна для очистки ({e})"),
+    }
+
     // -----------------------------------------------------------------------
     // 2. Получение данных спроса и предложения
     // -----------------------------------------------------------------------
@@ -300,18 +328,6 @@ async fn main() -> Result<()> {
             HashSet::new()
         }
     };
-    // Ban-list «чужих» ёмкостей отстоя: фильтр БД отстоя по паре (код станции, ОКПО владельца).
-    // Записи из справочника отбрасываются. Пустой ban-list (справочник не загружен) => фильтр отключён.
-    let reserve_owners = match data::load_reserve_owners_banlist("data/reserve_owners.json") {
-        Ok(s) => {
-            println!("Ban-list чужих владельцев отстоя (reserve_owners.json): {} пар (станция+ОКПО)", s.len());
-            s
-        }
-        Err(e) => {
-            eprintln!("  reserve_owners.json не загружен ({e}) — фильтр отстоя по владельцам отключён");
-            HashSet::new()
-        }
-    };
     let wash_stations = match data::wash::fetch_wash_stations() {
         Ok(ws) => ws,
         Err(e) => {
@@ -558,7 +574,16 @@ async fn main() -> Result<()> {
                     "  ВНИМАНИЕ: обновление БД отстоя не удалось ({e}) — используем ранее накопленные данные"
                 ),
             }
-            match data::load_active_reserve_nodes(&conn, chrono::Utc::now().date_naive(), &reserve_owners) {
+            // Свежий снимок АПИ снова может принести чужие и уже истёкшие разрешения.
+            match data::purge_reserve_permits(&conn, reserve_today, &reserve_owners) {
+                Ok(st) if st.banned > 0 || st.expired > 0 => println!(
+                    "БД отстоя после обновления:  удалено чужих {} / истёкших {}",
+                    st.banned, st.expired,
+                ),
+                Ok(_) => {}
+                Err(e) => eprintln!("  ВНИМАНИЕ: повторная очистка БД отстоя не удалась ({e})"),
+            }
+            match data::load_active_reserve_nodes(&conn, reserve_today, &reserve_owners) {
                 Ok(r) if !r.nodes.is_empty() => {
                     println!(
                         "Узлы отстоя (резервы):       {} узлов / ёмкость {} ваг. \

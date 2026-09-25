@@ -8,16 +8,26 @@
 //! совпадать с периодами узлов спроса.
 //!
 //! [`apply_gu12_limits`] выполняется **сразу после** формирования узлов спроса
-//! погрузки: для каждого узла (станция погрузки, период) верхняя граница подсыла
-//! `car_count` ограничивается разрешённой в ГУ-12 погрузкой. Сопоставление —
-//! по коду станции погрузки и ОКПО грузоотправителя (`DemandNode::sender_okpo` ↔
-//! `LoaderFromOKPO`); без ОКПО — по имени грузоотправителя; заявки, не привязанные
-//! ни к одному узлу станции, распределяются пропорционально спросу по всем узлам
-//! этой станции. Узлы без разрешённой погрузки (0) исключаются.
+//! погрузки: для каждого российского узла запоминается потолок
+//! [`crate::node::DemandNode::gu12_cap`] — сколько вагонов **с российских дорог**
+//! можно подослать по согласованным заявкам ГУ-12. Спрос АПИ (`car_count`)
+//! не уменьшается и узлы с нулевым потолком не удаляются: вагоны, образовавшиеся
+//! на инотерритории, закрывают этот спрос без потолка (ГУ-12 — документ РЖД).
+//!
+//! Два режима ([`Gu12Mode`], флаг `run.sh`, по умолчанию ослабленный):
+//! - [`Gu12Mode::Strong`] — потолок отдельно на каждый период спроса;
+//! - [`Gu12Mode::Relaxed`] — заявка суммируется на горизонт 1–15 суток; если её
+//!   не хватает на спрос горизонта, нехватка снимается с периода 11–15, затем
+//!   9–10, 6–8 и только потом 1–5. К более близкому периоду переходим, только
+//!   когда дальний занулён целиком.
+//! Сопоставление — по коду станции погрузки и ОКПО грузоотправителя
+//! (`DemandNode::sender_okpo` ↔ `LoaderFromOKPO`); без ОКПО — по имени
+//! грузоотправителя; заявки, не привязанные ни к одному узлу станции,
+//! распределяются пропорционально спросу по всем узлам этой станции.
 //!
 //! Проверка относится только к территории России: узлы на дорогах-инотерриториях
 //! ([`crate::data::BusinessRules::foreign_railways`] — тот же список, что правило 1)
-//! не корректируются. Пустой список → вызывающий код не должен вызывать
+//! не получают потолок. Пустой список → вызывающий код не должен вызывать
 //! [`apply_gu12_limits`] ([`crate::data::BusinessRules::gu12_ready`]). Дорога узла —
 //! `DemandNode::railway_name` (RailWayShortFrom); классификация по коду станции ЕСР
 //! намеренно не используется (ненадёжна).
@@ -133,6 +143,25 @@ pub fn normalize_party_name(raw: &str) -> String {
     s.chars().filter(|c| c.is_alphanumeric()).collect()
 }
 
+/// Как считать потолок ГУ-12. Выбирается при запуске (`run.sh`), не в JSON.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Gu12Mode {
+    /// Потолок отдельно на каждый период спроса (1–5, 6–8, 9–10, 11–15 суток).
+    Strong,
+    /// Заявка на весь горизонт 1–15 суток; нехватка снимается с дальних периодов.
+    Relaxed,
+}
+
+impl Gu12Mode {
+    /// Короткая подпись для лога прогона.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Strong => "жёсткий, по периодам",
+            Self::Relaxed => "ослабленный, горизонт 1–15 суток",
+        }
+    }
+}
+
 /// Как узел спроса был сопоставлен с заявками ГУ-12.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Gu12Match {
@@ -169,10 +198,12 @@ pub struct Gu12Stats {
     pub nodes_matched_okpo: usize,
     pub nodes_matched_name: usize,
     pub nodes_pool_only: usize,
-    /// Узлы без разрешённой погрузки (исключены).
+    /// Узлы без разрешённой погрузки: российский подсыл закрыт (`gu12_cap = 0`),
+    /// узел в задаче остаётся для вагонов с инотерриторий.
     pub nodes_removed: usize,
     pub cars_removed: i32,
-    /// Узлы, у которых спрос урезан до ГУ-12 (остались с `car_count > 0`).
+    /// Узлы, у которых потолок ГУ-12 для российских вагонов меньше спроса АПИ
+    /// и больше нуля.
     pub nodes_capped: usize,
     pub cars_cut: i32,
 }
@@ -216,22 +247,30 @@ pub fn split_proportional(total: i32, weights: &[i32]) -> Vec<i32> {
     parts
 }
 
-/// Ограничивает спрос погрузки разрешённой в ГУ-12 погрузкой (правило 3).
+/// Ставит потолок ГУ-12 на подсыл с российских дорог (правило 3).
 ///
 /// - `demand` — узлы спроса (обрабатываются только `purpose == Load`);
 /// - `claims` — согласованные заявки ГУ-12 ([`fetch_gu12_claims`]);
 /// - `foreign_railways` — короткие коды дорог-инотерриторий
 ///   ([`crate::data::BusinessRules::foreign_railways`]): узлы с такой
-///   `railway_name` не корректируются. Пустое множество трактует все узлы как
+///   `railway_name` не получают потолок. Пустое множество трактует все узлы как
 ///   российские — вызывающий код должен передавать непустой список
 ///   ([`crate::data::BusinessRules::gu12_ready`]).
 ///
-/// Узлы с итоговым `car_count == 0` удаляются, `d_id` перенумеровываются с 1
-/// в исходном порядке (узлы промывки к этому моменту ещё не созданы).
+/// `car_count` (спрос АПИ) не меняется, узлы не удаляются. Для российского узла
+/// погрузки [`DemandNode::gu12_cap`] — сколько вагонов с российских дорог можно
+/// подослать (0 — российские дуги в узел не строятся). Вагоны с инотерриторий
+/// этот потолок не расходуют.
+///
+/// [`Gu12Mode::Strong`] сравнивает заявку и спрос внутри каждого периода.
+/// [`Gu12Mode::Relaxed`] суммирует заявку и спрос грузоотправителя на станции
+/// за все четыре периода; излишек заявки в одном периоде закрывает нехватку
+/// в другом, а нехватку горизонта снимает с периода 4 к периоду 1.
 pub fn apply_gu12_limits(
     demand: &mut Vec<DemandNode>,
     claims: &[Gu12Claim],
     foreign_railways: &HashSet<String>,
+    mode: Gu12Mode,
 ) -> Gu12Stats {
     let mut st = Gu12Stats {
         claims_total: claims.len(),
@@ -256,8 +295,10 @@ pub fn apply_gu12_limits(
     }
     st.claim_stations = claims_by_station.len();
 
-    // Группы узлов (станция, период) — только погрузка на российских дорогах.
+    // Группы узлов — только погрузка на российских дорогах.
+    // Жёсткий режим режет по (станция, период), ослабленный — по станции и грузоотправителю.
     let mut groups: HashMap<(String, usize), Vec<usize>> = HashMap::new();
+    let mut nodes_by_station: HashMap<String, Vec<usize>> = HashMap::new();
     let mut demand_stations: HashSet<String> = HashSet::new();
     for (i, d) in demand.iter().enumerate() {
         if d.purpose != DemandPurpose::Load {
@@ -271,14 +312,71 @@ pub fn apply_gu12_limits(
         let Some(p) = period_slot(d.period) else { continue };
         let code = normalize_esr6(&d.station_code);
         demand_stations.insert(code.clone());
-        groups.entry((code, p)).or_default().push(i);
+        groups.entry((code.clone(), p)).or_default().push(i);
+        nodes_by_station.entry(code).or_default().push(i);
     }
     st.claims_without_demand = claims
         .iter()
         .filter(|c| !demand_stations.contains(&normalize_esr6(&c.station_code)))
         .count();
 
-    // Разрешённая погрузка по узлам.
+    let (allowance, matched) = match mode {
+        Gu12Mode::Strong => strong_allowances(demand, &claims_by_station, &groups),
+        Gu12Mode::Relaxed => relaxed_allowances(demand, &claims_by_station, &nodes_by_station),
+    };
+
+    // Потолок для вагонов с российских дорог. Спрос АПИ (`car_count`) не режется:
+    // вагоны с инотерриторий закрывают его без ГУ-12, узлы с нулевым потолком остаются.
+    for (i, d) in demand.iter_mut().enumerate() {
+        let Some(&a) = allowance.get(&i) else { continue };
+        match matched[&i] {
+            Gu12Match::Okpo => st.nodes_matched_okpo += 1,
+            Gu12Match::Name => st.nodes_matched_name += 1,
+            Gu12Match::PoolOnly => st.nodes_pool_only += 1,
+            Gu12Match::NoClaim => {}
+        }
+        let cap = a.max(0);
+        if cap <= 0 {
+            st.nodes_removed += 1;
+            st.cars_removed += d.car_count;
+        } else if cap < d.car_count {
+            st.nodes_capped += 1;
+            st.cars_cut += d.car_count - cap;
+        }
+        d.gu12_cap = Some(cap);
+    }
+
+    st.nodes_after = demand.len();
+    st.cars_after = demand
+        .iter()
+        .map(|d| match d.gu12_cap {
+            Some(cap) => d.car_count.min(cap.max(0)),
+            None => d.car_count,
+        })
+        .sum();
+    for d in demand.iter() {
+        if let Some(p) = period_slot(d.period) {
+            let covered = match d.gu12_cap {
+                Some(cap) => d.car_count.min(cap.max(0)),
+                None => d.car_count,
+            };
+            st.cars_after_by_period[p] += covered;
+        }
+    }
+    st
+}
+
+/// Узел спроса вне территории России: дорога погрузки входит в список инотерриторий.
+pub fn is_foreign_node(d: &DemandNode, foreign_railways: &HashSet<String>) -> bool {
+    foreign_railways.contains(d.railway_name.trim())
+}
+
+/// Жёсткий режим: разрешённые вагоны заявки периода делятся между узлами этого периода.
+fn strong_allowances(
+    demand: &[DemandNode],
+    claims_by_station: &HashMap<String, Vec<&Gu12Claim>>,
+    groups: &HashMap<(String, usize), Vec<usize>>,
+) -> (HashMap<usize, i32>, HashMap<usize, Gu12Match>) {
     let mut allowance: HashMap<usize, i32> = HashMap::new();
     let mut matched: HashMap<usize, Gu12Match> = HashMap::new();
 
@@ -313,12 +411,7 @@ pub fn apply_gu12_limits(
                 hit = idx
                     .iter()
                     .enumerate()
-                    .filter(|(_, i)| {
-                        demand[**i]
-                            .sender_okpo
-                            .as_deref()
-                            .is_some_and(|o| normalize_okpo(o) == okpo)
-                    })
+                    .filter(|(_, i)| node_okpo(demand, **i) == okpo)
                     .map(|(k, _)| k)
                     .collect();
             }
@@ -328,12 +421,7 @@ pub fn apply_gu12_limits(
                 hit = idx
                     .iter()
                     .enumerate()
-                    .filter(|(_, i)| {
-                        demand[**i]
-                            .sender
-                            .as_deref()
-                            .is_some_and(|n| normalize_party_name(n) == name)
-                    })
+                    .filter(|(_, i)| node_name(demand, **i) == name)
                     .map(|(k, _)| k)
                     .collect();
             }
@@ -365,45 +453,163 @@ pub fn apply_gu12_limits(
             matched.insert(i, node_match[k].unwrap_or(Gu12Match::PoolOnly));
         }
     }
-
-    // Применяем: car_count = min(car_count, allowance).
-    for (i, d) in demand.iter_mut().enumerate() {
-        let Some(&a) = allowance.get(&i) else { continue };
-        match matched[&i] {
-            Gu12Match::Okpo => st.nodes_matched_okpo += 1,
-            Gu12Match::Name => st.nodes_matched_name += 1,
-            Gu12Match::PoolOnly => st.nodes_pool_only += 1,
-            Gu12Match::NoClaim => {}
-        }
-        let new = d.car_count.min(a.max(0));
-        if new <= 0 {
-            st.nodes_removed += 1;
-            st.cars_removed += d.car_count;
-        } else if new < d.car_count {
-            st.nodes_capped += 1;
-            st.cars_cut += d.car_count - new;
-        }
-        d.car_count = new;
-    }
-
-    demand.retain(|d| d.car_count > 0);
-    for (i, d) in demand.iter_mut().enumerate() {
-        d.d_id = i + 1;
-    }
-
-    st.nodes_after = demand.len();
-    st.cars_after = demand.iter().map(|d| d.car_count).sum();
-    for d in demand.iter() {
-        if let Some(p) = period_slot(d.period) {
-            st.cars_after_by_period[p] += d.car_count;
-        }
-    }
-    st
+    (allowance, matched)
 }
 
-/// Узел спроса вне территории России: дорога погрузки входит в список инотерриторий.
-pub fn is_foreign_node(d: &DemandNode, foreign_railways: &HashSet<String>) -> bool {
-    foreign_railways.contains(d.railway_name.trim())
+/// Ослабленный режим: заявка грузоотправителя на станции суммируется за 1–15 суток.
+///
+/// Нехватка (`спрос − заявка`, если спрос больше) снимается с периода 4 (сутки 11–15),
+/// затем 3, 2 и 1. Следующий, более близкий период трогаем только когда дальний
+/// занулён целиком. Заявка одного ОКПО/имени не закрывает другого грузоотправителя;
+/// заявка без совпадения идёт в пул станции и там тоже режется с дальнего периода.
+fn relaxed_allowances(
+    demand: &[DemandNode],
+    claims_by_station: &HashMap<String, Vec<&Gu12Claim>>,
+    nodes_by_station: &HashMap<String, Vec<usize>>,
+) -> (HashMap<usize, i32>, HashMap<usize, Gu12Match>) {
+    #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+    enum Key {
+        Okpo(String),
+        Name(String),
+        Pool,
+    }
+
+    let mut allowance: HashMap<usize, i32> = HashMap::new();
+    let mut matched: HashMap<usize, Gu12Match> = HashMap::new();
+
+    let mut stations: Vec<_> = nodes_by_station.keys().cloned().collect();
+    stations.sort();
+    for code in stations {
+        let nodes = &nodes_by_station[&code];
+        let st_claims = claims_by_station.get(&code).map(Vec::as_slice).unwrap_or(&[]);
+
+        let mut direct: HashMap<Key, i32> = HashMap::new();
+        let mut pool: i32 = 0;
+        for c in st_claims {
+            let cars: i32 = c.cars.iter().copied().map(|v| v.max(0)).sum();
+            let okpo = normalize_okpo(&c.loader_okpo);
+            let name = normalize_party_name(&c.loader_name);
+            if !okpo.is_empty() && nodes.iter().any(|&i| node_okpo(demand, i) == okpo) {
+                *direct.entry(Key::Okpo(okpo)).or_insert(0) += cars;
+            } else if !name.is_empty() && nodes.iter().any(|&i| node_name(demand, i) == name) {
+                *direct.entry(Key::Name(name)).or_insert(0) += cars;
+            } else {
+                pool += cars;
+            }
+        }
+
+        let mut members: HashMap<Key, Vec<usize>> = HashMap::new();
+        let mut node_key: HashMap<usize, Key> = HashMap::new();
+        for &i in nodes {
+            let okpo = node_okpo(demand, i);
+            let name = node_name(demand, i);
+            let key = if !okpo.is_empty() && direct.contains_key(&Key::Okpo(okpo.clone())) {
+                Key::Okpo(okpo)
+            } else if !name.is_empty() && direct.contains_key(&Key::Name(name.clone())) {
+                Key::Name(name)
+            } else {
+                Key::Pool
+            };
+            node_key.insert(i, key.clone());
+            members.entry(key).or_default().push(i);
+        }
+
+        if pool > 0 {
+            let weights: Vec<i32> = nodes.iter().map(|&i| demand[i].car_count.max(0)).collect();
+            for (&i, share) in nodes.iter().zip(split_proportional(pool, &weights)) {
+                if let Some(key) = node_key.get(&i) {
+                    *direct.entry(key.clone()).or_insert(0) += share;
+                }
+            }
+        }
+
+        let mut member_keys: Vec<_> = members.keys().cloned().collect();
+        member_keys.sort_by_key(|k| match k {
+            Key::Okpo(s) => (0, s.clone()),
+            Key::Name(s) => (1, s.clone()),
+            Key::Pool => (2, String::new()),
+        });
+        for key in member_keys {
+            let idxs = &members[&key];
+            let allow = direct.get(&key).copied().unwrap_or(0);
+            let kind = match &key {
+                Key::Okpo(_) => Gu12Match::Okpo,
+                Key::Name(_) => Gu12Match::Name,
+                Key::Pool if st_claims.is_empty() => Gu12Match::NoClaim,
+                Key::Pool => Gu12Match::PoolOnly,
+            };
+            for (i, cap) in horizon_caps(demand, idxs, allow) {
+                allowance.insert(i, cap);
+                matched.insert(i, kind);
+            }
+        }
+    }
+    (allowance, matched)
+}
+
+/// Потолки узлов одной группы: `allow >= спрос` — спрос не трогаем, иначе нехватка
+/// снимается с дальнего периода к ближнему.
+fn horizon_caps(demand: &[DemandNode], nodes: &[usize], allow: i32) -> Vec<(usize, i32)> {
+    let mut by_period: [Vec<usize>; 4] = Default::default();
+    for &i in nodes {
+        if let Some(p) = period_slot(demand[i].period) {
+            by_period[p].push(i);
+        }
+    }
+    let total_demand: i32 = nodes.iter().map(|&i| demand[i].car_count.max(0)).sum();
+    let allow = allow.max(0);
+    if allow >= total_demand {
+        return nodes
+            .iter()
+            .map(|&i| (i, demand[i].car_count.max(0)))
+            .collect();
+    }
+
+    let mut deficit = total_demand - allow;
+    let mut caps: Vec<(usize, i32)> = Vec::with_capacity(nodes.len());
+    for p in (0..4).rev() {
+        let idxs = &by_period[p];
+        if idxs.is_empty() {
+            continue;
+        }
+        let period_demand: i32 = idxs.iter().map(|&i| demand[i].car_count.max(0)).sum();
+        if deficit <= 0 {
+            for &i in idxs {
+                caps.push((i, demand[i].car_count.max(0)));
+            }
+            continue;
+        }
+        if deficit >= period_demand {
+            for &i in idxs {
+                caps.push((i, 0));
+            }
+            deficit -= period_demand;
+        } else {
+            let cover = period_demand - deficit;
+            let weights: Vec<i32> = idxs.iter().map(|&i| demand[i].car_count.max(0)).collect();
+            for (&i, share) in idxs.iter().zip(split_proportional(cover, &weights)) {
+                caps.push((i, share.min(demand[i].car_count.max(0))));
+            }
+            deficit = 0;
+        }
+    }
+    caps
+}
+
+fn node_okpo(demand: &[DemandNode], i: usize) -> String {
+    demand[i]
+        .sender_okpo
+        .as_deref()
+        .map(normalize_okpo)
+        .unwrap_or_default()
+}
+
+fn node_name(demand: &[DemandNode], i: usize) -> String {
+    demand[i]
+        .sender
+        .as_deref()
+        .map(normalize_party_name)
+        .unwrap_or_default()
 }
 
 fn period_slot(period: u8) -> Option<usize> {
@@ -444,6 +650,7 @@ mod tests {
             shipping_type: None,
             car_type: None,
             car_count: cars,
+            gu12_cap: None,
             cars_on_station: 0,
         }
     }
@@ -499,18 +706,23 @@ mod tests {
             node(4, 1, "999999", "МСК", Some("Без заявки"), Some("222"), 8),
         ];
         let claims = vec![claim("583506", "Акционерное общество КРИСТАЛЛ", "00335717", [7, 9, 0, 0])];
-        let st = apply_gu12_limits(&mut demand, &claims, &foreign());
+        let st = apply_gu12_limits(&mut demand, &claims, &foreign(), Gu12Mode::Strong);
 
-        // Узел 1: 20 → 7 (ОКПО). Узел 2: другой ОКПО, пула нет → 0, исключён.
-        // Узел 3 (период 2): 5 ≤ 9 — без изменений. Узел 4: станция без заявок → исключён.
-        assert_eq!(demand.len(), 2);
-        assert_eq!(demand[0].car_count, 7);
-        assert_eq!(demand[1].car_count, 5);
+        // Узел 1: спрос АПИ 20, потолок ГУ-12 7. Узел 2: другой ОКПО, пула нет → потолок 0,
+        // узел остаётся. Узел 3 (период 2): потолок 9 ≥ спроса 5. Узел 4: станция без заявок → 0.
+        assert_eq!(demand.len(), 4);
+        assert_eq!(demand[0].car_count, 20);
+        assert_eq!(demand[0].gu12_cap, Some(7));
+        assert_eq!(demand[1].car_count, 10);
+        assert_eq!(demand[1].gu12_cap, Some(0));
+        assert_eq!(demand[2].car_count, 5);
+        assert_eq!(demand[2].gu12_cap, Some(9));
+        assert_eq!(demand[3].gu12_cap, Some(0));
         assert_eq!(demand[0].d_id, 1);
-        assert_eq!(demand[1].d_id, 2);
+        assert_eq!(demand[2].d_id, 3);
         assert_eq!(st.nodes_before, 4);
         assert_eq!(st.cars_before, 43);
-        assert_eq!(st.nodes_after, 2);
+        assert_eq!(st.nodes_after, 4);
         assert_eq!(st.cars_after, 12);
         assert_eq!(st.nodes_matched_okpo, 2);
         assert_eq!(st.nodes_removed, 2);
@@ -527,8 +739,9 @@ mod tests {
             node(1, 1, "603409", "МСК", Some("АО \"Избердеевский элеватор\""), None, 30),
         ];
         let claims = vec![claim("603409", "Акционерное общество «Избердеевский элеватор»", "", [20, 0, 0, 0])];
-        let st = apply_gu12_limits(&mut demand, &claims, &foreign());
-        assert_eq!(demand[0].car_count, 20);
+        let st = apply_gu12_limits(&mut demand, &claims, &foreign(), Gu12Mode::Strong);
+        assert_eq!(demand[0].car_count, 30);
+        assert_eq!(demand[0].gu12_cap, Some(20));
         assert_eq!(st.nodes_matched_name, 1);
         assert_eq!(st.nodes_matched_okpo, 0);
     }
@@ -541,9 +754,11 @@ mod tests {
         ];
         // Заявка от третьего лица без ОКПО и с чужим именем → пул 20 → 15 / 5.
         let claims = vec![claim("811407", "ООО Трейдер", "", [20, 0, 0, 0])];
-        let st = apply_gu12_limits(&mut demand, &claims, &foreign());
-        assert_eq!(demand[0].car_count, 15);
-        assert_eq!(demand[1].car_count, 5);
+        let st = apply_gu12_limits(&mut demand, &claims, &foreign(), Gu12Mode::Strong);
+        assert_eq!(demand[0].car_count, 30);
+        assert_eq!(demand[1].car_count, 10);
+        assert_eq!(demand[0].gu12_cap, Some(15));
+        assert_eq!(demand[1].gu12_cap, Some(5));
         assert_eq!(st.nodes_pool_only, 2);
         assert_eq!(st.cars_after, 20);
     }
@@ -556,24 +771,30 @@ mod tests {
             node(2, 1, "657004", "КБШ", Some("Раевский"), Some("77697508"), 10),
         ];
         let claims = vec![claim("657004", "ООО Раевский элеватор", "77697508", [8, 0, 0, 0])];
-        apply_gu12_limits(&mut demand, &claims, &foreign());
-        assert_eq!(demand[0].car_count, 6);
-        assert_eq!(demand[1].car_count, 2);
+        apply_gu12_limits(&mut demand, &claims, &foreign(), Gu12Mode::Strong);
+        assert_eq!(demand[0].car_count, 30);
+        assert_eq!(demand[1].car_count, 10);
+        assert_eq!(demand[0].gu12_cap, Some(6));
+        assert_eq!(demand[1].gu12_cap, Some(2));
 
-        // Заявка больше спроса — спрос не растёт.
+        // Заявка больше спроса — спрос АПИ не растёт, потолок может быть выше него.
         let mut demand = vec![node(1, 1, "657004", "КБШ", Some("Раевский"), Some("77697508"), 3)];
-        apply_gu12_limits(&mut demand, &claims, &foreign());
+        apply_gu12_limits(&mut demand, &claims, &foreign(), Gu12Mode::Strong);
         assert_eq!(demand[0].car_count, 3);
+        assert_eq!(demand[0].gu12_cap, Some(8));
     }
 
     /// Пустой список инотерриторий трактует все узлы как российские: казахстанский
-    /// спрос без заявки ГУ-12 исключается. Поэтому `main` не вызывает эту функцию,
+    /// спрос без заявки получает потолок 0 (узел остаётся для вагонов с инотерриторий,
+    /// но список пуст — таких исключений нет). Поэтому `main` не вызывает эту функцию,
     /// пока [`crate::data::BusinessRules::gu12_ready`] ложно.
     #[test]
     fn empty_foreign_list_treats_all_nodes_as_russia() {
         let mut demand = vec![node(1, 1, "687103", "КЗХ", Some("ТОО"), None, 40)];
-        let st = apply_gu12_limits(&mut demand, &[], &HashSet::new());
-        assert!(demand.is_empty(), "инотерритория срезана без списка-исключения");
+        let st = apply_gu12_limits(&mut demand, &[], &HashSet::new(), Gu12Mode::Strong);
+        assert_eq!(demand.len(), 1);
+        assert_eq!(demand[0].car_count, 40);
+        assert_eq!(demand[0].gu12_cap, Some(0));
         assert_eq!(st.nodes_foreign, 0);
         assert_eq!(st.nodes_removed, 1);
     }
@@ -584,10 +805,13 @@ mod tests {
             node(1, 1, "687103", "КЗХ", Some("ТОО"), None, 40),
             node(2, 1, "583506", "ЮВС", Some("АО Кристалл"), Some("335717"), 20),
         ];
-        let st = apply_gu12_limits(&mut demand, &[], &foreign());
-        assert_eq!(demand.len(), 1);
+        let st = apply_gu12_limits(&mut demand, &[], &foreign(), Gu12Mode::Strong);
+        assert_eq!(demand.len(), 2);
         assert_eq!(demand[0].railway_name, "КЗХ");
         assert_eq!(demand[0].car_count, 40);
+        assert_eq!(demand[0].gu12_cap, None);
+        assert_eq!(demand[1].car_count, 20);
+        assert_eq!(demand[1].gu12_cap, Some(0));
         assert_eq!(st.nodes_foreign, 1);
         assert_eq!(st.cars_foreign, 40);
         assert_eq!(st.nodes_removed, 1);
@@ -601,10 +825,12 @@ mod tests {
             node(1, 1, "687103", "", Some("ТОО"), None, 40),          // дорога не указана
             node(2, 1, "687103", " КЗХ ", Some("ТОО"), None, 30),     // КЗХ с пробелами
         ];
-        let st = apply_gu12_limits(&mut demand, &[], &foreign());
-        assert_eq!(demand.len(), 1);
-        assert_eq!(demand[0].railway_name, " КЗХ ");
-        assert_eq!(demand[0].car_count, 30);
+        let st = apply_gu12_limits(&mut demand, &[], &foreign(), Gu12Mode::Strong);
+        assert_eq!(demand.len(), 2);
+        assert_eq!(demand[0].gu12_cap, Some(0));
+        assert_eq!(demand[1].railway_name, " КЗХ ");
+        assert_eq!(demand[1].car_count, 30);
+        assert_eq!(demand[1].gu12_cap, None);
         assert_eq!(st.nodes_foreign, 1);
         assert_eq!(st.nodes_removed, 1);
     }
@@ -614,9 +840,10 @@ mod tests {
         let mut w = node(1, 1, "100000", "МСК", None, None, 50);
         w.purpose = DemandPurpose::Wash;
         let mut demand = vec![w];
-        apply_gu12_limits(&mut demand, &[], &foreign());
+        apply_gu12_limits(&mut demand, &[], &foreign(), Gu12Mode::Strong);
         assert_eq!(demand.len(), 1);
         assert_eq!(demand[0].car_count, 50);
+        assert_eq!(demand[0].gu12_cap, None);
     }
 
     #[test]
@@ -629,5 +856,82 @@ mod tests {
         assert_eq!(claims[0].station_code, "583506");
         assert_eq!(claims[0].cars, [7, 0, 0, 0]);
         assert_eq!(claims[0].loader_okpo, "00335717");
+    }
+
+    /// Заявка только на дальние сутки покрывает ближний спрос: горизонт не режется.
+    #[test]
+    fn relaxed_keeps_demand_when_horizon_claim_covers_it() {
+        let mut demand = vec![
+            node(1, 1, "583506", "ЮВС", Some("АО Кристалл"), Some("111"), 10),
+            node(2, 4, "583506", "ЮВС", Some("АО Кристалл"), Some("111"), 20),
+        ];
+        let claims = vec![claim("583506", "АО Кристалл", "111", [0, 0, 0, 30])];
+        apply_gu12_limits(&mut demand, &claims, &foreign(), Gu12Mode::Relaxed);
+        assert_eq!(demand[0].car_count, 10);
+        assert_eq!(demand[1].car_count, 20);
+        assert_eq!(demand[0].gu12_cap, Some(10));
+        assert_eq!(demand[1].gu12_cap, Some(20));
+    }
+
+    /// Та же заявка в жёстком режиме не переносится на другой период.
+    #[test]
+    fn strong_does_not_move_claim_between_periods() {
+        let mut demand = vec![
+            node(1, 1, "583506", "ЮВС", Some("АО Кристалл"), Some("111"), 10),
+            node(2, 4, "583506", "ЮВС", Some("АО Кристалл"), Some("111"), 20),
+        ];
+        let claims = vec![claim("583506", "АО Кристалл", "111", [0, 0, 0, 30])];
+        apply_gu12_limits(&mut demand, &claims, &foreign(), Gu12Mode::Strong);
+        assert_eq!(demand[0].gu12_cap, Some(0));
+        assert_eq!(demand[1].gu12_cap, Some(30));
+    }
+
+    /// Нехватка 25 вагонов: период 11–15 и 9–10 зануляются, в 6–8 остаётся 5, 1–5 не трогаем.
+    #[test]
+    fn relaxed_deficit_is_taken_from_far_periods_first() {
+        let mut demand = vec![
+            node(1, 1, "583506", "ЮВС", Some("АО Кристалл"), Some("111"), 10),
+            node(2, 2, "583506", "ЮВС", Some("АО Кристалл"), Some("111"), 10),
+            node(3, 3, "583506", "ЮВС", Some("АО Кристалл"), Some("111"), 10),
+            node(4, 4, "583506", "ЮВС", Some("АО Кристалл"), Some("111"), 10),
+        ];
+        let claims = vec![claim("583506", "АО Кристалл", "111", [15, 0, 0, 0])];
+        let st = apply_gu12_limits(&mut demand, &claims, &foreign(), Gu12Mode::Relaxed);
+        assert_eq!(demand[0].gu12_cap, Some(10));
+        assert_eq!(demand[1].gu12_cap, Some(5));
+        assert_eq!(demand[2].gu12_cap, Some(0));
+        assert_eq!(demand[3].gu12_cap, Some(0));
+        assert!(demand.iter().all(|d| d.car_count == 10));
+        assert_eq!(st.cars_after, 15);
+        assert_eq!(st.cars_after_by_period, [10, 5, 0, 0]);
+    }
+
+    /// Частичный срез дальнего периода не доходит до ближнего.
+    #[test]
+    fn relaxed_partial_far_period_stops_there() {
+        let mut demand = vec![
+            node(1, 1, "583506", "ЮВС", Some("АО Кристалл"), Some("111"), 10),
+            node(2, 4, "583506", "ЮВС", Some("АО Кристалл"), Some("111"), 6),
+            node(3, 4, "583506", "ЮВС", Some("АО Кристалл"), Some("111"), 4),
+        ];
+        // Спрос 20, заявка 15, нехватка 5 — оба узла периода 4, доли 3 и 2.
+        let claims = vec![claim("583506", "АО Кристалл", "111", [15, 0, 0, 0])];
+        apply_gu12_limits(&mut demand, &claims, &foreign(), Gu12Mode::Relaxed);
+        assert_eq!(demand[0].gu12_cap, Some(10));
+        assert_eq!(demand[1].gu12_cap, Some(3));
+        assert_eq!(demand[2].gu12_cap, Some(2));
+    }
+
+    /// Заявка одного грузоотправителя не закрывает спрос другого.
+    #[test]
+    fn relaxed_senders_do_not_share_a_claim() {
+        let mut demand = vec![
+            node(1, 1, "583506", "ЮВС", Some("АО Кристалл"), Some("111"), 10),
+            node(2, 4, "583506", "ЮВС", Some("ООО Другой"), Some("222"), 20),
+        ];
+        let claims = vec![claim("583506", "АО Кристалл", "111", [100, 0, 0, 0])];
+        apply_gu12_limits(&mut demand, &claims, &foreign(), Gu12Mode::Relaxed);
+        assert_eq!(demand[0].gu12_cap, Some(10));
+        assert_eq!(demand[1].gu12_cap, Some(0));
     }
 }

@@ -442,6 +442,82 @@ fn row_to_item(row: &rusqlite::Row) -> rusqlite::Result<FreeReserveApiItem> {
     })
 }
 
+/// Сколько строк удалено из БД отстоя при очистке.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ReservePurgeStats {
+    /// Чужие ёмкости: пара (код станции, ОКПО) есть в `reserve_owners.json`.
+    pub banned: usize,
+    /// Разрешение истекло: `date_end` разбирается и `date_end` ≤ `today`.
+    pub expired: usize,
+}
+
+/// Удаляет из БД чужие ёмкости и разрешения с истёкшим сроком.
+///
+/// Чужие — пара `(station_code, owner_okpo)` из [`super::load_reserve_owners_banlist`]
+/// (та же нормализация, что при чтении узлов). Пустой ban-list чужих не трогает.
+/// Истёкшие — `date_end` ≤ `today`. Неразобранная или пустая дата не удаляется:
+/// при чтении такая граница тоже не закрывает договор.
+/// Строка, которая и чужая, и истёкшая, считается в `banned`.
+pub fn purge_reserve_permits(
+    conn: &Connection,
+    today: NaiveDate,
+    owners_banlist: &HashSet<(String, String)>,
+) -> anyhow::Result<ReservePurgeStats> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT etran_id, station_code, owner_okpo, date_end FROM reserve_permits",
+        )
+        .context("подготовка очистки отстоя")?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, Option<String>>(3)?,
+            ))
+        })
+        .context("чтение записей отстоя для очистки")?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .context("разбор записей отстоя для очистки")?;
+
+    let mut banned_ids = Vec::new();
+    let mut expired_ids = Vec::new();
+    for (etran_id, station_code, owner_okpo, date_end) in rows {
+        let key = (
+            normalize_esr6(station_code.as_deref().unwrap_or("")),
+            owner_okpo.unwrap_or_default().trim().to_string(),
+        );
+        if !owners_banlist.is_empty() && owners_banlist.contains(&key) {
+            banned_ids.push(etran_id);
+            continue;
+        }
+        if date_end.as_deref().and_then(parse_reserve_date).is_some_and(|end| end <= today) {
+            expired_ids.push(etran_id);
+        }
+    }
+
+    let stats = ReservePurgeStats {
+        banned: banned_ids.len(),
+        expired: expired_ids.len(),
+    };
+    if stats.banned == 0 && stats.expired == 0 {
+        return Ok(stats);
+    }
+
+    let tx = conn.unchecked_transaction().context("транзакция очистки отстоя")?;
+    {
+        let mut del = tx
+            .prepare("DELETE FROM reserve_permits WHERE etran_id = ?1")
+            .context("подготовка удаления отстоя")?;
+        for id in banned_ids.iter().chain(expired_ids.iter()) {
+            del.execute(params![id]).context("удаление записи отстоя")?;
+        }
+    }
+    tx.commit().context("commit очистки отстоя")?;
+    Ok(stats)
+}
+
 /// Читает накопленные разрешения из БД и строит активные на `today` узлы отстоя.
 ///
 /// Фильтрация (ёмкость, пустые коды, активность договора по `date_beg`/`date_end`)
@@ -736,5 +812,71 @@ mod tests {
         let data = load_active_reserve_nodes(&conn, today(), &HashSet::new()).unwrap();
         assert_eq!(data.nodes.len(), 2);
         assert_eq!(data.foreign_filtered, 0);
+    }
+
+    /// Очистка удаляет чужую пару (станция+ОКПО) и date_end ≤ сегодня.
+    /// Своя ёмкость с будущим сроком и запись без даты остаются.
+    #[test]
+    fn purge_drops_banned_owners_and_expired_permits() {
+        let conn = mem_db();
+        let items = parse_items(
+            r#"[
+                {"RailWayReserve": "СВР", "StationReserve": "Чужая",
+                 "StationReserveCode": "769002", "EtranId": 1,
+                 "ReserveOwnerOKPO": "00203944", "AgreementReserveCapacity": 30,
+                 "DateBeg": "2026-01-01", "DateEnd": "2026-12-31"},
+                {"RailWayReserve": "МСК", "StationReserve": "Истекла вчера",
+                 "StationReserveCode": "111111", "EtranId": 2,
+                 "ReserveOwnerOKPO": "11111111", "AgreementReserveCapacity": 10,
+                 "DateEnd": "2026-06-10"},
+                {"RailWayReserve": "МСК", "StationReserve": "Истекает сегодня",
+                 "StationReserveCode": "222222", "EtranId": 3,
+                 "ReserveOwnerOKPO": "11111111", "AgreementReserveCapacity": 10,
+                 "DateEnd": "2026-06-11T00:00:00.000Z"},
+                {"RailWayReserve": "МСК", "StationReserve": "Своя",
+                 "StationReserveCode": "333333", "EtranId": 4,
+                 "ReserveOwnerOKPO": "11111111", "AgreementReserveCapacity": 15,
+                 "DateBeg": "2026-06-01", "DateEnd": "2026-06-30"},
+                {"RailWayReserve": "МСК", "StationReserve": "БезДаты",
+                 "StationReserveCode": "444444", "EtranId": 5,
+                 "ReserveOwnerOKPO": "11111111", "AgreementReserveCapacity": 5}
+            ]"#,
+        );
+        upsert_permits(&conn, &items).unwrap();
+
+        let mut ban = HashSet::new();
+        ban.insert(("769002".to_string(), "00203944".to_string()));
+        let st = purge_reserve_permits(&conn, today(), &ban).unwrap();
+        assert_eq!(st, ReservePurgeStats { banned: 1, expired: 2 });
+
+        let data = load_active_reserve_nodes(&conn, today(), &ban).unwrap();
+        let mut names: Vec<&str> = data.nodes.iter().map(|n| n.station_name.as_str()).collect();
+        names.sort();
+        assert_eq!(names, vec!["БезДаты", "Своя"]);
+        assert_eq!(data.foreign_filtered, 0);
+    }
+
+    /// Пустой справочник не удаляет чужих, но истёкшие всё равно вычищает.
+    #[test]
+    fn purge_without_banlist_drops_only_expired() {
+        let conn = mem_db();
+        let items = parse_items(
+            r#"[
+                {"RailWayReserve": "СВР", "StationReserve": "Чужая",
+                 "StationReserveCode": "769002", "EtranId": 1,
+                 "ReserveOwnerOKPO": "00203944", "AgreementReserveCapacity": 30,
+                 "DateEnd": "2026-12-31"},
+                {"RailWayReserve": "МСК", "StationReserve": "Истекла",
+                 "StationReserveCode": "111111", "EtranId": 2,
+                 "AgreementReserveCapacity": 10, "DateEnd": "2026-06-10"}
+            ]"#,
+        );
+        upsert_permits(&conn, &items).unwrap();
+        let st = purge_reserve_permits(&conn, today(), &HashSet::new()).unwrap();
+        assert_eq!(st, ReservePurgeStats { banned: 0, expired: 1 });
+        let left: i64 = conn
+            .query_row("SELECT COUNT(*) FROM reserve_permits", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(left, 1);
     }
 }

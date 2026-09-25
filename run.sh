@@ -33,32 +33,47 @@ fi
 
 
 # --- ПАРАМЕТРЫ ЗАПУСКА ---
-#   ./run.sh [dev|prod] [on|off] [--day1]
+#   ./run.sh [dev|prod] [on|off] [--day1] [--relaxed-gu12|--strong-gu12]
 #   ENV — Infisical-окружение (по умолчанию dev).
 #   on|off — MIP warm-start (по умолчанию on).
 #   --day1 / --no-period10 — только вагоны 1-х суток, дислокация периода 10 не загружается.
+#   --relaxed-gu12 — ГУ-12 на весь горизонт 1–15 суток (по умолчанию).
+#   --strong-gu12 — ГУ-12 отдельно на каждый период спроса.
 # Примеры:
 #   ./run.sh prod
 #   ./run.sh prod off          — без MIP warm-start
 #   ./run.sh --day1            — dev, только 1-е сутки
 #   ./run.sh prod --day1
+#   ./run.sh prod --strong-gu12
 #   INCLUDE_PERIOD10=off ./run.sh prod
+#   GU12_MODE=strong ./run.sh prod
 ENV="dev"
 MIP_WS_ARG="on"
 INCLUDE_PERIOD10="${INCLUDE_PERIOD10:-on}"
+GU12_MODE="${GU12_MODE:-relaxed}"
+GU12_FLAG_STRONG=0
+GU12_FLAG_RELAXED=0
 POSITIONAL=()
 for arg in "$@"; do
     case "$arg" in
         -h|--help)
-            echo "Usage: $0 [dev|prod] [on|off] [--day1]"
+            echo "Usage: $0 [dev|prod] [on|off] [--day1] [--relaxed-gu12|--strong-gu12]"
             echo "  --day1, --no-period10  оптимизация только по вагонам 1-х суток (без периода 10)"
+            echo "  --relaxed-gu12         ГУ-12 на горизонт 1–15 суток, нехватка с дальних периодов (по умолчанию)"
+            echo "  --strong-gu12          ГУ-12 отдельно на каждый период спроса"
             exit 0
             ;;
         --day1|--no-period10)
             INCLUDE_PERIOD10="off"
             ;;
+        --relaxed-gu12)
+            GU12_FLAG_RELAXED=1
+            ;;
+        --strong-gu12)
+            GU12_FLAG_STRONG=1
+            ;;
         --*)
-            echo "Неизвестный флаг: $arg (ожидается --day1 / --no-period10)" >&2
+            echo "Неизвестный флаг: $arg (ожидается --day1 / --relaxed-gu12 / --strong-gu12)" >&2
             exit 1
             ;;
         *)
@@ -66,6 +81,15 @@ for arg in "$@"; do
             ;;
     esac
 done
+if [ "$GU12_FLAG_STRONG" -eq 1 ] && [ "$GU12_FLAG_RELAXED" -eq 1 ]; then
+    echo "Укажите один режим ГУ-12: --strong-gu12 или --relaxed-gu12" >&2
+    exit 1
+fi
+if [ "$GU12_FLAG_STRONG" -eq 1 ]; then
+    GU12_MODE="strong"
+elif [ "$GU12_FLAG_RELAXED" -eq 1 ]; then
+    GU12_MODE="relaxed"
+fi
 if [ ${#POSITIONAL[@]} -ge 1 ]; then
     ENV="${POSITIONAL[0]}"
 fi
@@ -77,6 +101,7 @@ PROJECT_ID="a28f09d6-1840-4ac3-ad90-f8c9464facef"
 export APP_ENV="$ENV"
 export MIP_WARM_START="$MIP_WS_ARG"
 export INCLUDE_PERIOD10
+export GU12_MODE
 
 # --- ВЫБОР БИНАРНИКА ---
 if [ "$ENV" == "prod" ]; then
@@ -109,7 +134,7 @@ mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/railoptim_$(date +%F).log"
 
 # --- ЗАПУСК СЕРВИСА (RUST) ---
-echo "[$(date)] Запуск: ${BINARY[*]} (env=$ENV, MIP_WARM_START=$MIP_WARM_START, INCLUDE_PERIOD10=$INCLUDE_PERIOD10)" | tee -a "$LOG_FILE"
+echo "[$(date)] Запуск: ${BINARY[*]} (env=$ENV, MIP_WARM_START=$MIP_WARM_START, INCLUDE_PERIOD10=$INCLUDE_PERIOD10, GU12_MODE=$GU12_MODE)" | tee -a "$LOG_FILE"
 
 if "${BINARY[@]}" &>> "$LOG_FILE"; then
     echo "[SUCCESS] railoptim завершил работу успешно." | tee -a "$LOG_FILE"

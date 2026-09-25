@@ -324,6 +324,30 @@ fn drain_violated_mass_pairs(state: &mut AlnsState, arcs: &[TaskArc]) -> Vec<Ass
 // Оператор ремонта: жадная реинсерция
 // ---------------------------------------------------------------------------
 
+/// Сколько вагонов с российских дорог ещё можно подослать в узел `d_idx`.
+///
+/// Дуга с инотерритории (`exempt`) потолок не расходует. `i32::MAX` — потолка нет.
+fn russian_gu12_room(
+    demand: &[DemandNode],
+    d_idx: usize,
+    assignments: &[Assignment],
+    arcs: &[TaskArc],
+    exempt: bool,
+) -> i32 {
+    if exempt {
+        return i32::MAX;
+    }
+    let Some(cap) = demand[d_idx].gu12_cap else {
+        return i32::MAX;
+    };
+    let used: i32 = assignments
+        .iter()
+        .filter(|a| a.d_idx == d_idx && !arcs[a.arc_id].gu12_exempt)
+        .map(|a| a.quantity)
+        .sum();
+    (cap.max(0) - used).max(0)
+}
+
 /// Жадно реинсертирует разрушенные узлы обратно в решение.
 ///
 /// Для каждого разрушенного назначения ищет лучшую допустимую дугу
@@ -332,13 +356,15 @@ fn drain_violated_mass_pairs(state: &mut AlnsState, arcs: &[TaskArc]) -> Vec<Ass
 /// Ограничение MIN_BATCH проверяется **inline** (по тем же условиям A и B,
 /// что и в `greedy_initial_solution`) — пост-удаление не нужно.
 /// Квоты ДМЗИ также учитываются inline: дуги с исчерпанным бакетом отбрасываются,
-/// объём назначения клиппится остатком квоты.
+/// объём назначения клиппится остатком квоты. Потолок ГУ-12 клиппит только дуги
+/// с российских дорог.
 ///
 /// Используется как быстрый оператор ремонта когда LP-ремонт избыточен.
 fn repair_greedy(
     state:   &mut AlnsState,
     removed: &[Assignment],
     arcs:    &[TaskArc],
+    demand:  &[DemandNode],
     dmzi:    Option<&DmziIndex>,
 ) {
     use std::collections::HashMap;
@@ -401,13 +427,18 @@ fn repair_greedy(
                         .map(|nodes| nodes.iter().map(|&si| state.remaining_supply[si]).sum())
                         .unwrap_or(0);
 
+                    let room = russian_gu12_room(demand, d_idx, &state.assignments, arcs, arc.gu12_exempt);
+                    if room <= 0 {
+                        return false;
+                    }
+
                     // (A) пара не наберёт порог партии даже суммарно
                     if existing + station_remaining < b {
                         return false;
                     }
 
                     // (B) назначение оставит застрявший остаток < порога партии
-                    let qty = avail.min(rem_demand);
+                    let qty = avail.min(rem_demand).min(room);
                     let residual = avail - qty;
                     let other_station_remaining = station_remaining - avail;
                     if residual > 0 && residual < b && other_station_remaining < b {
@@ -415,7 +446,7 @@ fn repair_greedy(
                     }
                 }
 
-                true
+                russian_gu12_room(demand, d_idx, &state.assignments, arcs, arc.gu12_exempt) > 0
             })
             .min_by(|a, b| {
                 a.cost.partial_cmp(&b.cost)
@@ -424,7 +455,9 @@ fn repair_greedy(
             });
 
         if let Some(arc) = best_arc {
-            let mut qty = state.remaining_supply[arc.s_idx].min(rem_demand);
+            let mut qty = state.remaining_supply[arc.s_idx]
+                .min(rem_demand)
+                .min(russian_gu12_room(demand, d_idx, &state.assignments, arcs, arc.gu12_exempt));
             if let Some(b) = bucket_of(arc.arc_id) {
                 qty = qty.min(dmzi_rem[b]);
                 dmzi_rem[b] -= qty;
@@ -546,6 +579,7 @@ fn build_subproblem(
             period_ok:           arc.period_ok,
             car_type_ok:         arc.car_type_ok,
             pair_min_batch:      arc.pair_min_batch,
+            gu12_exempt:         arc.gu12_exempt,
         }
     }).collect();
 
@@ -560,6 +594,15 @@ fn build_subproblem(
     let sub_demand: Vec<DemandNode> = d_set.iter().map(|&d_idx| {
         let mut node = demand[d_idx].clone();  // DemandNode должен реализовать Clone
         node.car_count = state.remaining_demand[d_idx];
+        if let Some(cap) = node.gu12_cap {
+            let used: i32 = state
+                .assignments
+                .iter()
+                .filter(|a| a.d_idx == d_idx && !arcs[a.arc_id].gu12_exempt)
+                .map(|a| a.quantity)
+                .sum();
+            node.gu12_cap = Some((cap.max(0) - used).max(0));
+        }
         node
     }).collect();
 
@@ -689,6 +732,8 @@ fn repair_lp(
         if let Some(b) = dmzi_bucket {
             qty = qty.min(dmzi_rem[b]);
         }
+        let exempt = orig_arc.map(|a| a.gu12_exempt).unwrap_or(arc.gu12_exempt);
+        qty = qty.min(russian_gu12_room(demand, orig_d, &state.assignments, arcs, exempt));
         if qty <= 0 { continue; }
 
         if pair_b > 0 {
@@ -884,7 +929,16 @@ fn repair_mip(
 
         let avail_supply = state.remaining_supply[orig_s];
         let avail_demand = state.remaining_demand[orig_d];
-        let qty = qty_mip.min(avail_supply).min(avail_demand);
+        let qty = qty_mip
+            .min(avail_supply)
+            .min(avail_demand)
+            .min(russian_gu12_room(
+                demand,
+                orig_d,
+                &state.assignments,
+                arcs,
+                orig_arc.map(|a| a.gu12_exempt).unwrap_or(arc.gu12_exempt),
+            ));
         if qty <= 0 {
             continue;
         }
@@ -1018,7 +1072,7 @@ pub fn run_alns(
             repair_lp(&mut candidate, &removed, arcs, supply, demand, dmzi_index.as_ref(), &excess)
         };
         if !repaired {
-            repair_greedy(&mut candidate, &removed, arcs, dmzi_index.as_ref());
+            repair_greedy(&mut candidate, &removed, arcs, demand, dmzi_index.as_ref());
         }
 
         candidate.recalculate_cost();
@@ -1263,6 +1317,7 @@ mod tests {
             period_ok: true,
             car_type_ok: true,
             pair_min_batch: 0,
+            gu12_exempt: false,
         }
     }
 
@@ -1353,6 +1408,7 @@ mod tests {
             shipping_type: None,
             car_type: Some("Прочие".to_string()),
             car_count: count,
+            gu12_cap: None,
             cars_on_station: 0,
         }
     }

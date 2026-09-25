@@ -893,6 +893,7 @@ mod tests {
             shipping_type: None,
             car_type: Some("Прочие".to_string()),
             car_count: count,
+            gu12_cap: None,
             cars_on_station: 0,
         }
     }
@@ -911,6 +912,7 @@ mod tests {
             period_ok: true,
             car_type_ok: true,
             pair_min_batch: 0,
+            gu12_exempt: false,
         }
     }
 

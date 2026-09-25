@@ -27,6 +27,34 @@ async fn main() -> Result<()> {
     // Справочник станций ЕСР + координаты (опционально; не блокирует оптимизацию).
     let _stations_geo = data::StationGeoCatalog::load_from_env();
 
+    // БД отстоя чистится до узлов спроса и предложения: чужие владельцы из
+    // reserve_owners.json и разрешения с date_end ≤ сегодня удаляются из файла,
+    // а не только отфильтровываются при чтении.
+    let reserve_owners = match data::load_reserve_owners_banlist("data/reserve_owners.json") {
+        Ok(s) => {
+            println!(
+                "Ban-list чужих владельцев отстоя (reserve_owners.json): {} пар (станция+ОКПО)",
+                s.len()
+            );
+            s
+        }
+        Err(e) => {
+            eprintln!("  reserve_owners.json не загружен ({e}) — чужие ёмкости из БД отстоя не удаляются");
+            HashSet::new()
+        }
+    };
+    let reserve_today = chrono::Utc::now().date_naive();
+    match data::open_reserves_db(data::reserves_db_path()) {
+        Ok(conn) => match data::purge_reserve_permits(&conn, reserve_today, &reserve_owners) {
+            Ok(st) => println!(
+                "БД отстоя очищена:          чужих {} / истёкших {} (date_end ≤ {})",
+                st.banned, st.expired, reserve_today,
+            ),
+            Err(e) => eprintln!("  ВНИМАНИЕ: очистка БД отстоя не удалась ({e})"),
+        },
+        Err(e) => eprintln!("  ВНИМАНИЕ: БД отстоя недоступна для очистки ({e})"),
+    }
+
     // -----------------------------------------------------------------------
     // 2. Получение данных спроса и предложения
     // -----------------------------------------------------------------------
@@ -134,9 +162,9 @@ async fn main() -> Result<()> {
     // отстое и ремонте. Нет пароля/Redis — fail-open, пустой индекс.
     let convention_index = data::load_conventions_at_startup(business_rules.convention_check_enabled);
 
-    // Правило 3: спрос погрузки на российских дорогах ограничивается согласованными
-    // заявками ГУ-12 (MSSQL SLP через gu12.py). Выше — исходный спрос АПИ, ниже — с учётом ГУ-12.
-    // Заявки не загрузились => спрос остаётся исходным (громкое предупреждение).
+    // Правило 3: потолок ГУ-12 на российский подсыл под погрузку (MSSQL SLP через gu12.py).
+    // Спрос АПИ не режется: вагоны с инотерриторий закрывают узел без потолка.
+    // Заявки не загрузились => потолок не ставится (громкое предупреждение).
     // Инотерритории — по дороге узла из ForeignRailways (правило 1); классификация по коду
     // станции ЕСР не используется как ненадёжная. Список пуст => проверку нельзя ограничить
     // территорией России => она не выполняется (в т.ч. если business_rules.json не загрузился).
@@ -147,14 +175,16 @@ async fn main() -> Result<()> {
         );
         match data::fetch_gu12_claims() {
             Ok(claims) => {
+                let gu12_mode = gu12_mode_from_env();
                 let st = data::apply_gu12_limits(
                     &mut demand_nodes,
                     &claims,
                     &business_rules.foreign_railways,
+                    gu12_mode,
                 );
                 println!(
-                    "Спрос с учётом ГУ-12 (правило 3): {} узлов или {} вагонов (было {} / {})",
-                    st.nodes_after, st.cars_after, st.nodes_before, st.cars_before,
+                    "Спрос с учётом ГУ-12 (правило 3, {}): узлов {} (спрос АПИ не режется); российский потолок {} ваг. из {}",
+                    gu12_mode.label(), st.nodes_after, st.cars_after, st.cars_before,
                 );
                 println!(
                     "  заявок ГУ-12 согласованных: {} строк / {} станций (на станциях без спроса: {})",
@@ -169,7 +199,7 @@ async fn main() -> Result<()> {
                     st.nodes_matched_okpo, st.nodes_matched_name, st.nodes_pool_only,
                 );
                 println!(
-                    "  урезано до ГУ-12: {} узлов / −{} ваг.; без заявки ГУ-12 (исключены): {} узлов / {} ваг.; инотерритория (без проверки): {} узлов / {} ваг.",
+                    "  потолок ниже спроса АПИ: {} узлов / −{} ваг. российского подсыла; нулевой потолок (узел остаётся для вагонов с инотерриторий): {} узлов / {} ваг.; погрузка на инотерритории (без потолка): {} узлов / {} ваг.",
                     st.nodes_capped, st.cars_cut,
                     st.nodes_removed, st.cars_removed,
                     st.nodes_foreign, st.cars_foreign,
@@ -295,18 +325,6 @@ async fn main() -> Result<()> {
         }
         Err(e) => {
             eprintln!("  WashedEmptyEtsngCodes из references.json: не загружены ({e})");
-            HashSet::new()
-        }
-    };
-    // Ban-list «чужих» ёмкостей отстоя: фильтр БД отстоя по паре (код станции, ОКПО владельца).
-    // Записи из справочника отбрасываются. Пустой ban-list (справочник не загружен) => фильтр отключён.
-    let reserve_owners = match data::load_reserve_owners_banlist("data/reserve_owners.json") {
-        Ok(s) => {
-            println!("Ban-list чужих владельцев отстоя (reserve_owners.json): {} пар (станция+ОКПО)", s.len());
-            s
-        }
-        Err(e) => {
-            eprintln!("  reserve_owners.json не загружен ({e}) — фильтр отстоя по владельцам отключён");
             HashSet::new()
         }
     };
@@ -556,7 +574,16 @@ async fn main() -> Result<()> {
                     "  ВНИМАНИЕ: обновление БД отстоя не удалось ({e}) — используем ранее накопленные данные"
                 ),
             }
-            match data::load_active_reserve_nodes(&conn, chrono::Utc::now().date_naive(), &reserve_owners) {
+            // Свежий снимок АПИ снова может принести чужие и уже истёкшие разрешения.
+            match data::purge_reserve_permits(&conn, reserve_today, &reserve_owners) {
+                Ok(st) if st.banned > 0 || st.expired > 0 => println!(
+                    "БД отстоя после обновления:  удалено чужих {} / истёкших {}",
+                    st.banned, st.expired,
+                ),
+                Ok(_) => {}
+                Err(e) => eprintln!("  ВНИМАНИЕ: повторная очистка БД отстоя не удалась ({e})"),
+            }
+            match data::load_active_reserve_nodes(&conn, reserve_today, &reserve_owners) {
                 Ok(r) if !r.nodes.is_empty() => {
                     println!(
                         "Узлы отстоя (резервы):       {} узлов / ёмкость {} ваг. \
@@ -778,6 +805,12 @@ async fn main() -> Result<()> {
             arc_stats.arcs_dirty_rewarded,
             100.0 * arc_stats.arcs_dirty_rewarded as f64 / total.max(1) as f64,
             arc_stats.dirty_reward_total_rub / arc_stats.arcs_dirty_rewarded as f64,
+        );
+    }
+    if arc_stats.gu12_blocked > 0 {
+        println!(
+            "  пар погрузки с российских дорог не построено: нулевой потолок ГУ-12 ({})",
+            arc_stats.gu12_blocked,
         );
     }
     if business_rules.p1_distance_adjust_enabled() {
@@ -1478,4 +1511,22 @@ fn include_period10_from_env() -> bool {
 /// Пометка в именах `tmp/result_*.json` и `tmp/checkpoint_*.xlsx` для прогона `--day1`.
 fn day1_file_tag() -> Option<&'static str> {
     (!include_period10_from_env()).then_some("day1")
+}
+
+/// Режим правила 3. `GU12_MODE=strong` — потолок на каждый период (`run.sh --strong-gu12`).
+/// Пусто, `relaxed` и любое неизвестное значение — горизонт 1–15 суток (`--relaxed-gu12`, по умолчанию).
+fn gu12_mode_from_env() -> data::Gu12Mode {
+    match std::env::var("GU12_MODE") {
+        Ok(v) => match v.trim().to_lowercase().as_str() {
+            "strong" => data::Gu12Mode::Strong,
+            "relaxed" | "" => data::Gu12Mode::Relaxed,
+            other => {
+                eprintln!(
+                    "  [!] GU12_MODE={other:?} не известен — берётся ослабленный режим ГУ-12 (горизонт 1–15 суток)"
+                );
+                data::Gu12Mode::Relaxed
+            }
+        },
+        Err(_) => data::Gu12Mode::Relaxed,
+    }
 }

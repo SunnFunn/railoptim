@@ -216,13 +216,24 @@ pub fn solve(
         })
         .collect();
 
+    // Потолок ГУ-12 только на дуги с российских дорог (gu12_exempt его не расходует).
+    let gu12_rows: Vec<Option<highs::Row>> = demand
+        .iter()
+        .map(|d| d.gu12_russian_limit().map(|cap| model.add_row(0.0..=cap as f64)))
+        .collect();
+
     // --- Реальные дуговые переменные ---
     for arc in arcs {
-        model.add_column(
-            arc.cost,
-            0.0..,
-            [(supply_rows[arc.s_idx], 1.0), (demand_rows[arc.d_idx], 1.0)],
-        );
+        let mut factors = vec![
+            (supply_rows[arc.s_idx], 1.0),
+            (demand_rows[arc.d_idx], 1.0),
+        ];
+        if !arc.gu12_exempt {
+            if let Some(row) = gu12_rows[arc.d_idx] {
+                factors.push((row, 1.0));
+            }
+        }
+        model.add_column(arc.cost, 0.0.., factors);
     }
 
     // --- Dummy-узел СПРОСА (поглощает незадействованное предложение / отстой) ---

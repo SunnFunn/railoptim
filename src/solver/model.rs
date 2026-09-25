@@ -140,6 +140,11 @@ pub struct TaskArc {
     /// На одной паре станций могут сосуществовать **две** группы: маршрутные узлы
     /// (B = 10) и немаршрутные (B = 3 или 0) — поэтому ключ группы включает порог.
     pub pair_min_batch: i32,
+
+    /// Дуга не расходует потолок ГУ-12 узла спроса: вагон образовался на инотерритории
+    /// ([`crate::data::BusinessRules::supply_exempt_from_gu12`]). Для промывки и при
+    /// выключенном правиле 3 флаг не меняет модель (потолка на узле нет).
+    pub gu12_exempt: bool,
 }
 
 /// Ключ группы дуг ограничения минимальной партии:
@@ -406,6 +411,7 @@ pub fn build_task_arcs(
     let mut arcs_p1_distance_surcharge = 0usize;
     let mut p1_distance_bonus_total_rub = 0.0_f64;
     let mut p1_distance_surcharge_total_rub = 0.0_f64;
+    let mut gu12_blocked = 0usize;
 
     // Порог правила 6 для грязных вагонов: минимальная стоимость промывочного маршрута
     // по станции образования (см. classify_pair). Считается один раз.
@@ -453,6 +459,14 @@ pub fn build_task_arcs(
                 }
                 PairOutcome::BadPeriod => { bad_period += 1; continue; }
             };
+            // Правило 3: нулевой потолок ГУ-12 закрывает российский подсыл.
+            // Вагон с инотерритории дугу сохраняет и потолок не расходует.
+            let gu12_exempt = d.purpose == DemandPurpose::Load
+                && rules.supply_exempt_from_gu12(&s.railway_to);
+            if d.purpose == DemandPurpose::Load && !gu12_exempt && d.gu12_cap == Some(0) {
+                gu12_blocked += 1;
+                continue;
+            }
             if !period_ok {
                 arcs_period_penalized += 1;
             }
@@ -522,6 +536,7 @@ pub fn build_task_arcs(
                 period_ok,
                 car_type_ok:       true,
                 pair_min_batch,
+                gu12_exempt,
             });
         }
     }
@@ -550,6 +565,7 @@ pub fn build_task_arcs(
         arcs_p1_distance_surcharge,
         p1_distance_bonus_total_rub,
         p1_distance_surcharge_total_rub,
+        gu12_blocked,
     };
 
     (arcs, stats)
@@ -873,6 +889,9 @@ pub struct ArcStats {
     pub p1_distance_bonus_total_rub: f64,
     /// Суммарная надбавка по этим дугам (руб.).
     pub p1_distance_surcharge_total_rub: f64,
+    /// Пар погрузки с российских дорог в узел с нулевым потолком ГУ-12: дуга не строится.
+    /// Вагоны с инотерриторий в этот счётчик не попадают.
+    pub gu12_blocked: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -1092,6 +1111,7 @@ mod tests {
             shipping_type: shipping_type.map(str::to_string),
             car_type: Some("Прочие".to_string()),
             car_count: count,
+            gu12_cap: None,
             cars_on_station: 0,
         }
     }
@@ -1165,6 +1185,48 @@ mod tests {
     fn with_railway_d(mut d: DemandNode, rw: &str) -> DemandNode {
         d.railway_name = rw.to_string();
         d
+    }
+
+    /// Нулевой потолок ГУ-12 не строит дугу с российской дороги и оставляет дугу
+    /// с инотерритории. Ненулевой потолок обе дуги строит, инотерриторию помечает
+    /// как не расходующую потолок.
+    #[test]
+    fn gu12_cap_blocks_russian_supply_and_exempts_foreign_origin() {
+        let supply = vec![
+            with_railway_s(dummy_supply(5, "RU", 1, false), "МСК"),
+            with_railway_s(dummy_supply(5, "KZ", 1, false), "КЗХ"),
+        ];
+        let tariffs = vec![dummy_tariff("RU", "D1"), dummy_tariff("KZ", "D1")];
+        let run = |cap: i32| {
+            let mut demand = dummy_demand(8, "D1", None);
+            demand.gu12_cap = Some(cap);
+            demand.railway_name = "ЮВС".into();
+            build_task_arcs(
+                &supply,
+                &[demand],
+                &tariffs,
+                &HashSet::new(),
+                &HashSet::new(),
+                &HashMap::new(),
+                &rules_roads(),
+                &StationBacklogIndex::disabled(),
+                &ConventionIndex::disabled(),
+            )
+        };
+
+        let (arcs, stats) = run(0);
+        assert_eq!(stats.gu12_blocked, 1);
+        assert_eq!(arcs.len(), 1);
+        assert_eq!(arcs[0].supply_station_code, "KZ");
+        assert!(arcs[0].gu12_exempt);
+
+        let (arcs, stats) = run(3);
+        assert_eq!(stats.gu12_blocked, 0);
+        assert_eq!(arcs.len(), 2);
+        let ru = arcs.iter().find(|a| a.supply_station_code == "RU").unwrap();
+        let kz = arcs.iter().find(|a| a.supply_station_code == "KZ").unwrap();
+        assert!(!ru.gu12_exempt);
+        assert!(kz.gu12_exempt);
     }
 
     /// Потолок расстояния: Load-дуга дальше порога не создаётся и считается в `too_far`,

@@ -374,6 +374,7 @@ mod tests {
             shipping_type: None,
             car_type: None,
             car_count: cars,
+            gu12_cap: None,
             cars_on_station: q,
         }
     }

@@ -801,6 +801,7 @@ mod tests {
             shipping_type: None,
             car_type: None,
             car_count: 10,
+            gu12_cap: None,
             cars_on_station: 0,
         }
     }

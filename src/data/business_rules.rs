@@ -87,11 +87,13 @@ pub struct BusinessRules {
     #[serde(rename = "DeficitExportSurchargeRub")]
     pub deficit_export_surcharge_rub: f64,
 
-    /// Правило 3: спрос погрузки на российских дорогах ограничивается согласованными
+    /// Правило 3: подсыл под погрузку **с российских дорог** ограничивается согласованными
     /// заявками ГУ-12 ([`crate::data::gu12::apply_gu12_limits`]). `false` — проверка
-    /// отключена (спрос АПИ берётся как есть). Территория России — дороги **не** из
-    /// [`Self::foreign_railways`]: пустой список → ГУ-12 не выполняется
-    /// ([`Self::gu12_ready`]), иначе нельзя ограничить проверку Россией.
+    /// отключена (спрос АПИ берётся как есть). Узлы погрузки на дорогах из
+    /// [`Self::foreign_railways`] не получают потолок. Вагоны, образовавшиеся на этих
+    /// же дорогах, потолок не расходуют ([`Self::supply_exempt_from_gu12`]): ГУ-12 —
+    /// документ РЖД и на инотерриториях не оформляется. Пустой список инотерриторий →
+    /// ГУ-12 не выполняется ([`Self::gu12_ready`]), иначе нельзя ограничить проверку Россией.
     #[serde(rename = "Gu12CheckEnabled")]
     pub gu12_check_enabled: bool,
 
@@ -408,6 +410,15 @@ impl BusinessRules {
     /// не выполняется, иначе срежет спрос на инотерриториях.
     pub fn gu12_ready(&self) -> bool {
         self.gu12_check_enabled && !self.foreign_railways.is_empty()
+    }
+
+    /// Правило 3: порожний образовался на инотерритории ([`Self::foreign_railways`]).
+    ///
+    /// Дуга погрузки с такой дороги не расходует потолок ГУ-12 узла спроса.
+    /// Пустая или неизвестная дорога образования — не исключение (как российская).
+    pub fn supply_exempt_from_gu12(&self, supply_railway: &str) -> bool {
+        let rw = supply_railway.trim();
+        !rw.is_empty() && self.foreign_railways.contains(rw)
     }
 
     /// Правило 6: надбавка к тарифу до станции промывки (руб./ваг.) — промывка +
@@ -961,6 +972,18 @@ mod tests {
         assert!(r.gu12_ready());
         r.gu12_check_enabled = false;
         assert!(!r.gu12_ready());
+    }
+
+    #[test]
+    fn foreign_supply_is_exempt_from_gu12() {
+        let mut r = BusinessRules::default();
+        assert!(!r.supply_exempt_from_gu12("КЗХ"));
+        r.foreign_railways = ["КЗХ".into()].into_iter().collect();
+        assert!(r.supply_exempt_from_gu12("КЗХ"));
+        assert!(r.supply_exempt_from_gu12(" КЗХ "));
+        assert!(!r.supply_exempt_from_gu12("МСК"));
+        assert!(!r.supply_exempt_from_gu12(""));
+        assert!(!r.supply_exempt_from_gu12("  "));
     }
 
     #[test]
